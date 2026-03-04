@@ -451,10 +451,18 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                     tc_parser = get_parser("hermes")
 
                 try:
-                    async with self.server.managed_server(
-                        tokenizer=self.tokenizer,
-                        tool_call_parser=tc_parser,
-                    ) as managed:
+                    # Try with tool_call_parser (newer ManagedServer API)
+                    try:
+                        managed_ctx = self.server.managed_server(
+                            tokenizer=self.tokenizer,
+                            tool_call_parser=tc_parser,
+                        )
+                    except TypeError:
+                        # Fall back to tokenizer-only (ServerManager API)
+                        logger.info("Server doesn't support tool_call_parser, using tokenizer-only mode")
+                        managed_ctx = self.server.managed_server(tokenizer=self.tokenizer)
+
+                    async with managed_ctx as managed:
                         agent = HermesAgentLoop(
                             server=managed,
                             tool_schemas=tools,
