@@ -17,7 +17,6 @@ dependencies = [
   "fire",
   "httpx",
   "rich",
-  "textual",
   "tenacity",
   "pyyaml",
   "requests",
