@@ -89,6 +89,8 @@ DEFAULT_CONFIG = {
         "threshold": 0.85,
         "summary_model": "google/gemini-3-flash-preview",
         "summary_provider": "auto",
+        "protect_first_n": 3,  # Number of initial turns to always preserve during compression
+        "protect_last_n": 4,   # Number of recent turns to always preserve during compression
     },
     
     # Auxiliary model overrides (advanced).  By default Hermes auto-selects
@@ -166,7 +168,7 @@ DEFAULT_CONFIG = {
     "command_allowlist": [],
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 5,
+    "_config_version": 6,
 }
 
 # =============================================================================

@@ -582,16 +582,32 @@ class AIAgent:
         # Initialize context compressor for automatic context management
         # Compresses conversation when approaching model's context limit
         # Configuration via config.yaml (compression section) or environment variables
-        compression_threshold = float(os.getenv("CONTEXT_COMPRESSION_THRESHOLD", "0.85"))
+        compression_config = {}
+        try:
+            from hermes_cli.config import load_config as _load_compression_config
+            compression_config = _load_compression_config().get("compression", {})
+        except Exception:
+            pass
+
+        compression_threshold = float(os.getenv(
+            "CONTEXT_COMPRESSION_THRESHOLD",
+            str(compression_config.get("threshold", 0.85))
+        ))
         compression_enabled = os.getenv("CONTEXT_COMPRESSION_ENABLED", "true").lower() in ("true", "1", "yes")
-        compression_summary_model = os.getenv("CONTEXT_COMPRESSION_MODEL") or None
-        
+        if not compression_enabled:
+            compression_enabled = compression_config.get("enabled", True)
+        compression_summary_model = os.getenv("CONTEXT_COMPRESSION_MODEL") or compression_config.get("summary_model") or None
+
+        # Configurable turn protection (clamped 0-12, inspired by openclaw recentTurnsPreserve)
+        protect_first_n = max(0, min(12, int(compression_config.get("protect_first_n", 3))))
+        protect_last_n = max(0, min(12, int(compression_config.get("protect_last_n", 4))))
+
         self.context_compressor = ContextCompressor(
             model=self.model,
             threshold_percent=compression_threshold,
-            protect_first_n=3,
-            protect_last_n=4,
-            summary_target_tokens=500,
+            protect_first_n=protect_first_n,
+            protect_last_n=protect_last_n,
+            summary_target_tokens=2500,
             summary_model_override=compression_summary_model,
             quiet_mode=self.quiet_mode,
             base_url=self.base_url,
