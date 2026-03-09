@@ -415,7 +415,7 @@ def _get_env_config() -> Dict[str, Any]:
     if env_type == "local":
         default_cwd = os.getcwd()
     else:
-        default_cwd = "~"
+        default_cwd = "/root"
     
     # Read TERMINAL_CWD but sanity-check it for container backends.
     # If the CWD looks like a host-local path that can't exist inside a
@@ -424,7 +424,7 @@ def _get_env_config() -> Dict[str, Any]:
     # SSH is excluded since /home/ paths are valid on remote machines.
     cwd = os.getenv("TERMINAL_CWD", default_cwd)
     if env_type in ("modal", "docker", "singularity", "daytona") and cwd:
-        host_prefixes = ("/Users/", "C:\\", "C:/")
+        host_prefixes = ("/Users/", "/home/", "C:\\", "C:/")
         if any(cwd.startswith(p) for p in host_prefixes) and cwd != default_cwd:
             logger.info("Ignoring TERMINAL_CWD=%r for %s backend "
                         "(host path won't exist in sandbox). Using %r instead.",
@@ -504,7 +504,12 @@ def _create_environment(env_type: str, image: str, cwd: str, timeout: int,
         if memory > 0:
             sandbox_kwargs["memory"] = memory
         if disk > 0:
-            sandbox_kwargs["ephemeral_disk"] = disk
+            try:
+                import inspect, modal
+                if "ephemeral_disk" in inspect.signature(modal.Sandbox.create).parameters:
+                    sandbox_kwargs["ephemeral_disk"] = disk
+            except Exception:
+                pass
         
         return _ModalEnvironment(
             image=image, cwd=cwd, timeout=timeout,
