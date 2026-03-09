@@ -658,7 +658,6 @@ _DIM = "\033[2m"
 _RST = "\033[0m"
 
 def _cprint(text: str):
-    """Print ANSI-colored text to stdout."""
     print(text)
 
 # ASCII Art - HERMES-AGENT logo (full width, single line - requires ~95 char terminal)
@@ -1119,7 +1118,7 @@ class HermesCLI:
 
         # Agent will be initialized on first use
         self.agent: Optional[AIAgent] = None
-        self._app = None  # retained for backward compat (no longer used by TUI)
+        self._app = None
         
         # Conversation state
         self.conversation_history: List[Dict[str, Any]] = []
@@ -1147,10 +1146,7 @@ class HermesCLI:
         
         # History file for persistent input recall across sessions
         self._history_file = Path.home() / ".hermes_history"
-        self._last_invalidate: float = 0.0
-
     def _invalidate(self, min_interval: float = 0.25) -> None:
-        """No-op — retained for callback compatibility."""
         pass
 
     def _normalize_model_for_provider(self, resolved_provider: str) -> bool:
@@ -2826,8 +2822,7 @@ class HermesCLI:
         except Exception as e:
             print(f"  ❌ MCP reload failed: {e}")
 
-    def _stream_delta(self, text: str) -> None:
-        """Write streaming token directly to stdout."""
+    def _stream_delta(self, text: str):
         sys.stdout.write(text)
         sys.stdout.flush()
 
@@ -2967,9 +2962,9 @@ class HermesCLI:
         self._approval_state = None
         self._approval_deadline = 0
         self._invalidate()
+
     def chat(self, message, images: list = None) -> Optional[str]:
-        """Send a message and get a response. Runs synchronously — streaming
-        tokens go directly to stdout via stream_delta_callback."""
+        """Send a message and stream the response to stdout."""
         if not self._ensure_runtime_credentials():
             return None
         if not self._init_agent():
@@ -3090,7 +3085,6 @@ class HermesCLI:
                         self.agent.interrupt()
                         print("\n⚡ Interrupted")
                     else:
-                        print("\nGoodbye! ⚕")
                         break
                     continue
                 except EOFError:

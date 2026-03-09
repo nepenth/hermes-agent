@@ -3492,12 +3492,15 @@ class AIAgent:
                             if thinking_spinner:
                                 thinking_spinner.stop("")
                                 thinking_spinner = None
+
                         response = self._interruptible_streaming_api_call(
                             api_kwargs, on_first_delta=_stop_spinner)
-                        # Newline after streamed content so tool lines don't overwrite it
-                        if response and hasattr(response, 'choices') and response.choices:
-                            msg = response.choices[0].message
-                            if msg and msg.content and msg.tool_calls:
+
+                        # Separate streamed content from tool status lines
+                        msg = getattr(response, "choices", [None])[0]
+                        if msg and getattr(msg, "message", None):
+                            m = msg.message
+                            if m.content and m.tool_calls:
                                 print(flush=True)
                     else:
                         response = self._interruptible_api_call(api_kwargs)
