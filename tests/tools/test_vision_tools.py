@@ -244,17 +244,17 @@ class TestErrorLoggingExcInfo:
         with patch("tools.vision_tools._validate_image_url", return_value=True), \
              patch("tools.vision_tools._download_image", new_callable=AsyncMock,
                    side_effect=Exception("download boom")), \
+             patch("tools.vision_tools._aux_async_client", new="fake"), \
              caplog.at_level(logging.ERROR, logger="tools.vision_tools"):
 
             result = await vision_analyze_tool(
                 "https://example.com/img.jpg", "describe this", "test/model"
             )
             result_data = json.loads(result)
-            # Error response uses "success": False, not an "error" key
             assert result_data["success"] is False
 
             error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
-            assert any(r.exc_info is not None for r in error_records)
+            assert any(r.exc_info and r.exc_info[0] is not None for r in error_records)
 
     @pytest.mark.asyncio
     async def test_cleanup_error_logs_exc_info(self, tmp_path, caplog):
