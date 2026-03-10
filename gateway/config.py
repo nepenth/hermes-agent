@@ -28,6 +28,7 @@ class Platform(Enum):
     SLACK = "slack"
     SIGNAL = "signal"
     HOMEASSISTANT = "homeassistant"
+    API_SERVER = "api_server"
 
 
 @dataclass
@@ -166,6 +167,9 @@ class GatewayConfig:
                 connected.append(platform)
             # Signal uses extra dict for config (http_url + account)
             elif platform == Platform.SIGNAL and config.extra.get("http_url"):
+                connected.append(platform)
+            # API Server uses enabled flag only (no token needed)
+            elif platform == Platform.API_SERVER:
                 connected.append(platform)
         return connected
     
@@ -419,6 +423,25 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
         hass_url = os.getenv("HASS_URL")
         if hass_url:
             config.platforms[Platform.HOMEASSISTANT].extra["url"] = hass_url
+
+    # API Server
+    api_server_enabled = os.getenv("API_SERVER_ENABLED", "").lower() in ("true", "1", "yes")
+    api_server_key = os.getenv("API_SERVER_KEY", "")
+    api_server_port = os.getenv("API_SERVER_PORT")
+    api_server_host = os.getenv("API_SERVER_HOST")
+    if api_server_enabled or api_server_key:
+        if Platform.API_SERVER not in config.platforms:
+            config.platforms[Platform.API_SERVER] = PlatformConfig()
+        config.platforms[Platform.API_SERVER].enabled = True
+        if api_server_key:
+            config.platforms[Platform.API_SERVER].extra["key"] = api_server_key
+        if api_server_port:
+            try:
+                config.platforms[Platform.API_SERVER].extra["port"] = int(api_server_port)
+            except ValueError:
+                pass
+        if api_server_host:
+            config.platforms[Platform.API_SERVER].extra["host"] = api_server_host
 
     # Session settings
     idle_minutes = os.getenv("SESSION_IDLE_MINUTES")

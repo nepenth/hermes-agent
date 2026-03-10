@@ -672,6 +672,13 @@ class GatewayRunner:
                 return None
             return HomeAssistantAdapter(config)
 
+        elif platform == Platform.API_SERVER:
+            from gateway.platforms.api_server import APIServerAdapter, check_api_server_requirements
+            if not check_api_server_requirements():
+                logger.warning("API Server: aiohttp not installed")
+                return None
+            return APIServerAdapter(config)
+
         return None
     
     def _is_user_authorized(self, source: SessionSource) -> bool:
@@ -691,6 +698,11 @@ class GatewayRunner:
         if source.platform == Platform.HOMEASSISTANT:
             return True
 
+        # API Server handles auth at the HTTP layer (Bearer token),
+        # so requests that reach the gateway runner are already authorized.
+        if source.platform == Platform.API_SERVER:
+            return True
+
         user_id = source.user_id
         if not user_id:
             return False
@@ -701,6 +713,7 @@ class GatewayRunner:
             Platform.WHATSAPP: "WHATSAPP_ALLOWED_USERS",
             Platform.SLACK: "SLACK_ALLOWED_USERS",
             Platform.SIGNAL: "SIGNAL_ALLOWED_USERS",
+            Platform.API_SERVER: "API_SERVER_ALLOWED_KEYS",
         }
         platform_allow_all_map = {
             Platform.TELEGRAM: "TELEGRAM_ALLOW_ALL_USERS",
@@ -708,6 +721,7 @@ class GatewayRunner:
             Platform.WHATSAPP: "WHATSAPP_ALLOW_ALL_USERS",
             Platform.SLACK: "SLACK_ALLOW_ALL_USERS",
             Platform.SIGNAL: "SIGNAL_ALLOW_ALL_USERS",
+            Platform.API_SERVER: "API_SERVER_ALLOW_ALL",
         }
 
         # Per-platform allow-all flag (e.g., DISCORD_ALLOW_ALL_USERS=true)
