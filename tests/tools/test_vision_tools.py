@@ -245,6 +245,7 @@ class TestErrorLoggingExcInfo:
              patch("tools.vision_tools._download_image", new_callable=AsyncMock,
                    side_effect=Exception("download boom")), \
              patch("tools.vision_tools._aux_async_client", new="fake"), \
+             patch("tools.vision_tools.DEFAULT_VISION_MODEL", new="test/model"), \
              caplog.at_level(logging.ERROR, logger="tools.vision_tools"):
 
             result = await vision_analyze_tool(
