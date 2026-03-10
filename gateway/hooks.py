@@ -21,11 +21,11 @@ Errors in hooks are caught and logged but never block the main pipeline.
 import asyncio
 import importlib.util
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import yaml
-
 
 HOOKS_DIR = Path(os.path.expanduser("~/.hermes/hooks"))
 
@@ -42,11 +42,11 @@ class HookRegistry:
 
     def __init__(self):
         # event_type -> [handler_fn, ...]
-        self._handlers: Dict[str, List[Callable]] = {}
-        self._loaded_hooks: List[dict] = []  # metadata for listing
+        self._handlers: dict[str, list[Callable]] = {}
+        self._loaded_hooks: list[dict] = []  # metadata for listing
 
     @property
-    def loaded_hooks(self) -> List[dict]:
+    def loaded_hooks(self) -> list[dict]:
         """Return metadata about all loaded hooks."""
         return list(self._loaded_hooks)
 
@@ -84,9 +84,7 @@ class HookRegistry:
                     continue
 
                 # Dynamically load the handler module
-                spec = importlib.util.spec_from_file_location(
-                    f"hermes_hook_{hook_name}", handler_path
-                )
+                spec = importlib.util.spec_from_file_location(f"hermes_hook_{hook_name}", handler_path)
                 if spec is None or spec.loader is None:
                     print(f"[hooks] Skipping {hook_name}: could not load handler.py", flush=True)
                     continue
@@ -103,19 +101,21 @@ class HookRegistry:
                 for event in events:
                     self._handlers.setdefault(event, []).append(handle_fn)
 
-                self._loaded_hooks.append({
-                    "name": hook_name,
-                    "description": manifest.get("description", ""),
-                    "events": events,
-                    "path": str(hook_dir),
-                })
+                self._loaded_hooks.append(
+                    {
+                        "name": hook_name,
+                        "description": manifest.get("description", ""),
+                        "events": events,
+                        "path": str(hook_dir),
+                    }
+                )
 
                 print(f"[hooks] Loaded hook '{hook_name}' for events: {events}", flush=True)
 
             except Exception as e:
                 print(f"[hooks] Error loading hook {hook_dir.name}: {e}", flush=True)
 
-    async def emit(self, event_type: str, context: Optional[Dict[str, Any]] = None) -> None:
+    async def emit(self, event_type: str, context: dict[str, Any] | None = None) -> None:
         """
         Fire all handlers registered for an event.
 

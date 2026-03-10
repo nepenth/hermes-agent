@@ -6,14 +6,14 @@ can invoke skills via /skill-name commands.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_skill_commands: Dict[str, Dict[str, Any]] = {}
+_skill_commands: dict[str, dict[str, Any]] = {}
 
 
-def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
+def scan_skill_commands() -> dict[str, dict[str, Any]]:
     """Scan ~/.hermes/skills/ and return a mapping of /command -> skill info.
 
     Returns:
@@ -23,26 +23,27 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     _skill_commands = {}
     try:
         from tools.skills_tool import SKILLS_DIR, _parse_frontmatter, skill_matches_platform
+
         if not SKILLS_DIR.exists():
             return _skill_commands
         for skill_md in SKILLS_DIR.rglob("SKILL.md"):
-            if any(part in ('.git', '.github', '.hub') for part in skill_md.parts):
+            if any(part in (".git", ".github", ".hub") for part in skill_md.parts):
                 continue
             try:
-                content = skill_md.read_text(encoding='utf-8')
+                content = skill_md.read_text(encoding="utf-8")
                 frontmatter, body = _parse_frontmatter(content)
                 # Skip skills incompatible with the current OS platform
                 if not skill_matches_platform(frontmatter):
                     continue
-                name = frontmatter.get('name', skill_md.parent.name)
-                description = frontmatter.get('description', '')
+                name = frontmatter.get("name", skill_md.parent.name)
+                description = frontmatter.get("description", "")
                 if not description:
-                    for line in body.strip().split('\n'):
+                    for line in body.strip().split("\n"):
                         line = line.strip()
-                        if line and not line.startswith('#'):
+                        if line and not line.startswith("#"):
                             description = line[:80]
                             break
-                cmd_name = name.lower().replace(' ', '-').replace('_', '-')
+                cmd_name = name.lower().replace(" ", "-").replace("_", "-")
                 _skill_commands[f"/{cmd_name}"] = {
                     "name": name,
                     "description": description or f"Invoke the {name} skill",
@@ -56,14 +57,14 @@ def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     return _skill_commands
 
 
-def get_skill_commands() -> Dict[str, Dict[str, Any]]:
+def get_skill_commands() -> dict[str, dict[str, Any]]:
     """Return the current skill commands mapping (scan first if empty)."""
     if not _skill_commands:
         scan_skill_commands()
     return _skill_commands
 
 
-def build_skill_invocation_message(cmd_key: str, user_instruction: str = "") -> Optional[str]:
+def build_skill_invocation_message(cmd_key: str, user_instruction: str = "") -> str | None:
     """Build the user message content for a skill slash command invocation.
 
     Args:
@@ -83,7 +84,7 @@ def build_skill_invocation_message(cmd_key: str, user_instruction: str = "") -> 
     skill_name = skill_info["name"]
 
     try:
-        content = skill_md_path.read_text(encoding='utf-8')
+        content = skill_md_path.read_text(encoding="utf-8")
     except Exception:
         return f"[Failed to load skill: {skill_name}]"
 
@@ -111,6 +112,8 @@ def build_skill_invocation_message(cmd_key: str, user_instruction: str = "") -> 
 
     if user_instruction:
         parts.append("")
-        parts.append(f"The user has provided the following instruction alongside the skill invocation: {user_instruction}")
+        parts.append(
+            f"The user has provided the following instruction alongside the skill invocation: {user_instruction}"
+        )
 
     return "\n".join(parts)

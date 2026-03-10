@@ -20,11 +20,10 @@ Public API (signatures preserved from the original 2,400-line version):
     check_tool_availability(quiet) -> tuple
 """
 
-import json
 import asyncio
-import os
+import json
 import logging
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Any
 
 from tools.registry import registry
 from toolsets import resolve_toolset, validate_toolset
@@ -35,6 +34,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Async Bridging  (single source of truth -- used by registry.dispatch too)
 # =============================================================================
+
 
 def _run_async(coro):
     """Run an async coroutine from a sync context.
@@ -56,6 +56,7 @@ def _run_async(coro):
 
     if loop and loop.is_running():
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=300)
@@ -65,6 +66,7 @@ def _run_async(coro):
 # =============================================================================
 # Tool Discovery  (importing each module triggers its registry.register calls)
 # =============================================================================
+
 
 def _discover_tools():
     """Import all tool modules to trigger their registry.register() calls.
@@ -97,6 +99,7 @@ def _discover_tools():
         "tools.homeassistant_tool",
     ]
     import importlib
+
     for mod_name in _modules:
         try:
             importlib.import_module(mod_name)
@@ -109,6 +112,7 @@ _discover_tools()
 # MCP tool discovery (external MCP servers from config)
 try:
     from tools.mcp_tool import discover_mcp_tools
+
     discover_mcp_tools()
 except Exception as e:
     logger.debug("MCP tool discovery failed: %s", e)
@@ -118,13 +122,13 @@ except Exception as e:
 # Backward-compat constants  (built once after discovery)
 # =============================================================================
 
-TOOL_TO_TOOLSET_MAP: Dict[str, str] = registry.get_tool_to_toolset_map()
+TOOL_TO_TOOLSET_MAP: dict[str, str] = registry.get_tool_to_toolset_map()
 
-TOOLSET_REQUIREMENTS: Dict[str, dict] = registry.get_toolset_requirements()
+TOOLSET_REQUIREMENTS: dict[str, dict] = registry.get_toolset_requirements()
 
 # Resolved tool names from the last get_tool_definitions() call.
 # Used by code_execution_tool to know which tools are available in this session.
-_last_resolved_tool_names: List[str] = []
+_last_resolved_tool_names: list[str] = []
 
 
 # =============================================================================
@@ -139,18 +143,29 @@ _LEGACY_TOOLSET_MAP = {
     "image_tools": ["image_generate"],
     "skills_tools": ["skills_list", "skill_view", "skill_manage"],
     "browser_tools": [
-        "browser_navigate", "browser_snapshot", "browser_click",
-        "browser_type", "browser_scroll", "browser_back",
-        "browser_press", "browser_close", "browser_get_images",
-        "browser_vision"
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_scroll",
+        "browser_back",
+        "browser_press",
+        "browser_close",
+        "browser_get_images",
+        "browser_vision",
     ],
     "cronjob_tools": ["schedule_cronjob", "list_cronjobs", "remove_cronjob"],
     "rl_tools": [
-        "rl_list_environments", "rl_select_environment",
-        "rl_get_current_config", "rl_edit_config",
-        "rl_start_training", "rl_check_status",
-        "rl_stop_training", "rl_get_results",
-        "rl_list_runs", "rl_test_inference"
+        "rl_list_environments",
+        "rl_select_environment",
+        "rl_get_current_config",
+        "rl_edit_config",
+        "rl_start_training",
+        "rl_check_status",
+        "rl_stop_training",
+        "rl_get_results",
+        "rl_list_runs",
+        "rl_test_inference",
     ],
     "file_tools": ["read_file", "write_file", "patch", "search_files"],
     "tts_tools": ["text_to_speech"],
@@ -161,11 +176,12 @@ _LEGACY_TOOLSET_MAP = {
 # get_tool_definitions  (the main schema provider)
 # =============================================================================
 
+
 def get_tool_definitions(
-    enabled_toolsets: List[str] = None,
-    disabled_toolsets: List[str] = None,
+    enabled_toolsets: list[str] = None,
+    disabled_toolsets: list[str] = None,
     quiet_mode: bool = False,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Get tool definitions for model API calls with toolset-based filtering.
 
@@ -200,6 +216,7 @@ def get_tool_definitions(
 
     elif disabled_toolsets:
         from toolsets import get_all_toolsets
+
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
@@ -219,6 +236,7 @@ def get_tool_definitions(
                     print(f"⚠️  Unknown toolset: {toolset_name}")
     else:
         from toolsets import get_all_toolsets
+
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
 
@@ -230,6 +248,7 @@ def get_tool_definitions(
     # execute_code" even when the user disabled the web toolset (#560-discord).
     if "execute_code" in tools_to_include:
         from tools.code_execution_tool import SANDBOX_ALLOWED_TOOLS, build_execute_code_schema
+
         sandbox_enabled = SANDBOX_ALLOWED_TOOLS & tools_to_include
         dynamic_schema = build_execute_code_schema(sandbox_enabled)
         for i, td in enumerate(filtered_tools):
@@ -263,9 +282,9 @@ _AGENT_LOOP_TOOLS = {"todo", "memory", "session_search", "delegate_task"}
 
 def handle_function_call(
     function_name: str,
-    function_args: Dict[str, Any],
-    task_id: Optional[str] = None,
-    user_task: Optional[str] = None,
+    function_args: dict[str, Any],
+    task_id: str | None = None,
+    user_task: str | None = None,
 ) -> str:
     """
     Main function call dispatcher that routes calls to the tool registry.
@@ -285,13 +304,15 @@ def handle_function_call(
 
         if function_name == "execute_code":
             return registry.dispatch(
-                function_name, function_args,
+                function_name,
+                function_args,
                 task_id=task_id,
                 enabled_tools=_last_resolved_tool_names,
             )
 
         return registry.dispatch(
-            function_name, function_args,
+            function_name,
+            function_args,
             task_id=task_id,
             user_task=user_task,
         )
@@ -306,26 +327,27 @@ def handle_function_call(
 # Backward-compat wrapper functions
 # =============================================================================
 
-def get_all_tool_names() -> List[str]:
+
+def get_all_tool_names() -> list[str]:
     """Return all registered tool names."""
     return registry.get_all_tool_names()
 
 
-def get_toolset_for_tool(tool_name: str) -> Optional[str]:
+def get_toolset_for_tool(tool_name: str) -> str | None:
     """Return the toolset a tool belongs to."""
     return registry.get_toolset_for_tool(tool_name)
 
 
-def get_available_toolsets() -> Dict[str, dict]:
+def get_available_toolsets() -> dict[str, dict]:
     """Return toolset availability info for UI display."""
     return registry.get_available_toolsets()
 
 
-def check_toolset_requirements() -> Dict[str, bool]:
+def check_toolset_requirements() -> dict[str, bool]:
     """Return {toolset: available_bool} for every registered toolset."""
     return registry.check_toolset_requirements()
 
 
-def check_tool_availability(quiet: bool = False) -> Tuple[List[str], List[dict]]:
+def check_tool_availability(quiet: bool = False) -> tuple[list[str], list[dict]]:
     """Return (available_toolsets, unavailable_info)."""
     return registry.check_tool_availability(quiet=quiet)

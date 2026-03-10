@@ -6,7 +6,6 @@ Used by AIAgent._execute_tool_calls for CLI feedback.
 
 import json
 import os
-import random
 import sys
 import threading
 import time
@@ -20,19 +19,31 @@ _RESET = "\033[0m"
 # Tool preview (one-line summary of a tool call's primary argument)
 # =========================================================================
 
+
 def build_tool_preview(tool_name: str, args: dict, max_len: int = 40) -> str:
     """Build a short preview of a tool call's primary argument for display."""
     primary_args = {
-        "terminal": "command", "web_search": "query", "web_extract": "urls",
-        "read_file": "path", "write_file": "path", "patch": "path",
-        "search_files": "pattern", "browser_navigate": "url",
-        "browser_click": "ref", "browser_type": "text",
-        "image_generate": "prompt", "text_to_speech": "text",
-        "vision_analyze": "question", "mixture_of_agents": "user_prompt",
-        "skill_view": "name", "skills_list": "category",
+        "terminal": "command",
+        "web_search": "query",
+        "web_extract": "urls",
+        "read_file": "path",
+        "write_file": "path",
+        "patch": "path",
+        "search_files": "pattern",
+        "browser_navigate": "url",
+        "browser_click": "ref",
+        "browser_type": "text",
+        "image_generate": "prompt",
+        "text_to_speech": "text",
+        "vision_analyze": "question",
+        "mixture_of_agents": "user_prompt",
+        "skill_view": "name",
+        "skills_list": "category",
         "schedule_cronjob": "name",
-        "execute_code": "code", "delegate_task": "goal",
-        "clarify": "question", "skill_manage": "name",
+        "execute_code": "code",
+        "delegate_task": "goal",
+        "clarify": "question",
+        "skill_manage": "name",
     }
 
     if tool_name == "process":
@@ -61,18 +72,18 @@ def build_tool_preview(tool_name: str, args: dict, max_len: int = 40) -> str:
 
     if tool_name == "session_search":
         query = args.get("query", "")
-        return f"recall: \"{query[:25]}{'...' if len(query) > 25 else ''}\""
+        return f'recall: "{query[:25]}{"..." if len(query) > 25 else ""}"'
 
     if tool_name == "memory":
         action = args.get("action", "")
         target = args.get("target", "")
         if action == "add":
             content = args.get("content", "")
-            return f"+{target}: \"{content[:25]}{'...' if len(content) > 25 else ''}\""
+            return f'+{target}: "{content[:25]}{"..." if len(content) > 25 else ""}"'
         elif action == "replace":
-            return f"~{target}: \"{args.get('old_text', '')[:20]}\""
+            return f'~{target}: "{args.get("old_text", "")[:20]}"'
         elif action == "remove":
-            return f"-{target}: \"{args.get('old_text', '')[:20]}\""
+            return f'-{target}: "{args.get("old_text", "")[:20]}"'
         return action
 
     if tool_name == "send_message":
@@ -80,7 +91,7 @@ def build_tool_preview(tool_name: str, args: dict, max_len: int = 40) -> str:
         msg = args.get("message", "")
         if len(msg) > 20:
             msg = msg[:17] + "..."
-        return f"to {target}: \"{msg}\""
+        return f'to {target}: "{msg}"'
 
     if tool_name.startswith("rl_"):
         rl_previews = {
@@ -115,7 +126,7 @@ def build_tool_preview(tool_name: str, args: dict, max_len: int = 40) -> str:
     if not preview:
         return None
     if len(preview) > max_len:
-        preview = preview[:max_len - 3] + "..."
+        preview = preview[: max_len - 3] + "..."
     return preview
 
 
@@ -123,41 +134,74 @@ def build_tool_preview(tool_name: str, args: dict, max_len: int = 40) -> str:
 # KawaiiSpinner
 # =========================================================================
 
+
 class KawaiiSpinner:
     """Animated spinner with kawaii faces for CLI feedback during tool execution."""
 
     SPINNERS = {
-        'dots': ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'],
-        'bounce': ['⠁', '⠂', '⠄', '⡀', '⢀', '⠠', '⠐', '⠈'],
-        'grow': ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█', '▇', '▆', '▅', '▄', '▃', '▂'],
-        'arrows': ['←', '↖', '↑', '↗', '→', '↘', '↓', '↙'],
-        'star': ['✶', '✷', '✸', '✹', '✺', '✹', '✸', '✷'],
-        'moon': ['🌑', '🌒', '🌓', '🌔', '🌕', '🌖', '🌗', '🌘'],
-        'pulse': ['◜', '◠', '◝', '◞', '◡', '◟'],
-        'brain': ['🧠', '💭', '💡', '✨', '💫', '🌟', '💡', '💭'],
-        'sparkle': ['⁺', '˚', '*', '✧', '✦', '✧', '*', '˚'],
+        "dots": ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+        "bounce": ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"],
+        "grow": ["▁", "▂", "▃", "▄", "▅", "▆", "▇", "█", "▇", "▆", "▅", "▄", "▃", "▂"],
+        "arrows": ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"],
+        "star": ["✶", "✷", "✸", "✹", "✺", "✹", "✸", "✷"],
+        "moon": ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"],
+        "pulse": ["◜", "◠", "◝", "◞", "◡", "◟"],
+        "brain": ["🧠", "💭", "💡", "✨", "💫", "🌟", "💡", "💭"],
+        "sparkle": ["⁺", "˚", "*", "✧", "✦", "✧", "*", "˚"],
     }
 
     KAWAII_WAITING = [
-        "(｡◕‿◕｡)", "(◕‿◕✿)", "٩(◕‿◕｡)۶", "(✿◠‿◠)", "( ˘▽˘)っ",
-        "♪(´ε` )", "(◕ᴗ◕✿)", "ヾ(＾∇＾)", "(≧◡≦)", "(★ω★)",
+        "(｡◕‿◕｡)",
+        "(◕‿◕✿)",
+        "٩(◕‿◕｡)۶",
+        "(✿◠‿◠)",
+        "( ˘▽˘)っ",
+        "♪(´ε` )",
+        "(◕ᴗ◕✿)",
+        "ヾ(＾∇＾)",
+        "(≧◡≦)",
+        "(★ω★)",
     ]
 
     KAWAII_THINKING = [
-        "(｡•́︿•̀｡)", "(◔_◔)", "(¬‿¬)", "( •_•)>⌐■-■", "(⌐■_■)",
-        "(´･_･`)", "◉_◉", "(°ロ°)", "( ˘⌣˘)♡", "ヽ(>∀<☆)☆",
-        "٩(๑❛ᴗ❛๑)۶", "(⊙_⊙)", "(¬_¬)", "( ͡° ͜ʖ ͡°)", "ಠ_ಠ",
+        "(｡•́︿•̀｡)",
+        "(◔_◔)",
+        "(¬‿¬)",
+        "( •_•)>⌐■-■",
+        "(⌐■_■)",
+        "(´･_･`)",
+        "◉_◉",
+        "(°ロ°)",
+        "( ˘⌣˘)♡",
+        "ヽ(>∀<☆)☆",
+        "٩(๑❛ᴗ❛๑)۶",
+        "(⊙_⊙)",
+        "(¬_¬)",
+        "( ͡° ͜ʖ ͡°)",
+        "ಠ_ಠ",
     ]
 
     THINKING_VERBS = [
-        "pondering", "contemplating", "musing", "cogitating", "ruminating",
-        "deliberating", "mulling", "reflecting", "processing", "reasoning",
-        "analyzing", "computing", "synthesizing", "formulating", "brainstorming",
+        "pondering",
+        "contemplating",
+        "musing",
+        "cogitating",
+        "ruminating",
+        "deliberating",
+        "mulling",
+        "reflecting",
+        "processing",
+        "reasoning",
+        "analyzing",
+        "computing",
+        "synthesizing",
+        "formulating",
+        "brainstorming",
     ]
 
-    def __init__(self, message: str = "", spinner_type: str = 'dots'):
+    def __init__(self, message: str = "", spinner_type: str = "dots"):
         self.message = message
-        self.spinner_frames = self.SPINNERS.get(spinner_type, self.SPINNERS['dots'])
+        self.spinner_frames = self.SPINNERS.get(spinner_type, self.SPINNERS["dots"])
         self.running = False
         self.thread = None
         self.frame_idx = 0
@@ -167,7 +211,7 @@ class KawaiiSpinner:
         # child agents can replace sys.stdout with a black hole.
         self._out = sys.stdout
 
-    def _write(self, text: str, end: str = '\n', flush: bool = False):
+    def _write(self, text: str, end: str = "\n", flush: bool = False):
         """Write to the stdout captured at spinner creation time."""
         try:
             self._out.write(text + end)
@@ -185,7 +229,7 @@ class KawaiiSpinner:
             elapsed = time.time() - self.start_time
             line = f"  {frame} {self.message} ({elapsed:.1f}s)"
             pad = max(self.last_line_len - len(line), 0)
-            self._write(f"\r{line}{' ' * pad}", end='', flush=True)
+            self._write(f"\r{line}{' ' * pad}", end="", flush=True)
             self.last_line_len = len(line)
             self.frame_idx += 1
             time.sleep(0.12)
@@ -216,7 +260,7 @@ class KawaiiSpinner:
         # Clear spinner line with spaces (not \033[K) to avoid garbled escape
         # codes when prompt_toolkit's patch_stdout is active — same approach
         # as stop(). Then print text; spinner redraws on next tick.
-        blanks = ' ' * max(self.last_line_len + 5, 40)
+        blanks = " " * max(self.last_line_len + 5, 40)
         self._write(f"\r{blanks}\r  {text}", flush=True)
 
     def stop(self, final_message: str = None):
@@ -225,8 +269,8 @@ class KawaiiSpinner:
             self.thread.join(timeout=0.5)
         # Clear the spinner line with spaces instead of \033[K to avoid
         # garbled escape codes when prompt_toolkit's patch_stdout is active.
-        blanks = ' ' * max(self.last_line_len + 5, 40)
-        self._write(f"\r{blanks}\r", end='', flush=True)
+        blanks = " " * max(self.last_line_len + 5, 40)
+        self._write(f"\r{blanks}\r", end="", flush=True)
         if final_message:
             self._write(f"  {final_message}", flush=True)
 
@@ -244,44 +288,117 @@ class KawaiiSpinner:
 # =========================================================================
 
 KAWAII_SEARCH = [
-    "♪(´ε` )", "(｡◕‿◕｡)", "ヾ(＾∇＾)", "(◕ᴗ◕✿)", "( ˘▽˘)っ",
-    "٩(◕‿◕｡)۶", "(✿◠‿◠)", "♪～(´ε｀ )", "(ノ´ヮ`)ノ*:・゚✧", "＼(◎o◎)／",
+    "♪(´ε` )",
+    "(｡◕‿◕｡)",
+    "ヾ(＾∇＾)",
+    "(◕ᴗ◕✿)",
+    "( ˘▽˘)っ",
+    "٩(◕‿◕｡)۶",
+    "(✿◠‿◠)",
+    "♪～(´ε｀ )",
+    "(ノ´ヮ`)ノ*:・゚✧",
+    "＼(◎o◎)／",
 ]
 KAWAII_READ = [
-    "φ(゜▽゜*)♪", "( ˘▽˘)っ", "(⌐■_■)", "٩(｡•́‿•̀｡)۶", "(◕‿◕✿)",
-    "ヾ(＠⌒ー⌒＠)ノ", "(✧ω✧)", "♪(๑ᴖ◡ᴖ๑)♪", "(≧◡≦)", "( ´ ▽ ` )ノ",
+    "φ(゜▽゜*)♪",
+    "( ˘▽˘)っ",
+    "(⌐■_■)",
+    "٩(｡•́‿•̀｡)۶",
+    "(◕‿◕✿)",
+    "ヾ(＠⌒ー⌒＠)ノ",
+    "(✧ω✧)",
+    "♪(๑ᴖ◡ᴖ๑)♪",
+    "(≧◡≦)",
+    "( ´ ▽ ` )ノ",
 ]
 KAWAII_TERMINAL = [
-    "ヽ(>∀<☆)ノ", "(ノ°∀°)ノ", "٩(^ᴗ^)۶", "ヾ(⌐■_■)ノ♪", "(•̀ᴗ•́)و",
-    "┗(＾0＾)┓", "(｀・ω・´)", "＼(￣▽￣)／", "(ง •̀_•́)ง", "ヽ(´▽`)/",
+    "ヽ(>∀<☆)ノ",
+    "(ノ°∀°)ノ",
+    "٩(^ᴗ^)۶",
+    "ヾ(⌐■_■)ノ♪",
+    "(•̀ᴗ•́)و",
+    "┗(＾0＾)┓",
+    "(｀・ω・´)",
+    "＼(￣▽￣)／",
+    "(ง •̀_•́)ง",
+    "ヽ(´▽`)/",
 ]
 KAWAII_BROWSER = [
-    "(ノ°∀°)ノ", "(☞゚ヮ゚)☞", "( ͡° ͜ʖ ͡°)", "┌( ಠ_ಠ)┘", "(⊙_⊙)？",
-    "ヾ(•ω•`)o", "(￣ω￣)", "( ˇωˇ )", "(ᵔᴥᵔ)", "＼(◎o◎)／",
+    "(ノ°∀°)ノ",
+    "(☞゚ヮ゚)☞",
+    "( ͡° ͜ʖ ͡°)",
+    "┌( ಠ_ಠ)┘",
+    "(⊙_⊙)？",
+    "ヾ(•ω•`)o",
+    "(￣ω￣)",
+    "( ˇωˇ )",
+    "(ᵔᴥᵔ)",
+    "＼(◎o◎)／",
 ]
 KAWAII_CREATE = [
-    "✧*。٩(ˊᗜˋ*)و✧", "(ﾉ◕ヮ◕)ﾉ*:・ﾟ✧", "ヽ(>∀<☆)ノ", "٩(♡ε♡)۶", "(◕‿◕)♡",
-    "✿◕ ‿ ◕✿", "(*≧▽≦)", "ヾ(＾-＾)ノ", "(☆▽☆)", "°˖✧◝(⁰▿⁰)◜✧˖°",
+    "✧*。٩(ˊᗜˋ*)و✧",
+    "(ﾉ◕ヮ◕)ﾉ*:・ﾟ✧",
+    "ヽ(>∀<☆)ノ",
+    "٩(♡ε♡)۶",
+    "(◕‿◕)♡",
+    "✿◕ ‿ ◕✿",
+    "(*≧▽≦)",
+    "ヾ(＾-＾)ノ",
+    "(☆▽☆)",
+    "°˖✧◝(⁰▿⁰)◜✧˖°",
 ]
 KAWAII_SKILL = [
-    "ヾ(＠⌒ー⌒＠)ノ", "(๑˃ᴗ˂)ﻭ", "٩(◕‿◕｡)۶", "(✿╹◡╹)", "ヽ(・∀・)ノ",
-    "(ノ´ヮ`)ノ*:・ﾟ✧", "♪(๑ᴖ◡ᴖ๑)♪", "(◠‿◠)", "٩(ˊᗜˋ*)و", "(＾▽＾)",
-    "ヾ(＾∇＾)", "(★ω★)/", "٩(｡•́‿•̀｡)۶", "(◕ᴗ◕✿)", "＼(◎o◎)／",
-    "(✧ω✧)", "ヽ(>∀<☆)ノ", "( ˘▽˘)っ", "(≧◡≦) ♡", "ヾ(￣▽￣)",
+    "ヾ(＠⌒ー⌒＠)ノ",
+    "(๑˃ᴗ˂)ﻭ",
+    "٩(◕‿◕｡)۶",
+    "(✿╹◡╹)",
+    "ヽ(・∀・)ノ",
+    "(ノ´ヮ`)ノ*:・ﾟ✧",
+    "♪(๑ᴖ◡ᴖ๑)♪",
+    "(◠‿◠)",
+    "٩(ˊᗜˋ*)و",
+    "(＾▽＾)",
+    "ヾ(＾∇＾)",
+    "(★ω★)/",
+    "٩(｡•́‿•̀｡)۶",
+    "(◕ᴗ◕✿)",
+    "＼(◎o◎)／",
+    "(✧ω✧)",
+    "ヽ(>∀<☆)ノ",
+    "( ˘▽˘)っ",
+    "(≧◡≦) ♡",
+    "ヾ(￣▽￣)",
 ]
 KAWAII_THINK = [
-    "(っ°Д°;)っ", "(；′⌒`)", "(・_・ヾ", "( ´_ゝ`)", "(￣ヘ￣)",
-    "(。-`ω´-)", "( ˘︹˘ )", "(¬_¬)", "ヽ(ー_ー )ノ", "(；一_一)",
+    "(っ°Д°;)っ",
+    "(；′⌒`)",
+    "(・_・ヾ",
+    "( ´_ゝ`)",
+    "(￣ヘ￣)",
+    "(。-`ω´-)",
+    "( ˘︹˘ )",
+    "(¬_¬)",
+    "ヽ(ー_ー )ノ",
+    "(；一_一)",
 ]
 KAWAII_GENERIC = [
-    "♪(´ε` )", "(◕‿◕✿)", "ヾ(＾∇＾)", "٩(◕‿◕｡)۶", "(✿◠‿◠)",
-    "(ノ´ヮ`)ノ*:・ﾟ✧", "ヽ(>∀<☆)ノ", "(☆▽☆)", "( ˘▽˘)っ", "(≧◡≦)",
+    "♪(´ε` )",
+    "(◕‿◕✿)",
+    "ヾ(＾∇＾)",
+    "٩(◕‿◕｡)۶",
+    "(✿◠‿◠)",
+    "(ノ´ヮ`)ノ*:・ﾟ✧",
+    "ヽ(>∀<☆)ノ",
+    "(☆▽☆)",
+    "( ˘▽˘)っ",
+    "(≧◡≦)",
 ]
 
 
 # =========================================================================
 # Cute tool message (completion line that replaces the spinner)
 # =========================================================================
+
 
 def _detect_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]:
     """Inspect a tool result string for signs of failure.
@@ -321,7 +438,10 @@ def _detect_tool_failure(tool_name: str, result: str | None) -> tuple[bool, str]
 
 
 def get_cute_tool_message(
-    tool_name: str, args: dict, duration: float, result: str | None = None,
+    tool_name: str,
+    args: dict,
+    duration: float,
+    result: str | None = None,
 ) -> str:
     """Generate a formatted tool completion line for CLI quiet mode.
 
@@ -335,11 +455,11 @@ def get_cute_tool_message(
 
     def _trunc(s, n=40):
         s = str(s)
-        return (s[:n-3] + "...") if len(s) > n else s
+        return (s[: n - 3] + "...") if len(s) > n else s
 
     def _path(p, n=35):
         p = str(p)
-        return ("..." + p[-(n-3):]) if len(p) > n else p
+        return ("..." + p[-(n - 3) :]) if len(p) > n else p
 
     def _wrap(line: str) -> str:
         """Append failure suffix when the tool failed."""
@@ -354,7 +474,7 @@ def get_cute_tool_message(
         if urls:
             url = urls[0] if isinstance(urls, list) else str(urls)
             domain = url.replace("https://", "").replace("http://", "").split("/")[0]
-            extra = f" +{len(urls)-1}" if len(urls) > 1 else ""
+            extra = f" +{len(urls) - 1}" if len(urls) > 1 else ""
             return _wrap(f"┊ 📄 fetch     {_trunc(domain, 35)}{extra}  {dur}")
         return _wrap(f"┊ 📄 fetch     pages  {dur}")
     if tool_name == "web_crawl":
@@ -366,8 +486,15 @@ def get_cute_tool_message(
     if tool_name == "process":
         action = args.get("action", "?")
         sid = args.get("session_id", "")[:12]
-        labels = {"list": "ls processes", "poll": f"poll {sid}", "log": f"log {sid}",
-                  "wait": f"wait {sid}", "kill": f"kill {sid}", "write": f"write {sid}", "submit": f"submit {sid}"}
+        labels = {
+            "list": "ls processes",
+            "poll": f"poll {sid}",
+            "log": f"log {sid}",
+            "wait": f"wait {sid}",
+            "kill": f"kill {sid}",
+            "write": f"write {sid}",
+            "submit": f"submit {sid}",
+        }
         return _wrap(f"┊ ⚙️  proc      {labels.get(action, f'{action} {sid}')}  {dur}")
     if tool_name == "read_file":
         return _wrap(f"┊ 📖 read      {_path(args.get('path', ''))}  {dur}")
@@ -390,7 +517,7 @@ def get_cute_tool_message(
     if tool_name == "browser_click":
         return _wrap(f"┊ 👆 click     {args.get('ref', '?')}  {dur}")
     if tool_name == "browser_type":
-        return _wrap(f"┊ ⌨️  type      \"{_trunc(args.get('text', ''), 30)}\"  {dur}")
+        return _wrap(f'┊ ⌨️  type      "{_trunc(args.get("text", ""), 30)}"  {dur}')
     if tool_name == "browser_scroll":
         d = args.get("direction", "down")
         arrow = {"down": "↓", "up": "↑", "right": "→", "left": "←"}.get(d, "↓")
@@ -415,16 +542,16 @@ def get_cute_tool_message(
         else:
             return _wrap(f"┊ 📋 plan      {len(todos_arg)} task(s)  {dur}")
     if tool_name == "session_search":
-        return _wrap(f"┊ 🔍 recall    \"{_trunc(args.get('query', ''), 35)}\"  {dur}")
+        return _wrap(f'┊ 🔍 recall    "{_trunc(args.get("query", ""), 35)}"  {dur}')
     if tool_name == "memory":
         action = args.get("action", "?")
         target = args.get("target", "")
         if action == "add":
-            return _wrap(f"┊ 🧠 memory    +{target}: \"{_trunc(args.get('content', ''), 30)}\"  {dur}")
+            return _wrap(f'┊ 🧠 memory    +{target}: "{_trunc(args.get("content", ""), 30)}"  {dur}')
         elif action == "replace":
-            return _wrap(f"┊ 🧠 memory    ~{target}: \"{_trunc(args.get('old_text', ''), 20)}\"  {dur}")
+            return _wrap(f'┊ 🧠 memory    ~{target}: "{_trunc(args.get("old_text", ""), 20)}"  {dur}')
         elif action == "remove":
-            return _wrap(f"┊ 🧠 memory    -{target}: \"{_trunc(args.get('old_text', ''), 20)}\"  {dur}")
+            return _wrap(f'┊ 🧠 memory    -{target}: "{_trunc(args.get("old_text", ""), 20)}"  {dur}')
         return _wrap(f"┊ 🧠 memory    {action}  {dur}")
     if tool_name == "skills_list":
         return _wrap(f"┊ 📚 skills    list {args.get('category', 'all')}  {dur}")
@@ -439,7 +566,7 @@ def get_cute_tool_message(
     if tool_name == "mixture_of_agents":
         return _wrap(f"┊ 🧠 reason    {_trunc(args.get('user_prompt', ''), 30)}  {dur}")
     if tool_name == "send_message":
-        return _wrap(f"┊ 📨 send      {args.get('target', '?')}: \"{_trunc(args.get('message', ''), 25)}\"  {dur}")
+        return _wrap(f'┊ 📨 send      {args.get("target", "?")}: "{_trunc(args.get("message", ""), 25)}"  {dur}')
     if tool_name == "schedule_cronjob":
         return _wrap(f"┊ ⏰ schedule  {_trunc(args.get('name', args.get('prompt', 'task')), 30)}  {dur}")
     if tool_name == "list_cronjobs":
@@ -448,11 +575,16 @@ def get_cute_tool_message(
         return _wrap(f"┊ ⏰ remove    job {args.get('job_id', '?')}  {dur}")
     if tool_name.startswith("rl_"):
         rl = {
-            "rl_list_environments": "list envs", "rl_select_environment": f"select {args.get('name', '')}",
-            "rl_get_current_config": "get config", "rl_edit_config": f"set {args.get('field', '?')}",
-            "rl_start_training": "start training", "rl_check_status": f"status {args.get('run_id', '?')[:12]}",
-            "rl_stop_training": f"stop {args.get('run_id', '?')[:12]}", "rl_get_results": f"results {args.get('run_id', '?')[:12]}",
-            "rl_list_runs": "list runs", "rl_test_inference": "test inference",
+            "rl_list_environments": "list envs",
+            "rl_select_environment": f"select {args.get('name', '')}",
+            "rl_get_current_config": "get config",
+            "rl_edit_config": f"set {args.get('field', '?')}",
+            "rl_start_training": "start training",
+            "rl_check_status": f"status {args.get('run_id', '?')[:12]}",
+            "rl_stop_training": f"stop {args.get('run_id', '?')[:12]}",
+            "rl_get_results": f"results {args.get('run_id', '?')[:12]}",
+            "rl_list_runs": "list runs",
+            "rl_test_inference": "test inference",
         }
         return _wrap(f"┊ 🧪 rl        {rl.get(tool_name, tool_name.replace('rl_', ''))}  {dur}")
     if tool_name == "execute_code":

@@ -13,7 +13,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +60,7 @@ def mirror_to_session(
         return False
 
 
-def _find_session_id(platform: str, chat_id: str) -> Optional[str]:
+def _find_session_id(platform: str, chat_id: str) -> str | None:
     """
     Find the active session_id for a platform + chat_id pair.
 
@@ -113,6 +112,7 @@ def _append_to_sqlite(session_id: str, message: dict) -> None:
     """Append a message to the SQLite session database."""
     try:
         from hermes_state import SessionDB
+
         db = SessionDB()
         db.append_message(
             session_id=session_id,

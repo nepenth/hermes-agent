@@ -9,14 +9,12 @@ import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict, List, Any, Optional
-
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 
 from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +75,8 @@ COMPACT_BANNER = """
 # Skills scanning
 # =========================================================================
 
-def get_available_skills() -> Dict[str, List[str]]:
+
+def get_available_skills() -> dict[str, list[str]]:
     """Scan ~/.hermes/skills/ and return skills grouped by category."""
     import os
 
@@ -110,7 +109,7 @@ def get_available_skills() -> Dict[str, List[str]]:
 _UPDATE_CHECK_CACHE_SECONDS = 6 * 3600
 
 
-def check_for_updates() -> Optional[int]:
+def check_for_updates() -> int | None:
     """Check how many commits behind origin/main the local repo is.
 
     Does a ``git fetch`` at most once every 6 hours (cached to
@@ -139,7 +138,8 @@ def check_for_updates() -> Optional[int]:
     try:
         subprocess.run(
             ["git", "fetch", "origin", "--quiet"],
-            capture_output=True, timeout=10,
+            capture_output=True,
+            timeout=10,
             cwd=str(repo_dir),
         )
     except Exception:
@@ -149,7 +149,9 @@ def check_for_updates() -> Optional[int]:
     try:
         result = subprocess.run(
             ["git", "rev-list", "--count", "HEAD..origin/main"],
-            capture_output=True, text=True, timeout=5,
+            capture_output=True,
+            text=True,
+            timeout=5,
             cwd=str(repo_dir),
         )
         if result.returncode == 0:
@@ -172,6 +174,7 @@ def check_for_updates() -> Optional[int]:
 # Welcome banner
 # =========================================================================
 
+
 def _format_context_length(tokens: int) -> str:
     """Format a token count for display (e.g. 128000 → '128K', 1048576 → '1M')."""
     if tokens >= 1_000_000:
@@ -183,12 +186,16 @@ def _format_context_length(tokens: int) -> str:
     return str(tokens)
 
 
-def build_welcome_banner(console: Console, model: str, cwd: str,
-                         tools: List[dict] = None,
-                         enabled_toolsets: List[str] = None,
-                         session_id: str = None,
-                         get_toolset_for_tool=None,
-                         context_length: int = None):
+def build_welcome_banner(
+    console: Console,
+    model: str,
+    cwd: str,
+    tools: list[dict] = None,
+    enabled_toolsets: list[str] = None,
+    session_id: str = None,
+    get_toolset_for_tool=None,
+    context_length: int = None,
+):
     """Build and print a welcome banner with caduceus on left and info on right.
 
     Args:
@@ -201,7 +208,8 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
         get_toolset_for_tool: Callable to map tool name -> toolset name.
         context_length: Model's context window size in tokens.
     """
-    from model_tools import check_tool_availability, TOOLSET_REQUIREMENTS
+    from model_tools import check_tool_availability
+
     if get_toolset_for_tool is None:
         from model_tools import get_toolset_for_tool
 
@@ -221,7 +229,9 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     model_short = model.split("/")[-1] if "/" in model else model
     if len(model_short) > 28:
         model_short = model_short[:25] + "..."
-    ctx_str = f" [dim #B8860B]·[/] [dim #B8860B]{_format_context_length(context_length)} context[/]" if context_length else ""
+    ctx_str = (
+        f" [dim #B8860B]·[/] [dim #B8860B]{_format_context_length(context_length)} context[/]" if context_length else ""
+    )
     left_lines.append(f"[#FFBF00]{model_short}[/]{ctx_str} [dim #B8860B]·[/] [dim #B8860B]Nous Research[/]")
     left_lines.append(f"[dim #B8860B]{cwd}[/]")
     if session_id:
@@ -229,7 +239,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     left_content = "\n".join(left_lines)
 
     right_lines = ["[bold #FFBF00]Available Tools[/]"]
-    toolsets_dict: Dict[str, list] = {}
+    toolsets_dict: dict[str, list] = {}
 
     for tool in tools:
         tool_name = tool["function"]["name"]
@@ -286,6 +296,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
     # MCP Servers section (only if configured)
     try:
         from tools.mcp_tool import get_mcp_status
+
         mcp_status = get_mcp_status()
     except Exception:
         mcp_status = []
@@ -300,10 +311,7 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
                     f"[dim #B8860B]—[/] [#FFF8DC]{srv['tools']} tool(s)[/]"
                 )
             else:
-                right_lines.append(
-                    f"[red]{srv['name']}[/] [dim]({srv['transport']})[/] "
-                    f"[red]— failed[/]"
-                )
+                right_lines.append(f"[red]{srv['name']}[/] [dim]({srv['transport']})[/] [red]— failed[/]")
 
     right_lines.append("")
     right_lines.append("[bold #FFBF00]Available Skills[/]")

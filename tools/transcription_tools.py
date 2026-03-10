@@ -24,7 +24,7 @@ Usage:
 import logging
 import os
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ SUPPORTED_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm", 
 MAX_FILE_SIZE = 25 * 1024 * 1024
 
 
-def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, Any]:
+def transcribe_audio(file_path: str, model: str | None = None) -> dict[str, Any]:
     """
     Transcribe an audio file using OpenAI's Whisper API.
 
@@ -65,7 +65,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         }
 
     audio_path = Path(file_path)
-    
+
     # Validate file exists
     if not audio_path.exists():
         return {
@@ -73,14 +73,14 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
             "transcript": "",
             "error": f"Audio file not found: {file_path}",
         }
-    
+
     if not audio_path.is_file():
         return {
             "success": False,
             "transcript": "",
             "error": f"Path is not a file: {file_path}",
         }
-    
+
     # Validate file extension
     if audio_path.suffix.lower() not in SUPPORTED_FORMATS:
         return {
@@ -88,7 +88,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
             "transcript": "",
             "error": f"Unsupported file format: {audio_path.suffix}. Supported formats: {', '.join(sorted(SUPPORTED_FORMATS))}",
         }
-    
+
     # Validate file size
     try:
         file_size = audio_path.stat().st_size
@@ -96,7 +96,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
             return {
                 "success": False,
                 "transcript": "",
-                "error": f"File too large: {file_size / (1024*1024):.1f}MB (max {MAX_FILE_SIZE / (1024*1024)}MB)",
+                "error": f"File too large: {file_size / (1024 * 1024):.1f}MB (max {MAX_FILE_SIZE / (1024 * 1024)}MB)",
             }
     except OSError as e:
         logger.error("Failed to get file size for %s: %s", file_path, e, exc_info=True)
@@ -111,7 +111,7 @@ def transcribe_audio(file_path: str, model: Optional[str] = None) -> Dict[str, A
         model = DEFAULT_STT_MODEL
 
     try:
-        from openai import OpenAI, APIError, APIConnectionError, APITimeoutError
+        from openai import APIConnectionError, APIError, APITimeoutError, OpenAI
 
         client = OpenAI(api_key=api_key, base_url="https://api.openai.com/v1")
 

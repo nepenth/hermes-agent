@@ -27,9 +27,8 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +37,14 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 try:
     import edge_tts
+
     _HAS_EDGE_TTS = True
 except ImportError:
     _HAS_EDGE_TTS = False
 
 try:
     from elevenlabs.client import ElevenLabs
+
     _HAS_ELEVENLABS = True
 except ImportError:
     _HAS_ELEVENLABS = False
@@ -51,6 +52,7 @@ except ImportError:
 # openai is a core dependency, but guard anyway
 try:
     from openai import OpenAI as OpenAIClient
+
     _HAS_OPENAI = True
 except ImportError:
     _HAS_OPENAI = False
@@ -72,7 +74,7 @@ MAX_TEXT_LENGTH = 4000
 # ===========================================================================
 # Config loader -- reads tts: section from ~/.hermes/config.yaml
 # ===========================================================================
-def _load_tts_config() -> Dict[str, Any]:
+def _load_tts_config() -> dict[str, Any]:
     """
     Load TTS configuration from ~/.hermes/config.yaml.
 
@@ -81,13 +83,14 @@ def _load_tts_config() -> Dict[str, Any]:
     """
     try:
         from hermes_cli.config import load_config
+
         config = load_config()
         return config.get("tts", {})
     except Exception:
         return {}
 
 
-def _get_provider(tts_config: Dict[str, Any]) -> str:
+def _get_provider(tts_config: dict[str, Any]) -> str:
     """Get the configured TTS provider name."""
     return tts_config.get("provider", DEFAULT_PROVIDER).lower().strip()
 
@@ -100,7 +103,7 @@ def _has_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _convert_to_opus(mp3_path: str) -> Optional[str]:
+def _convert_to_opus(mp3_path: str) -> str | None:
     """
     Convert an MP3 file to OGG Opus format for Telegram voice bubbles.
 
@@ -116,9 +119,9 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
     ogg_path = mp3_path.rsplit(".", 1)[0] + ".ogg"
     try:
         subprocess.run(
-            ["ffmpeg", "-i", mp3_path, "-acodec", "libopus",
-             "-ac", "1", "-b:a", "64k", "-vbr", "off", ogg_path, "-y"],
-            capture_output=True, timeout=30,
+            ["ffmpeg", "-i", mp3_path, "-acodec", "libopus", "-ac", "1", "-b:a", "64k", "-vbr", "off", ogg_path, "-y"],
+            capture_output=True,
+            timeout=30,
         )
         if os.path.exists(ogg_path) and os.path.getsize(ogg_path) > 0:
             return ogg_path
@@ -130,7 +133,7 @@ def _convert_to_opus(mp3_path: str) -> Optional[str]:
 # ===========================================================================
 # Provider: Edge TTS (free)
 # ===========================================================================
-async def _generate_edge_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+async def _generate_edge_tts(text: str, output_path: str, tts_config: dict[str, Any]) -> str:
     """
     Generate audio using Edge TTS.
 
@@ -153,7 +156,7 @@ async def _generate_edge_tts(text: str, output_path: str, tts_config: Dict[str, 
 # ===========================================================================
 # Provider: ElevenLabs (premium)
 # ===========================================================================
-def _generate_elevenlabs(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+def _generate_elevenlabs(text: str, output_path: str, tts_config: dict[str, Any]) -> str:
     """
     Generate audio using ElevenLabs.
 
@@ -198,7 +201,7 @@ def _generate_elevenlabs(text: str, output_path: str, tts_config: Dict[str, Any]
 # ===========================================================================
 # Provider: OpenAI TTS
 # ===========================================================================
-def _generate_openai_tts(text: str, output_path: str, tts_config: Dict[str, Any]) -> str:
+def _generate_openai_tts(text: str, output_path: str, tts_config: dict[str, Any]) -> str:
     """
     Generate audio using OpenAI TTS.
 
@@ -241,7 +244,7 @@ def _generate_openai_tts(text: str, output_path: str, tts_config: Dict[str, Any]
 # ===========================================================================
 def text_to_speech_tool(
     text: str,
-    output_path: Optional[str] = None,
+    output_path: str | None = None,
 ) -> str:
     """
     Convert text to speech audio.
@@ -276,7 +279,7 @@ def text_to_speech_tool(
     # produce Opus natively (no ffmpeg needed).  Edge TTS always outputs MP3
     # and needs ffmpeg for conversion.
     platform = os.getenv("HERMES_SESSION_PLATFORM", "").lower()
-    want_opus = (platform == "telegram")
+    want_opus = platform == "telegram"
 
     # Determine output path
     if output_path:
@@ -300,47 +303,48 @@ def text_to_speech_tool(
         # Generate audio with the configured provider
         if provider == "elevenlabs":
             if not _HAS_ELEVENLABS:
-                return json.dumps({
-                    "success": False,
-                    "error": "ElevenLabs provider selected but 'elevenlabs' package not installed. Run: pip install elevenlabs"
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {
+                        "success": False,
+                        "error": "ElevenLabs provider selected but 'elevenlabs' package not installed. Run: pip install elevenlabs",
+                    },
+                    ensure_ascii=False,
+                )
             logger.info("Generating speech with ElevenLabs...")
             _generate_elevenlabs(text, file_str, tts_config)
 
         elif provider == "openai":
             if not _HAS_OPENAI:
-                return json.dumps({
-                    "success": False,
-                    "error": "OpenAI provider selected but 'openai' package not installed."
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {"success": False, "error": "OpenAI provider selected but 'openai' package not installed."},
+                    ensure_ascii=False,
+                )
             logger.info("Generating speech with OpenAI TTS...")
             _generate_openai_tts(text, file_str, tts_config)
 
         else:
             # Default: Edge TTS (free)
             if not _HAS_EDGE_TTS:
-                return json.dumps({
-                    "success": False,
-                    "error": "Edge TTS not available. Run: pip install edge-tts"
-                }, ensure_ascii=False)
+                return json.dumps(
+                    {"success": False, "error": "Edge TTS not available. Run: pip install edge-tts"}, ensure_ascii=False
+                )
             logger.info("Generating speech with Edge TTS...")
             # Edge TTS is async, run it
             try:
                 loop = asyncio.get_running_loop()
                 import concurrent.futures
+
                 with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    pool.submit(
-                        lambda: asyncio.run(_generate_edge_tts(text, file_str, tts_config))
-                    ).result(timeout=60)
+                    pool.submit(lambda: asyncio.run(_generate_edge_tts(text, file_str, tts_config))).result(timeout=60)
             except RuntimeError:
                 asyncio.run(_generate_edge_tts(text, file_str, tts_config))
 
         # Check the file was actually created
         if not os.path.exists(file_str) or os.path.getsize(file_str) == 0:
-            return json.dumps({
-                "success": False,
-                "error": f"TTS generation produced no output (provider: {provider})"
-            }, ensure_ascii=False)
+            return json.dumps(
+                {"success": False, "error": f"TTS generation produced no output (provider: {provider})"},
+                ensure_ascii=False,
+            )
 
         # Try Opus conversion for Telegram compatibility (Edge TTS only outputs MP3)
         voice_compatible = False
@@ -361,13 +365,16 @@ def text_to_speech_tool(
         if voice_compatible:
             media_tag = f"[[audio_as_voice]]\n{media_tag}"
 
-        return json.dumps({
-            "success": True,
-            "file_path": file_str,
-            "media_tag": media_tag,
-            "provider": provider,
-            "voice_compatible": voice_compatible,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "success": True,
+                "file_path": file_str,
+                "media_tag": media_tag,
+                "provider": provider,
+                "voice_compatible": voice_compatible,
+            },
+            ensure_ascii=False,
+        )
 
     except Exception as e:
         error_msg = f"TTS generation failed ({provider}): {e}"
@@ -404,7 +411,7 @@ if __name__ == "__main__":
     print("🔊 Text-to-Speech Tool Module")
     print("=" * 50)
 
-    print(f"\nProvider availability:")
+    print("\nProvider availability:")
     print(f"  Edge TTS:   {'✅ installed' if _HAS_EDGE_TTS else '❌ not installed (pip install edge-tts)'}")
     print(f"  ElevenLabs: {'✅ installed' if _HAS_ELEVENLABS else '❌ not installed (pip install elevenlabs)'}")
     print(f"    API Key:  {'✅ set' if os.getenv('ELEVENLABS_API_KEY') else '❌ not set'}")
@@ -429,25 +436,20 @@ TTS_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "text": {
-                "type": "string",
-                "description": "The text to convert to speech. Keep under 4000 characters."
-            },
+            "text": {"type": "string", "description": "The text to convert to speech. Keep under 4000 characters."},
             "output_path": {
                 "type": "string",
-                "description": "Optional custom file path to save the audio. Defaults to ~/.hermes/audio_cache/<timestamp>.mp3"
-            }
+                "description": "Optional custom file path to save the audio. Defaults to ~/.hermes/audio_cache/<timestamp>.mp3",
+            },
         },
-        "required": ["text"]
-    }
+        "required": ["text"],
+    },
 }
 
 registry.register(
     name="text_to_speech",
     toolset="tts",
     schema=TTS_SCHEMA,
-    handler=lambda args, **kw: text_to_speech_tool(
-        text=args.get("text", ""),
-        output_path=args.get("output_path")),
+    handler=lambda args, **kw: text_to_speech_tool(text=args.get("text", ""), output_path=args.get("output_path")),
     check_fn=check_tts_requirements,
 )

@@ -154,9 +154,9 @@ class LocalEnvironment(BaseEnvironment):
     def __init__(self, cwd: str = "", timeout: int = 60, env: dict = None):
         super().__init__(cwd=cwd or os.getcwd(), timeout=timeout, env=env)
 
-    def execute(self, command: str, cwd: str = "", *,
-                timeout: int | None = None,
-                stdin_data: str | None = None) -> dict:
+    def execute(
+        self, command: str, cwd: str = "", *, timeout: int | None = None, stdin_data: str | None = None
+    ) -> dict:
         from tools.terminal_tool import _interrupt_event
 
         work_dir = cwd or self.cwd or os.getcwd()
@@ -172,11 +172,7 @@ class LocalEnvironment(BaseEnvironment):
             # Wrap with output fences so we can later extract the real
             # command output and discard shell init/exit noise.
             fenced_cmd = (
-                f"printf '{_OUTPUT_FENCE}';"
-                f" {exec_command};"
-                f" __hermes_rc=$?;"
-                f" printf '{_OUTPUT_FENCE}';"
-                f" exit $__hermes_rc"
+                f"printf '{_OUTPUT_FENCE}'; {exec_command}; __hermes_rc=$?; printf '{_OUTPUT_FENCE}'; exit $__hermes_rc"
             )
             # Ensure PATH always includes standard dirs — systemd services
             # and some terminal multiplexers inherit a minimal PATH.
@@ -200,12 +196,14 @@ class LocalEnvironment(BaseEnvironment):
             )
 
             if stdin_data is not None:
+
                 def _write_stdin():
                     try:
                         proc.stdin.write(stdin_data)
                         proc.stdin.close()
                     except (BrokenPipeError, OSError):
                         pass
+
                 threading.Thread(target=_write_stdin, daemon=True).start()
 
             _output_chunks: list[str] = []

@@ -27,7 +27,7 @@ import logging
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -44,27 +44,28 @@ class DebugSession:
         self.enabled = os.getenv(env_var, "false").lower() == "true"
         self.session_id = str(uuid.uuid4()) if self.enabled else ""
         self.log_dir = Path("./logs")
-        self._calls: list[Dict[str, Any]] = []
+        self._calls: list[dict[str, Any]] = []
         self._start_time = datetime.datetime.now().isoformat() if self.enabled else ""
 
         if self.enabled:
             self.log_dir.mkdir(exist_ok=True)
-            logger.debug("%s debug mode enabled - Session ID: %s",
-                         tool_name, self.session_id)
+            logger.debug("%s debug mode enabled - Session ID: %s", tool_name, self.session_id)
 
     @property
     def active(self) -> bool:
         return self.enabled
 
-    def log_call(self, call_name: str, call_data: Dict[str, Any]) -> None:
+    def log_call(self, call_name: str, call_data: dict[str, Any]) -> None:
         """Append a tool-call entry to the in-memory log."""
         if not self.enabled:
             return
-        self._calls.append({
-            "timestamp": datetime.datetime.now().isoformat(),
-            "tool_name": call_name,
-            **call_data,
-        })
+        self._calls.append(
+            {
+                "timestamp": datetime.datetime.now().isoformat(),
+                "tool_name": call_name,
+                **call_data,
+            }
+        )
 
     def save(self) -> None:
         """Flush the in-memory log to a JSON file in the logs directory."""
@@ -87,7 +88,7 @@ class DebugSession:
         except Exception as e:
             logger.error("Error saving %s debug log: %s", self.tool_name, e)
 
-    def get_session_info(self) -> Dict[str, Any]:
+    def get_session_info(self) -> dict[str, Any]:
         """Return a summary dict suitable for returning from get_debug_session_info()."""
         if not self.enabled:
             return {

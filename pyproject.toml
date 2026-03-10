@@ -40,7 +40,7 @@ dependencies = [
 [project.optional-dependencies]
 modal = ["swe-rex[modal]>=1.4.0"]
 daytona = ["daytona>=0.148.0"]
-dev = ["pytest", "pytest-asyncio", "mcp>=1.2.0"]
+dev = ["pytest", "pytest-asyncio", "mcp>=1.2.0", "ruff", "pre-commit", "watchfiles"]
 messaging = ["python-telegram-bot>=20.0", "discord.py>=2.0", "aiohttp>=3.9.0", "slack-bolt>=1.18.0", "slack-sdk>=3.27.0"]
 cron = ["croniter"]
 slack = ["slack-bolt>=1.18.0", "slack-sdk>=3.27.0"]
@@ -75,6 +75,46 @@ py-modules = ["run_agent", "model_tools", "toolsets", "batch_runner", "trajector
 
 [tool.setuptools.packages.find]
 include = ["tools", "hermes_cli", "gateway", "cron", "honcho_integration"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E402",   # late imports — intentional throughout codebase
+    "E501",   # line too long — handled by formatter where it can
+    "E731",   # lambda assignments — used in registry pattern
+    "E741",   # ambiguous variable name — existing patterns
+    "F811",   # redefined unused — intentional overrides
+    "F841",   # unused variable — cleanup separately
+    "B007",   # unused loop variable — cleanup separately
+    "B904",   # raise from — too noisy to gate on
+    "B905",   # zip strict — cleanup separately
+    "B027",   # empty method without abstract decorator
+    "SIM102", # collapsible if — readability preference
+    "SIM103", # needless bool — readability preference
+    "SIM105", # suppressible exception — existing pattern
+    "SIM108", # ternary — readability preference
+    "SIM110", # reimplemented builtin
+    "SIM112", # uncapitalized env var
+    "SIM115", # open file with context handler
+    "SIM117", # multiple with statements
+    "SIM118", # in-dict-keys — cleanup separately
+    "SIM212", # if-expr twisted arms
+]
+
+[tool.ruff.lint.per-file-ignores]
+"batch_runner.py" = ["F821"]
+"tools/patch_parser.py" = ["F821"]
+"gateway/run.py" = ["F821"]
+"gateway/channel_directory.py" = ["F401"]
+"hermes_cli/doctor.py" = ["F401"]
+"tools/image_generation_tool.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tools", "hermes_cli", "gateway", "agent", "cron"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -31,7 +31,7 @@ import time
 import uuid
 
 _IS_WINDOWS = platform.system() == "Windows"
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Availability gate: UDS requires a POSIX OS
 logger = logging.getLogger(__name__)
@@ -40,21 +40,23 @@ SANDBOX_AVAILABLE = sys.platform != "win32"
 
 # The 7 tools allowed inside the sandbox. The intersection of this list
 # and the session's enabled tools determines which stubs are generated.
-SANDBOX_ALLOWED_TOOLS = frozenset([
-    "web_search",
-    "web_extract",
-    "read_file",
-    "write_file",
-    "search_files",
-    "patch",
-    "terminal",
-])
+SANDBOX_ALLOWED_TOOLS = frozenset(
+    [
+        "web_search",
+        "web_extract",
+        "read_file",
+        "write_file",
+        "search_files",
+        "patch",
+        "terminal",
+    ]
+)
 
 # Resource limit defaults (overridable via config.yaml → code_execution.*)
-DEFAULT_TIMEOUT = 300        # 5 minutes
+DEFAULT_TIMEOUT = 300  # 5 minutes
 DEFAULT_MAX_TOOL_CALLS = 50
-MAX_STDOUT_BYTES = 50_000    # 50 KB
-MAX_STDERR_BYTES = 10_000    # 10 KB
+MAX_STDOUT_BYTES = 50_000  # 50 KB
+MAX_STDERR_BYTES = 10_000  # 10 KB
 
 
 def check_sandbox_requirements() -> bool:
@@ -114,7 +116,7 @@ _TOOL_STUBS = {
 }
 
 
-def generate_hermes_tools_module(enabled_tools: List[str]) -> str:
+def generate_hermes_tools_module(enabled_tools: list[str]) -> str:
     """
     Build the source code for the hermes_tools.py stub module.
 
@@ -128,11 +130,7 @@ def generate_hermes_tools_module(enabled_tools: List[str]) -> str:
         if tool_name not in _TOOL_STUBS:
             continue
         func_name, sig, doc, args_expr = _TOOL_STUBS[tool_name]
-        stub_functions.append(
-            f"def {func_name}({sig}):\n"
-            f"    {doc}\n"
-            f"    return _call({func_name!r}, {args_expr})\n"
-        )
+        stub_functions.append(f"def {func_name}({sig}):\n    {doc}\n    return _call({func_name!r}, {args_expr})\n")
         export_names.append(func_name)
 
     header = '''\
@@ -223,7 +221,7 @@ def _rpc_server_loop(
     server_sock: socket.socket,
     task_id: str,
     tool_call_log: list,
-    tool_call_counter: list,   # mutable [int] so the thread can increment
+    tool_call_counter: list,  # mutable [int] so the thread can increment
     max_tool_calls: int,
     allowed_tools: frozenset,
 ):
@@ -243,7 +241,7 @@ def _rpc_server_loop(
         while True:
             try:
                 chunk = conn.recv(65536)
-            except socket.timeout:
+            except TimeoutError:
                 break
             if not chunk:
                 break
@@ -270,23 +268,22 @@ def _rpc_server_loop(
                 # Enforce the allow-list
                 if tool_name not in allowed_tools:
                     available = ", ".join(sorted(allowed_tools))
-                    resp = json.dumps({
-                        "error": (
-                            f"Tool '{tool_name}' is not available in execute_code. "
-                            f"Available: {available}"
-                        )
-                    })
+                    resp = json.dumps(
+                        {"error": (f"Tool '{tool_name}' is not available in execute_code. Available: {available}")}
+                    )
                     conn.sendall((resp + "\n").encode())
                     continue
 
                 # Enforce tool call limit
                 if tool_call_counter[0] >= max_tool_calls:
-                    resp = json.dumps({
-                        "error": (
-                            f"Tool call limit reached ({max_tool_calls}). "
-                            "No more tool calls allowed in this execution."
-                        )
-                    })
+                    resp = json.dumps(
+                        {
+                            "error": (
+                                f"Tool call limit reached ({max_tool_calls}). "
+                                "No more tool calls allowed in this execution."
+                            )
+                        }
+                    )
                     conn.sendall((resp + "\n").encode())
                     continue
 
@@ -303,9 +300,7 @@ def _rpc_server_loop(
                     sys.stdout = open(os.devnull, "w")
                     sys.stderr = open(os.devnull, "w")
                     try:
-                        result = handle_function_call(
-                            tool_name, tool_args, task_id=task_id
-                        )
+                        result = handle_function_call(tool_name, tool_args, task_id=task_id)
                     finally:
                         sys.stdout.close()
                         sys.stderr.close()
@@ -318,15 +313,17 @@ def _rpc_server_loop(
 
                 # Log for observability
                 args_preview = str(tool_args)[:80]
-                tool_call_log.append({
-                    "tool": tool_name,
-                    "args_preview": args_preview,
-                    "duration": round(call_duration, 2),
-                })
+                tool_call_log.append(
+                    {
+                        "tool": tool_name,
+                        "args_preview": args_preview,
+                        "duration": round(call_duration, 2),
+                    }
+                )
 
                 conn.sendall((result + "\n").encode())
 
-    except socket.timeout:
+    except TimeoutError:
         pass
     except OSError:
         pass
@@ -342,10 +339,11 @@ def _rpc_server_loop(
 # Main entry point
 # ---------------------------------------------------------------------------
 
+
 def execute_code(
     code: str,
-    task_id: Optional[str] = None,
-    enabled_tools: Optional[List[str]] = None,
+    task_id: str | None = None,
+    enabled_tools: list[str] | None = None,
 ) -> str:
     """
     Run a Python script in a sandboxed child process with RPC access
@@ -361,9 +359,7 @@ def execute_code(
         JSON string with execution results.
     """
     if not SANDBOX_AVAILABLE:
-        return json.dumps({
-            "error": "execute_code is not available on Windows. Use normal tool calls instead."
-        })
+        return json.dumps({"error": "execute_code is not available on Windows. Use normal tool calls instead."})
 
     if not code or not code.strip():
         return json.dumps({"error": "No code provided."})
@@ -397,9 +393,7 @@ def execute_code(
 
     try:
         # Write the auto-generated hermes_tools module
-        tools_src = generate_hermes_tools_module(
-            list(sandbox_tools) if enabled_tools else list(SANDBOX_ALLOWED_TOOLS)
-        )
+        tools_src = generate_hermes_tools_module(list(sandbox_tools) if enabled_tools else list(SANDBOX_ALLOWED_TOOLS))
         with open(os.path.join(tmpdir, "hermes_tools.py"), "w") as f:
             f.write(tools_src)
 
@@ -415,8 +409,12 @@ def execute_code(
         rpc_thread = threading.Thread(
             target=_rpc_server_loop,
             args=(
-                server_sock, task_id, tool_call_log,
-                tool_call_counter, max_tool_calls, sandbox_tools,
+                server_sock,
+                task_id,
+                tool_call_log,
+                tool_call_counter,
+                max_tool_calls,
+                sandbox_tools,
             ),
             daemon=True,
         )
@@ -426,11 +424,24 @@ def execute_code(
         # Build a minimal environment for the child. We intentionally exclude
         # API keys and tokens to prevent credential exfiltration from LLM-
         # generated scripts. The child accesses tools via RPC, not direct API.
-        _SAFE_ENV_PREFIXES = ("PATH", "HOME", "USER", "LANG", "LC_", "TERM",
-                              "TMPDIR", "TMP", "TEMP", "SHELL", "LOGNAME",
-                              "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA")
-        _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
-                              "PASSWD", "AUTH")
+        _SAFE_ENV_PREFIXES = (
+            "PATH",
+            "HOME",
+            "USER",
+            "LANG",
+            "LC_",
+            "TERM",
+            "TMPDIR",
+            "TMP",
+            "TEMP",
+            "SHELL",
+            "LOGNAME",
+            "XDG_",
+            "PYTHONPATH",
+            "VIRTUAL_ENV",
+            "CONDA",
+        )
+        _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "PASSWD", "AUTH")
         child_env = {}
         for k, v in os.environ.items():
             if any(s in k.upper() for s in _SECRET_SUBSTRINGS):
@@ -515,7 +526,7 @@ def execute_code(
         rpc_thread.join(timeout=3)
 
         # Build response
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "status": status,
             "output": stdout_text,
             "tool_calls_made": tool_call_counter[0],
@@ -538,17 +549,21 @@ def execute_code(
     except Exception as exc:
         duration = round(time.monotonic() - exec_start, 2)
         logging.exception("execute_code failed")
-        return json.dumps({
-            "status": "error",
-            "error": str(exc),
-            "tool_calls_made": tool_call_counter[0],
-            "duration_seconds": duration,
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "status": "error",
+                "error": str(exc),
+                "tool_calls_made": tool_call_counter[0],
+                "duration_seconds": duration,
+            },
+            ensure_ascii=False,
+        )
 
     finally:
         # Cleanup temp dir and socket
         try:
             import shutil
+
             shutil.rmtree(tmpdir, ignore_errors=True)
         except Exception as e:
             logger.debug("Could not clean temp dir: %s", e)
@@ -592,6 +607,7 @@ def _load_config() -> dict:
     """Load code_execution config from CLI_CONFIG if available."""
     try:
         from cli import CLI_CONFIG
+
         return CLI_CONFIG.get("code_execution", {})
     except Exception:
         return {}
@@ -604,27 +620,37 @@ def _load_config() -> dict:
 # Per-tool documentation lines for the execute_code description.
 # Ordered to match the canonical display order.
 _TOOL_DOC_LINES = [
-    ("web_search",
-     "  web_search(query: str, limit: int = 5) -> dict\n"
-     "    Returns {\"data\": {\"web\": [{\"url\", \"title\", \"description\"}, ...]}}"),
-    ("web_extract",
-     "  web_extract(urls: list[str]) -> dict\n"
-     "    Returns {\"results\": [{\"url\", \"title\", \"content\", \"error\"}, ...]} where content is markdown"),
-    ("read_file",
-     "  read_file(path: str, offset: int = 1, limit: int = 500) -> dict\n"
-     "    Lines are 1-indexed. Returns {\"content\": \"...\", \"total_lines\": N}"),
-    ("write_file",
-     "  write_file(path: str, content: str) -> dict\n"
-     "    Always overwrites the entire file."),
-    ("search_files",
-     "  search_files(pattern: str, target=\"content\", path=\".\", file_glob=None, limit=50) -> dict\n"
-     "    target: \"content\" (search inside files) or \"files\" (find files by name). Returns {\"matches\": [...]}"),
-    ("patch",
-     "  patch(path: str, old_string: str, new_string: str, replace_all: bool = False) -> dict\n"
-     "    Replaces old_string with new_string in the file."),
-    ("terminal",
-     "  terminal(command: str, timeout=None, workdir=None) -> dict\n"
-     "    Foreground only (no background/pty). Returns {\"output\": \"...\", \"exit_code\": N}"),
+    (
+        "web_search",
+        "  web_search(query: str, limit: int = 5) -> dict\n"
+        '    Returns {"data": {"web": [{"url", "title", "description"}, ...]}}',
+    ),
+    (
+        "web_extract",
+        "  web_extract(urls: list[str]) -> dict\n"
+        '    Returns {"results": [{"url", "title", "content", "error"}, ...]} where content is markdown',
+    ),
+    (
+        "read_file",
+        "  read_file(path: str, offset: int = 1, limit: int = 500) -> dict\n"
+        '    Lines are 1-indexed. Returns {"content": "...", "total_lines": N}',
+    ),
+    ("write_file", "  write_file(path: str, content: str) -> dict\n    Always overwrites the entire file."),
+    (
+        "search_files",
+        '  search_files(pattern: str, target="content", path=".", file_glob=None, limit=50) -> dict\n'
+        '    target: "content" (search inside files) or "files" (find files by name). Returns {"matches": [...]}',
+    ),
+    (
+        "patch",
+        "  patch(path: str, old_string: str, new_string: str, replace_all: bool = False) -> dict\n"
+        "    Replaces old_string with new_string in the file.",
+    ),
+    (
+        "terminal",
+        "  terminal(command: str, timeout=None, workdir=None) -> dict\n"
+        '    Foreground only (no background/pty). Returns {"output": "...", "exit_code": N}',
+    ),
 ]
 
 
@@ -639,9 +665,7 @@ def build_execute_code_schema(enabled_sandbox_tools: set = None) -> dict:
         enabled_sandbox_tools = SANDBOX_ALLOWED_TOOLS
 
     # Build tool documentation lines for only the enabled tools
-    tool_lines = "\n".join(
-        doc for name, doc in _TOOL_DOC_LINES if name in enabled_sandbox_tools
-    )
+    tool_lines = "\n".join(doc for name, doc in _TOOL_DOC_LINES if name in enabled_sandbox_tools)
 
     # Build example import list from enabled tools
     import_examples = [n for n in ("web_search", "terminal") if n in enabled_sandbox_tools]
@@ -702,8 +726,7 @@ registry.register(
     toolset="code_execution",
     schema=EXECUTE_CODE_SCHEMA,
     handler=lambda args, **kw: execute_code(
-        code=args.get("code", ""),
-        task_id=kw.get("task_id"),
-        enabled_tools=kw.get("enabled_tools")),
+        code=args.get("code", ""), task_id=kw.get("task_id"), enabled_tools=kw.get("enabled_tools")
+    ),
     check_fn=check_sandbox_requirements,
 )

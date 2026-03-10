@@ -29,7 +29,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -46,30 +46,38 @@ ENTRY_DELIMITER = "\n§\n"
 
 _MEMORY_THREAT_PATTERNS = [
     # Prompt injection
-    (r'ignore\s+(previous|all|above|prior)\s+instructions', "prompt_injection"),
-    (r'you\s+are\s+now\s+', "role_hijack"),
-    (r'do\s+not\s+tell\s+the\s+user', "deception_hide"),
-    (r'system\s+prompt\s+override', "sys_prompt_override"),
-    (r'disregard\s+(your|all|any)\s+(instructions|rules|guidelines)', "disregard_rules"),
-    (r'act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)', "bypass_restrictions"),
+    (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
+    (r"you\s+are\s+now\s+", "role_hijack"),
+    (r"do\s+not\s+tell\s+the\s+user", "deception_hide"),
+    (r"system\s+prompt\s+override", "sys_prompt_override"),
+    (r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)", "disregard_rules"),
+    (r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)", "bypass_restrictions"),
     # Exfiltration via curl/wget with secrets
-    (r'curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_curl"),
-    (r'wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_wget"),
-    (r'cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)', "read_secrets"),
+    (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl"),
+    (r"wget\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_wget"),
+    (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass|\.npmrc|\.pypirc)", "read_secrets"),
     # Persistence via shell rc
-    (r'authorized_keys', "ssh_backdoor"),
-    (r'\$HOME/\.ssh|\~/\.ssh', "ssh_access"),
-    (r'\$HOME/\.hermes/\.env|\~/\.hermes/\.env', "hermes_env"),
+    (r"authorized_keys", "ssh_backdoor"),
+    (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
+    (r"\$HOME/\.hermes/\.env|\~/\.hermes/\.env", "hermes_env"),
 ]
 
 # Subset of invisible chars for injection detection
 _INVISIBLE_CHARS = {
-    '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff',
-    '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+    "\u200b",
+    "\u200c",
+    "\u200d",
+    "\u2060",
+    "\ufeff",
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
 }
 
 
-def _scan_memory_content(content: str) -> Optional[str]:
+def _scan_memory_content(content: str) -> str | None:
     """Scan memory content for injection/exfil patterns. Returns error string if blocked."""
     # Check invisible unicode
     for char in _INVISIBLE_CHARS:
@@ -96,12 +104,12 @@ class MemoryStore:
     """
 
     def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375):
-        self.memory_entries: List[str] = []
-        self.user_entries: List[str] = []
+        self.memory_entries: list[str] = []
+        self.user_entries: list[str] = []
         self.memory_char_limit = memory_char_limit
         self.user_char_limit = user_char_limit
         # Frozen snapshot for system prompt -- set once at load_from_disk()
-        self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
+        self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": ""}
 
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
@@ -129,12 +137,12 @@ class MemoryStore:
         elif target == "user":
             self._write_file(MEMORY_DIR / "USER.md", self.user_entries)
 
-    def _entries_for(self, target: str) -> List[str]:
+    def _entries_for(self, target: str) -> list[str]:
         if target == "user":
             return self.user_entries
         return self.memory_entries
 
-    def _set_entries(self, target: str, entries: List[str]):
+    def _set_entries(self, target: str, entries: list[str]):
         if target == "user":
             self.user_entries = entries
         else:
@@ -151,7 +159,7 @@ class MemoryStore:
             return self.user_char_limit
         return self.memory_char_limit
 
-    def add(self, target: str, content: str) -> Dict[str, Any]:
+    def add(self, target: str, content: str) -> dict[str, Any]:
         """Append a new entry. Returns error if it would exceed the char limit."""
         content = content.strip()
         if not content:
@@ -192,7 +200,7 @@ class MemoryStore:
 
         return self._success_response(target, "Entry added.")
 
-    def replace(self, target: str, old_text: str, new_content: str) -> Dict[str, Any]:
+    def replace(self, target: str, old_text: str, new_content: str) -> dict[str, Any]:
         """Find entry containing old_text substring, replace it with new_content."""
         old_text = old_text.strip()
         new_content = new_content.strip()
@@ -247,7 +255,7 @@ class MemoryStore:
 
         return self._success_response(target, "Entry replaced.")
 
-    def remove(self, target: str, old_text: str) -> Dict[str, Any]:
+    def remove(self, target: str, old_text: str) -> dict[str, Any]:
         """Remove the entry containing old_text substring."""
         old_text = old_text.strip()
         if not old_text:
@@ -278,7 +286,7 @@ class MemoryStore:
 
         return self._success_response(target, "Entry removed.")
 
-    def format_for_system_prompt(self, target: str) -> Optional[str]:
+    def format_for_system_prompt(self, target: str) -> str | None:
         """
         Return the frozen snapshot for system prompt injection.
 
@@ -293,7 +301,7 @@ class MemoryStore:
 
     # -- Internal helpers --
 
-    def _success_response(self, target: str, message: str = None) -> Dict[str, Any]:
+    def _success_response(self, target: str, message: str = None) -> dict[str, Any]:
         entries = self._entries_for(target)
         current = self._char_count(target)
         limit = self._char_limit(target)
@@ -310,7 +318,7 @@ class MemoryStore:
             resp["message"] = message
         return resp
 
-    def _render_block(self, target: str, entries: List[str]) -> str:
+    def _render_block(self, target: str, entries: list[str]) -> str:
         """Render a system prompt block with header and usage indicator."""
         if not entries:
             return ""
@@ -329,7 +337,7 @@ class MemoryStore:
         return f"{separator}\n{header}\n{separator}\n{content}"
 
     @staticmethod
-    def _read_file(path: Path) -> List[str]:
+    def _read_file(path: Path) -> list[str]:
         """Read a memory file and split into entries.
 
         No file locking needed: _write_file uses atomic rename, so readers
@@ -339,7 +347,7 @@ class MemoryStore:
             return []
         try:
             raw = path.read_text(encoding="utf-8")
-        except (OSError, IOError):
+        except OSError:
             return []
 
         if not raw.strip():
@@ -351,7 +359,7 @@ class MemoryStore:
         return [e for e in entries if e]
 
     @staticmethod
-    def _write_file(path: Path, entries: List[str]):
+    def _write_file(path: Path, entries: list[str]):
         """Write entries to a memory file using atomic temp-file + rename.
 
         Previous implementation used open("w") + flock, but "w" truncates the
@@ -362,9 +370,7 @@ class MemoryStore:
         content = ENTRY_DELIMITER.join(entries) if entries else ""
         try:
             # Write to temp file in same directory (same filesystem for atomic rename)
-            fd, tmp_path = tempfile.mkstemp(
-                dir=str(path.parent), suffix=".tmp", prefix=".mem_"
-            )
+            fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=".mem_")
             try:
                 with os.fdopen(fd, "w", encoding="utf-8") as f:
                     f.write(content)
@@ -378,7 +384,7 @@ class MemoryStore:
                 except OSError:
                     pass
                 raise
-        except (OSError, IOError) as e:
+        except OSError as e:
             raise RuntimeError(f"Failed to write memory file {path}: {e}")
 
 
@@ -387,7 +393,7 @@ def memory_tool(
     target: str = "memory",
     content: str = None,
     old_text: str = None,
-    store: Optional[MemoryStore] = None,
+    store: MemoryStore | None = None,
 ) -> str:
     """
     Single entry point for the memory tool. Dispatches to MemoryStore methods.
@@ -395,10 +401,15 @@ def memory_tool(
     Returns JSON string with results.
     """
     if store is None:
-        return json.dumps({"success": False, "error": "Memory is not available. It may be disabled in config or this environment."}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": "Memory is not available. It may be disabled in config or this environment."},
+            ensure_ascii=False,
+        )
 
     if target not in ("memory", "user"):
-        return json.dumps({"success": False, "error": f"Invalid target '{target}'. Use 'memory' or 'user'."}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": f"Invalid target '{target}'. Use 'memory' or 'user'."}, ensure_ascii=False
+        )
 
     if action == "add":
         if not content:
@@ -407,18 +418,26 @@ def memory_tool(
 
     elif action == "replace":
         if not old_text:
-            return json.dumps({"success": False, "error": "old_text is required for 'replace' action."}, ensure_ascii=False)
+            return json.dumps(
+                {"success": False, "error": "old_text is required for 'replace' action."}, ensure_ascii=False
+            )
         if not content:
-            return json.dumps({"success": False, "error": "content is required for 'replace' action."}, ensure_ascii=False)
+            return json.dumps(
+                {"success": False, "error": "content is required for 'replace' action."}, ensure_ascii=False
+            )
         result = store.replace(target, old_text, content)
 
     elif action == "remove":
         if not old_text:
-            return json.dumps({"success": False, "error": "old_text is required for 'remove' action."}, ensure_ascii=False)
+            return json.dumps(
+                {"success": False, "error": "old_text is required for 'remove' action."}, ensure_ascii=False
+            )
         result = store.remove(target, old_text)
 
     else:
-        return json.dumps({"success": False, "error": f"Unknown action '{action}'. Use: add, replace, remove"}, ensure_ascii=False)
+        return json.dumps(
+            {"success": False, "error": f"Unknown action '{action}'. Use: add, replace, remove"}, ensure_ascii=False
+        )
 
     return json.dumps(result, ensure_ascii=False)
 
@@ -457,23 +476,16 @@ MEMORY_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["add", "replace", "remove"],
-                "description": "The action to perform."
-            },
+            "action": {"type": "string", "enum": ["add", "replace", "remove"], "description": "The action to perform."},
             "target": {
                 "type": "string",
                 "enum": ["memory", "user"],
-                "description": "Which memory store: 'memory' for personal notes, 'user' for user profile."
+                "description": "Which memory store: 'memory' for personal notes, 'user' for user profile.",
             },
-            "content": {
-                "type": "string",
-                "description": "The entry content. Required for 'add' and 'replace'."
-            },
+            "content": {"type": "string", "description": "The entry content. Required for 'add' and 'replace'."},
             "old_text": {
                 "type": "string",
-                "description": "Short unique substring identifying the entry to replace or remove."
+                "description": "Short unique substring identifying the entry to replace or remove.",
             },
         },
         "required": ["action", "target"],
@@ -493,10 +505,7 @@ registry.register(
         target=args.get("target", "memory"),
         content=args.get("content"),
         old_text=args.get("old_text"),
-        store=kw.get("store")),
+        store=kw.get("store"),
+    ),
     check_fn=check_memory_requirements,
 )
-
-
-
-

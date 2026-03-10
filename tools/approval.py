@@ -12,7 +12,6 @@ import os
 import re
 import sys
 import threading
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,38 +20,39 @@ logger = logging.getLogger(__name__)
 # =========================================================================
 
 DANGEROUS_PATTERNS = [
-    (r'\brm\s+(-[^\s]*\s+)*/', "delete in root path"),
-    (r'\brm\s+-[^\s]*r', "recursive delete"),
-    (r'\brm\s+--recursive\b', "recursive delete (long flag)"),
-    (r'\bchmod\s+(-[^\s]*\s+)*777\b', "world-writable permissions"),
-    (r'\bchmod\s+--recursive\b.*777', "recursive world-writable (long flag)"),
-    (r'\bchown\s+(-[^\s]*)?R\s+root', "recursive chown to root"),
-    (r'\bchown\s+--recursive\b.*root', "recursive chown to root (long flag)"),
-    (r'\bmkfs\b', "format filesystem"),
-    (r'\bdd\s+.*if=', "disk copy"),
-    (r'>\s*/dev/sd', "write to block device"),
-    (r'\bDROP\s+(TABLE|DATABASE)\b', "SQL DROP"),
-    (r'\bDELETE\s+FROM\b(?!.*\bWHERE\b)', "SQL DELETE without WHERE"),
-    (r'\bTRUNCATE\s+(TABLE)?\s*\w', "SQL TRUNCATE"),
-    (r'>\s*/etc/', "overwrite system config"),
-    (r'\bsystemctl\s+(stop|disable|mask)\b', "stop/disable system service"),
-    (r'\bkill\s+-9\s+-1\b', "kill all processes"),
-    (r'\bpkill\s+-9\b', "force kill processes"),
-    (r':()\s*{\s*:\s*\|\s*:&\s*}\s*;:', "fork bomb"),
-    (r'\b(bash|sh|zsh)\s+-c\s+', "shell command via -c flag"),
-    (r'\b(python[23]?|perl|ruby|node)\s+-[ec]\s+', "script execution via -e/-c flag"),
-    (r'\b(curl|wget)\b.*\|\s*(ba)?sh\b', "pipe remote content to shell"),
-    (r'\b(bash|sh|zsh|ksh)\s+<\s*<?\s*\(\s*(curl|wget)\b', "execute remote script via process substitution"),
-    (r'\btee\b.*(/etc/|/dev/sd|\.ssh/|\.hermes/\.env)', "overwrite system file via tee"),
-    (r'\bxargs\s+.*\brm\b', "xargs with rm"),
-    (r'\bfind\b.*-exec\s+(/\S*/)?rm\b', "find -exec rm"),
-    (r'\bfind\b.*-delete\b', "find -delete"),
+    (r"\brm\s+(-[^\s]*\s+)*/", "delete in root path"),
+    (r"\brm\s+-[^\s]*r", "recursive delete"),
+    (r"\brm\s+--recursive\b", "recursive delete (long flag)"),
+    (r"\bchmod\s+(-[^\s]*\s+)*777\b", "world-writable permissions"),
+    (r"\bchmod\s+--recursive\b.*777", "recursive world-writable (long flag)"),
+    (r"\bchown\s+(-[^\s]*)?R\s+root", "recursive chown to root"),
+    (r"\bchown\s+--recursive\b.*root", "recursive chown to root (long flag)"),
+    (r"\bmkfs\b", "format filesystem"),
+    (r"\bdd\s+.*if=", "disk copy"),
+    (r">\s*/dev/sd", "write to block device"),
+    (r"\bDROP\s+(TABLE|DATABASE)\b", "SQL DROP"),
+    (r"\bDELETE\s+FROM\b(?!.*\bWHERE\b)", "SQL DELETE without WHERE"),
+    (r"\bTRUNCATE\s+(TABLE)?\s*\w", "SQL TRUNCATE"),
+    (r">\s*/etc/", "overwrite system config"),
+    (r"\bsystemctl\s+(stop|disable|mask)\b", "stop/disable system service"),
+    (r"\bkill\s+-9\s+-1\b", "kill all processes"),
+    (r"\bpkill\s+-9\b", "force kill processes"),
+    (r":()\s*{\s*:\s*\|\s*:&\s*}\s*;:", "fork bomb"),
+    (r"\b(bash|sh|zsh)\s+-c\s+", "shell command via -c flag"),
+    (r"\b(python[23]?|perl|ruby|node)\s+-[ec]\s+", "script execution via -e/-c flag"),
+    (r"\b(curl|wget)\b.*\|\s*(ba)?sh\b", "pipe remote content to shell"),
+    (r"\b(bash|sh|zsh|ksh)\s+<\s*<?\s*\(\s*(curl|wget)\b", "execute remote script via process substitution"),
+    (r"\btee\b.*(/etc/|/dev/sd|\.ssh/|\.hermes/\.env)", "overwrite system file via tee"),
+    (r"\bxargs\s+.*\brm\b", "xargs with rm"),
+    (r"\bfind\b.*-exec\s+(/\S*/)?rm\b", "find -exec rm"),
+    (r"\bfind\b.*-delete\b", "find -delete"),
 ]
 
 
 # =========================================================================
 # Detection
 # =========================================================================
+
 
 def detect_dangerous_command(command: str) -> tuple:
     """Check if a command matches any dangerous patterns.
@@ -63,7 +63,7 @@ def detect_dangerous_command(command: str) -> tuple:
     command_lower = command.lower()
     for pattern, description in DANGEROUS_PATTERNS:
         if re.search(pattern, command_lower, re.IGNORECASE | re.DOTALL):
-            pattern_key = pattern.split(r'\b')[1] if r'\b' in pattern else pattern[:20]
+            pattern_key = pattern.split(r"\b")[1] if r"\b" in pattern else pattern[:20]
             return (True, pattern_key, description)
     return (False, None, None)
 
@@ -84,7 +84,7 @@ def submit_pending(session_key: str, approval: dict):
         _pending[session_key] = approval
 
 
-def pop_pending(session_key: str) -> Optional[dict]:
+def pop_pending(session_key: str) -> dict | None:
     """Retrieve and remove a pending approval for a session."""
     with _lock:
         return _pending.pop(session_key, None)
@@ -133,6 +133,7 @@ def clear_session(session_key: str):
 # Config persistence for permanent allowlist
 # =========================================================================
 
+
 def load_permanent_allowlist() -> set:
     """Load permanently allowed command patterns from config.
 
@@ -141,6 +142,7 @@ def load_permanent_allowlist() -> set:
     """
     try:
         from hermes_cli.config import load_config
+
         config = load_config()
         patterns = set(config.get("command_allowlist", []) or [])
         if patterns:
@@ -154,6 +156,7 @@ def save_permanent_allowlist(patterns: set):
     """Save permanently allowed command patterns to config."""
     try:
         from hermes_cli.config import load_config, save_config
+
         config = load_config()
         config["command_allowlist"] = list(patterns)
         save_config(config)
@@ -165,9 +168,8 @@ def save_permanent_allowlist(patterns: set):
 # Approval prompting + orchestration
 # =========================================================================
 
-def prompt_dangerous_approval(command: str, description: str,
-                              timeout_seconds: int = 60,
-                              approval_callback=None) -> str:
+
+def prompt_dangerous_approval(command: str, description: str, timeout_seconds: int = 60, approval_callback=None) -> str:
     """Prompt the user to approve a dangerous command (CLI only).
 
     Args:
@@ -188,7 +190,7 @@ def prompt_dangerous_approval(command: str, description: str,
         print(f"  ⚠️  DANGEROUS COMMAND: {description}")
         print(f"      {command[:80]}{'...' if len(command) > 80 else ''}")
         print()
-        print(f"      [o]nce  |  [s]ession  |  [a]lways  |  [d]eny")
+        print("      [o]nce  |  [s]ession  |  [a]lways  |  [d]eny")
         print()
         sys.stdout.flush()
 
@@ -209,13 +211,13 @@ def prompt_dangerous_approval(command: str, description: str,
             return "deny"
 
         choice = result["choice"]
-        if choice in ('o', 'once'):
+        if choice in ("o", "once"):
             print("      ✓ Allowed once")
             return "once"
-        elif choice in ('s', 'session'):
+        elif choice in ("s", "session"):
             print("      ✓ Allowed for this session")
             return "session"
-        elif choice in ('a', 'always'):
+        elif choice in ("a", "always"):
             print("      ✓ Added to permanent allowlist")
             return "always"
         else:
@@ -232,8 +234,7 @@ def prompt_dangerous_approval(command: str, description: str,
         sys.stdout.flush()
 
 
-def check_dangerous_command(command: str, env_type: str,
-                            approval_callback=None) -> dict:
+def check_dangerous_command(command: str, env_type: str, approval_callback=None) -> dict:
     """Check if a command is dangerous and handle approval.
 
     This is the main entry point called by terminal_tool before executing
@@ -265,11 +266,14 @@ def check_dangerous_command(command: str, env_type: str,
         return {"approved": True, "message": None}
 
     if is_gateway or os.getenv("HERMES_EXEC_ASK"):
-        submit_pending(session_key, {
-            "command": command,
-            "pattern_key": pattern_key,
-            "description": description,
-        })
+        submit_pending(
+            session_key,
+            {
+                "command": command,
+                "pattern_key": pattern_key,
+                "description": description,
+            },
+        )
         return {
             "approved": False,
             "pattern_key": pattern_key,
@@ -279,8 +283,7 @@ def check_dangerous_command(command: str, env_type: str,
             "message": f"⚠️ This command is potentially dangerous ({description}). Asking the user for approval...",
         }
 
-    choice = prompt_dangerous_approval(command, description,
-                                       approval_callback=approval_callback)
+    choice = prompt_dangerous_approval(command, description, approval_callback=approval_callback)
 
     if choice == "deny":
         return {

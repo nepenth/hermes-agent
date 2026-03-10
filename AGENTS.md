@@ -5,7 +5,8 @@ Instructions for AI coding assistants and developers working on the hermes-agent
 ## Development Environment
 
 ```bash
-source .venv/bin/activate  # ALWAYS activate before running Python
+make setup          # First time: creates .venv, installs deps, sets up pre-commit
+source .venv/bin/activate
 ```
 
 ## Project Structure
@@ -228,15 +229,27 @@ The `_isolate_hermes_home` autouse fixture in `tests/conftest.py` redirects `HER
 
 ---
 
-## Testing
+## Development Commands
 
 ```bash
-source .venv/bin/activate
-python -m pytest tests/ -q          # Full suite (~2500 tests, ~2 min)
+make setup          # First time: .venv + deps + pre-commit hooks
+make check          # Lint + test (mirrors CI — run before pushing)
+make lint           # Ruff check
+make fmt            # Ruff format + auto-fix
+make test           # Full test suite (~2500 tests, ~2 min)
+make test-fast      # Tests with fail-fast (-x)
+make test-watch     # Rerun tests on file changes
+make dev-cli        # Auto-restart CLI on file changes
+make dev-gateway    # Auto-restart gateway on file changes
+```
+
+For targeted testing, use `pytest` directly:
+
+```bash
 python -m pytest tests/test_model_tools.py -q   # Toolset resolution
 python -m pytest tests/test_cli_init.py -q       # CLI config loading
 python -m pytest tests/gateway/ -q               # Gateway tests
 python -m pytest tests/tools/ -q                 # Tool-level tests
 ```
 
-Always run the full suite before pushing changes.
+Formatting is enforced by **ruff** (config in `pyproject.toml`). Pre-commit hooks run on every commit.

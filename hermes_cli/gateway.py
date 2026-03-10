@@ -13,17 +13,23 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
+from hermes_cli.colors import Colors, color
 from hermes_cli.config import get_env_value, save_env_value
 from hermes_cli.setup import (
-    print_header, print_info, print_success, print_warning, print_error,
-    prompt, prompt_choice, prompt_yes_no,
+    print_error,
+    print_header,
+    print_info,
+    print_success,
+    print_warning,
+    prompt,
+    prompt_choice,
+    prompt_yes_no,
 )
-from hermes_cli.colors import Colors, color
-
 
 # =============================================================================
 # Process Management (for manual gateway runs)
 # =============================================================================
+
 
 def find_gateway_pids() -> list:
     """Find PIDs of running gateway processes."""
@@ -38,17 +44,16 @@ def find_gateway_pids() -> list:
         if is_windows():
             # Windows: use wmic to search command lines
             result = subprocess.run(
-                ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:LIST"],
-                capture_output=True, text=True
+                ["wmic", "process", "get", "ProcessId,CommandLine", "/FORMAT:LIST"], capture_output=True, text=True
             )
             # Parse WMIC LIST output: blocks of "CommandLine=...\nProcessId=...\n"
             current_cmd = ""
-            for line in result.stdout.split('\n'):
+            for line in result.stdout.split("\n"):
                 line = line.strip()
                 if line.startswith("CommandLine="):
-                    current_cmd = line[len("CommandLine="):]
+                    current_cmd = line[len("CommandLine=") :]
                 elif line.startswith("ProcessId="):
-                    pid_str = line[len("ProcessId="):]
+                    pid_str = line[len("ProcessId=") :]
                     if any(p in current_cmd for p in patterns):
                         try:
                             pid = int(pid_str)
@@ -58,14 +63,10 @@ def find_gateway_pids() -> list:
                             pass
                     current_cmd = ""
         else:
-            result = subprocess.run(
-                ["ps", "aux"],
-                capture_output=True,
-                text=True
-            )
-            for line in result.stdout.split('\n'):
+            result = subprocess.run(["ps", "aux"], capture_output=True, text=True)
+            for line in result.stdout.split("\n"):
                 # Skip grep and current process
-                if 'grep' in line or str(os.getpid()) in line:
+                if "grep" in line or str(os.getpid()) in line:
                     continue
                 for pattern in patterns:
                     if pattern in line:
@@ -88,7 +89,7 @@ def kill_gateway_processes(force: bool = False) -> int:
     """Kill any running gateway processes. Returns count killed."""
     pids = find_gateway_pids()
     killed = 0
-    
+
     for pid in pids:
         try:
             if force and not is_windows():
@@ -101,18 +102,20 @@ def kill_gateway_processes(force: bool = False) -> int:
             pass
         except PermissionError:
             print(f"⚠ Permission denied to kill PID {pid}")
-    
+
     return killed
 
 
 def is_linux() -> bool:
-    return sys.platform.startswith('linux')
+    return sys.platform.startswith("linux")
+
 
 def is_macos() -> bool:
-    return sys.platform == 'darwin'
+    return sys.platform == "darwin"
+
 
 def is_windows() -> bool:
-    return sys.platform == 'win32'
+    return sys.platform == "win32"
 
 
 # =============================================================================
@@ -122,11 +125,14 @@ def is_windows() -> bool:
 SERVICE_NAME = "hermes-gateway"
 SERVICE_DESCRIPTION = "Hermes Agent Gateway - Messaging Platform Integration"
 
+
 def get_systemd_unit_path() -> Path:
     return Path.home() / ".config" / "systemd" / "user" / f"{SERVICE_NAME}.service"
 
+
 def get_launchd_plist_path() -> Path:
     return Path.home() / "Library" / "LaunchAgents" / "ai.hermes.gateway.plist"
+
 
 def get_python_path() -> str:
     if is_windows():
@@ -137,14 +143,16 @@ def get_python_path() -> str:
         return str(venv_python)
     return sys.executable
 
+
 def get_hermes_cli_path() -> str:
     """Get the path to the hermes CLI."""
     # Check if installed via pip
     import shutil
+
     hermes_bin = shutil.which("hermes")
     if hermes_bin:
         return hermes_bin
-    
+
     # Fallback to direct module execution
     return f"{get_python_path()} -m hermes_cli.main"
 
@@ -153,8 +161,10 @@ def get_hermes_cli_path() -> str:
 # Systemd (Linux)
 # =============================================================================
 
+
 def generate_systemd_unit() -> str:
     import shutil
+
     python_path = get_python_path()
     working_dir = str(PROJECT_ROOT)
     venv_dir = str(PROJECT_ROOT / "venv")
@@ -163,7 +173,7 @@ def generate_systemd_unit() -> str:
 
     # Build a PATH that includes the venv, node_modules, and standard system dirs
     sane_path = f"{venv_bin}:{node_bin}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-    
+
     hermes_cli = shutil.which("hermes") or f"{python_path} -m hermes_cli.main"
     return f"""[Unit]
 Description={SERVICE_DESCRIPTION}
@@ -188,55 +198,61 @@ StandardError=journal
 WantedBy=default.target
 """
 
+
 def systemd_install(force: bool = False):
     unit_path = get_systemd_unit_path()
-    
+
     if unit_path.exists() and not force:
         print(f"Service already installed at: {unit_path}")
         print("Use --force to reinstall")
         return
-    
+
     unit_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Installing systemd service to: {unit_path}")
     unit_path.write_text(generate_systemd_unit())
-    
+
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     subprocess.run(["systemctl", "--user", "enable", SERVICE_NAME], check=True)
-    
+
     print()
     print("✓ Service installed and enabled!")
     print()
     print("Next steps:")
-    print(f"  hermes gateway start              # Start the service")
-    print(f"  hermes gateway status             # Check status")
+    print("  hermes gateway start              # Start the service")
+    print("  hermes gateway status             # Check status")
     print(f"  journalctl --user -u {SERVICE_NAME} -f  # View logs")
     print()
     print("To enable lingering (keeps running after logout):")
     print("  sudo loginctl enable-linger $USER")
 
+
 def systemd_uninstall():
     subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=False)
     subprocess.run(["systemctl", "--user", "disable", SERVICE_NAME], check=False)
-    
+
     unit_path = get_systemd_unit_path()
     if unit_path.exists():
         unit_path.unlink()
         print(f"✓ Removed {unit_path}")
-    
+
     subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
     print("✓ Service uninstalled")
+
 
 def systemd_start():
     subprocess.run(["systemctl", "--user", "start", SERVICE_NAME], check=True)
     print("✓ Service started")
 
+
 def systemd_stop():
     subprocess.run(["systemctl", "--user", "stop", SERVICE_NAME], check=True)
     print("✓ Service stopped")
 
+
 def systemd_restart():
     subprocess.run(["systemctl", "--user", "restart", SERVICE_NAME], check=True)
     print("✓ Service restarted")
+
 
 def systemd_status(deep: bool = False):
     # Check if service unit file exists
@@ -245,54 +261,45 @@ def systemd_status(deep: bool = False):
         print("✗ Gateway service is not installed")
         print("  Run: hermes gateway install")
         return
-    
+
     # Show detailed status first
-    subprocess.run(
-        ["systemctl", "--user", "status", SERVICE_NAME, "--no-pager"],
-        capture_output=False
-    )
-    
+    subprocess.run(["systemctl", "--user", "status", SERVICE_NAME, "--no-pager"], capture_output=False)
+
     # Check if service is active
-    result = subprocess.run(
-        ["systemctl", "--user", "is-active", SERVICE_NAME],
-        capture_output=True,
-        text=True
-    )
-    
+    result = subprocess.run(["systemctl", "--user", "is-active", SERVICE_NAME], capture_output=True, text=True)
+
     status = result.stdout.strip()
-    
+
     if status == "active":
         print("✓ Gateway service is running")
     else:
         print("✗ Gateway service is stopped")
         print("  Run: hermes gateway start")
-    
+
     if deep:
         print()
         print("Recent logs:")
-        subprocess.run([
-            "journalctl", "--user", "-u", SERVICE_NAME,
-            "-n", "20", "--no-pager"
-        ])
+        subprocess.run(["journalctl", "--user", "-u", SERVICE_NAME, "-n", "20", "--no-pager"])
 
 
 # =============================================================================
 # Launchd (macOS)
 # =============================================================================
 
+
 def generate_launchd_plist() -> str:
     python_path = get_python_path()
     working_dir = str(PROJECT_ROOT)
     log_dir = Path.home() / ".hermes" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
-    
+
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
     <string>ai.hermes.gateway</string>
-    
+
     <key>ProgramArguments</key>
     <array>
         <string>{python_path}</string>
@@ -301,42 +308,43 @@ def generate_launchd_plist() -> str:
         <string>gateway</string>
         <string>run</string>
     </array>
-    
+
     <key>WorkingDirectory</key>
     <string>{working_dir}</string>
-    
+
     <key>RunAtLoad</key>
     <true/>
-    
+
     <key>KeepAlive</key>
     <dict>
         <key>SuccessfulExit</key>
         <false/>
     </dict>
-    
+
     <key>StandardOutPath</key>
     <string>{log_dir}/gateway.log</string>
-    
+
     <key>StandardErrorPath</key>
     <string>{log_dir}/gateway.error.log</string>
 </dict>
 </plist>
 """
 
+
 def launchd_install(force: bool = False):
     plist_path = get_launchd_plist_path()
-    
+
     if plist_path.exists() and not force:
         print(f"Service already installed at: {plist_path}")
         print("Use --force to reinstall")
         return
-    
+
     plist_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Installing launchd service to: {plist_path}")
     plist_path.write_text(generate_launchd_plist())
-    
+
     subprocess.run(["launchctl", "load", str(plist_path)], check=True)
-    
+
     print()
     print("✓ Service installed and loaded!")
     print()
@@ -344,41 +352,42 @@ def launchd_install(force: bool = False):
     print("  hermes gateway status             # Check status")
     print("  tail -f ~/.hermes/logs/gateway.log  # View logs")
 
+
 def launchd_uninstall():
     plist_path = get_launchd_plist_path()
     subprocess.run(["launchctl", "unload", str(plist_path)], check=False)
-    
+
     if plist_path.exists():
         plist_path.unlink()
         print(f"✓ Removed {plist_path}")
-    
+
     print("✓ Service uninstalled")
+
 
 def launchd_start():
     subprocess.run(["launchctl", "start", "ai.hermes.gateway"], check=True)
     print("✓ Service started")
 
+
 def launchd_stop():
     subprocess.run(["launchctl", "stop", "ai.hermes.gateway"], check=True)
     print("✓ Service stopped")
+
 
 def launchd_restart():
     launchd_stop()
     launchd_start()
 
+
 def launchd_status(deep: bool = False):
-    result = subprocess.run(
-        ["launchctl", "list", "ai.hermes.gateway"],
-        capture_output=True,
-        text=True
-    )
-    
+    result = subprocess.run(["launchctl", "list", "ai.hermes.gateway"], capture_output=True, text=True)
+
     if result.returncode == 0:
         print("✓ Gateway service is loaded")
         print(result.stdout)
     else:
         print("✗ Gateway service is not loaded")
-    
+
     if deep:
         log_file = Path.home() / ".hermes" / "logs" / "gateway.log"
         if log_file.exists():
@@ -391,9 +400,10 @@ def launchd_status(deep: bool = False):
 # Gateway Runner
 # =============================================================================
 
+
 def run_gateway(verbose: bool = False, replace: bool = False):
     """Run the gateway in foreground.
-    
+
     Args:
         verbose: Enable verbose logging output.
         replace: If True, kill any existing gateway instance before starting.
@@ -401,9 +411,9 @@ def run_gateway(verbose: bool = False, replace: bool = False):
                  hasn't fully exited yet.
     """
     sys.path.insert(0, str(PROJECT_ROOT))
-    
+
     from gateway.run import start_gateway
-    
+
     print("┌─────────────────────────────────────────────────────────┐")
     print("│           ⚕ Hermes Gateway Starting...                 │")
     print("├─────────────────────────────────────────────────────────┤")
@@ -411,7 +421,7 @@ def run_gateway(verbose: bool = False, replace: bool = False):
     print("│  Press Ctrl+C to stop                                   │")
     print("└─────────────────────────────────────────────────────────┘")
     print()
-    
+
     # Exit with code 1 if gateway fails to connect any platform,
     # so systemd Restart=on-failure will retry on transient errors
     success = asyncio.run(start_gateway(replace=replace))
@@ -438,13 +448,25 @@ _PLATFORMS = [
             "4. To find your user ID: message @userinfobot — it replies with your numeric ID",
         ],
         "vars": [
-            {"name": "TELEGRAM_BOT_TOKEN", "prompt": "Bot token", "password": True,
-             "help": "Paste the token from @BotFather (step 3 above)."},
-            {"name": "TELEGRAM_ALLOWED_USERS", "prompt": "Allowed user IDs (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Paste your user ID from step 4 above."},
-            {"name": "TELEGRAM_HOME_CHANNEL", "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)", "password": False,
-             "help": "For DMs, this is your user ID. You can set it later by typing /set-home in chat."},
+            {
+                "name": "TELEGRAM_BOT_TOKEN",
+                "prompt": "Bot token",
+                "password": True,
+                "help": "Paste the token from @BotFather (step 3 above).",
+            },
+            {
+                "name": "TELEGRAM_ALLOWED_USERS",
+                "prompt": "Allowed user IDs (comma-separated)",
+                "password": False,
+                "is_allowlist": True,
+                "help": "Paste your user ID from step 4 above.",
+            },
+            {
+                "name": "TELEGRAM_HOME_CHANNEL",
+                "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)",
+                "password": False,
+                "help": "For DMs, this is your user ID. You can set it later by typing /set-home in chat.",
+            },
         ],
     },
     {
@@ -466,13 +488,25 @@ _PLATFORMS = [
             "   then right-click your name → Copy ID",
         ],
         "vars": [
-            {"name": "DISCORD_BOT_TOKEN", "prompt": "Bot token", "password": True,
-             "help": "Paste the token from step 2 above."},
-            {"name": "DISCORD_ALLOWED_USERS", "prompt": "Allowed user IDs or usernames (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Paste your user ID from step 5 above."},
-            {"name": "DISCORD_HOME_CHANNEL", "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)", "password": False,
-             "help": "Right-click a channel → Copy Channel ID (requires Developer Mode)."},
+            {
+                "name": "DISCORD_BOT_TOKEN",
+                "prompt": "Bot token",
+                "password": True,
+                "help": "Paste the token from step 2 above.",
+            },
+            {
+                "name": "DISCORD_ALLOWED_USERS",
+                "prompt": "Allowed user IDs or usernames (comma-separated)",
+                "password": False,
+                "is_allowlist": True,
+                "help": "Paste your user ID from step 5 above.",
+            },
+            {
+                "name": "DISCORD_HOME_CHANNEL",
+                "prompt": "Home channel ID (for cron/notification delivery, or empty to set later with /set-home)",
+                "password": False,
+                "help": "Right-click a channel → Copy Channel ID (requires Developer Mode).",
+            },
         ],
     },
     {
@@ -497,13 +531,25 @@ _PLATFORMS = [
             "8. Invite the bot to channels: /invite @YourBot",
         ],
         "vars": [
-            {"name": "SLACK_BOT_TOKEN", "prompt": "Bot Token (xoxb-...)", "password": True,
-             "help": "Paste the bot token from step 3 above."},
-            {"name": "SLACK_APP_TOKEN", "prompt": "App Token (xapp-...)", "password": True,
-             "help": "Paste the app-level token from step 4 above."},
-            {"name": "SLACK_ALLOWED_USERS", "prompt": "Allowed user IDs (comma-separated)", "password": False,
-             "is_allowlist": True,
-             "help": "Paste your member ID from step 7 above."},
+            {
+                "name": "SLACK_BOT_TOKEN",
+                "prompt": "Bot Token (xoxb-...)",
+                "password": True,
+                "help": "Paste the bot token from step 3 above.",
+            },
+            {
+                "name": "SLACK_APP_TOKEN",
+                "prompt": "App Token (xapp-...)",
+                "password": True,
+                "help": "Paste the app-level token from step 4 above.",
+            },
+            {
+                "name": "SLACK_ALLOWED_USERS",
+                "prompt": "Allowed user IDs (comma-separated)",
+                "password": False,
+                "is_allowlist": True,
+                "help": "Paste your member ID from step 7 above.",
+            },
         ],
     },
     {
@@ -582,14 +628,14 @@ def _setup_standard_platform(platform: dict):
 
         # Allowlist fields get special handling for the deny-by-default security model
         if var.get("is_allowlist"):
-            print_info(f"  The gateway DENIES all users by default for security.")
-            print_info(f"  Enter user IDs to create an allowlist, or leave empty")
-            print_info(f"  and you'll be asked about open access next.")
+            print_info("  The gateway DENIES all users by default for security.")
+            print_info("  Enter user IDs to create an allowlist, or leave empty")
+            print_info("  and you'll be asked about open access next.")
             value = prompt(f"  {var['prompt']}", password=False)
             if value:
                 cleaned = value.replace(" ", "")
                 save_env_value(var["name"], cleaned)
-                print_success(f"  Saved — only these users can interact with the bot.")
+                print_success("  Saved — only these users can interact with the bot.")
                 allowed_val_set = cleaned
             else:
                 # No allowlist — ask about open access vs DM pairing
@@ -618,7 +664,7 @@ def _setup_standard_platform(platform: dict):
             print_warning(f"  Skipped — {label} won't work without this.")
             return
         else:
-            print_info(f"  Skipped (can configure later)")
+            print_info("  Skipped (can configure later)")
 
     # If an allowlist was set and home channel wasn't, offer to reuse
     # the first user ID (common for Telegram DMs).
@@ -636,8 +682,10 @@ def _setup_standard_platform(platform: dict):
 
 def _setup_whatsapp():
     """Delegate to the existing WhatsApp setup flow."""
-    from hermes_cli.main import cmd_whatsapp
     import argparse
+
+    from hermes_cli.main import cmd_whatsapp
+
     cmd_whatsapp(argparse.Namespace())
 
 
@@ -653,16 +701,10 @@ def _is_service_installed() -> bool:
 def _is_service_running() -> bool:
     """Check if the gateway service is currently running."""
     if is_linux() and get_systemd_unit_path().exists():
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", SERVICE_NAME],
-            capture_output=True, text=True
-        )
+        result = subprocess.run(["systemctl", "--user", "is-active", SERVICE_NAME], capture_output=True, text=True)
         return result.stdout.strip() == "active"
     elif is_macos() and get_launchd_plist_path().exists():
-        result = subprocess.run(
-            ["launchctl", "list", "ai.hermes.gateway"],
-            capture_output=True, text=True
-        )
+        result = subprocess.run(["launchctl", "list", "ai.hermes.gateway"], capture_output=True, text=True)
         return result.returncode == 0
     # Check for manual processes
     return len(find_gateway_pids()) > 0
@@ -697,7 +739,7 @@ def _setup_signal():
         print_info("    Docker: bbernhard/signal-cli-rest-api")
         print()
         print_info("  After installing, link your account and start the daemon:")
-        print_info("    signal-cli link -n \"HermesAgent\"")
+        print_info('    signal-cli link -n "HermesAgent"')
         print_info("    signal-cli --account +YOURNUMBER daemon --http 127.0.0.1:8080")
         print()
 
@@ -715,6 +757,7 @@ def _setup_signal():
     print_info("  Testing connection...")
     try:
         import httpx
+
         resp = httpx.get(f"{url.rstrip('/')}/api/v1/check", timeout=10.0)
         if resp.status_code == 200:
             print_success("  signal-cli daemon is reachable!")
@@ -779,7 +822,7 @@ def _setup_signal():
     print_success("Signal configured!")
     print_info(f"  URL: {url}")
     print_info(f"  Account: {account}")
-    print_info(f"  DM auth: via SIGNAL_ALLOWED_USERS + DM pairing")
+    print_info("  DM auth: via SIGNAL_ALLOWED_USERS + DM pairing")
     print_info(f"  Groups: {'enabled' if get_env_value('SIGNAL_GROUP_ALLOWED_USERS') else 'disabled'}")
 
 
@@ -841,11 +884,10 @@ def gateway_setup():
             _setup_standard_platform(platform)
 
     # ── Post-setup: offer to install/restart gateway ──
-    any_configured = any(
-        bool(get_env_value(p["token_var"]))
-        for p in _PLATFORMS
-        if p["key"] != "whatsapp"
-    ) or (get_env_value("WHATSAPP_ENABLED") or "").lower() == "true"
+    any_configured = (
+        any(bool(get_env_value(p["token_var"])) for p in _PLATFORMS if p["key"] != "whatsapp")
+        or (get_env_value("WHATSAPP_ENABLED") or "").lower() == "true"
+    )
 
     if any_configured:
         print()
@@ -878,7 +920,9 @@ def gateway_setup():
             print()
             if is_linux() or is_macos():
                 platform_name = "systemd" if is_linux() else "launchd"
-                if prompt_yes_no(f"  Install the gateway as a {platform_name} service? (runs in background, starts on boot)", True):
+                if prompt_yes_no(
+                    f"  Install the gateway as a {platform_name} service? (runs in background, starts on boot)", True
+                ):
                     try:
                         force = False
                         if is_linux():
@@ -914,14 +958,15 @@ def gateway_setup():
 # Main Command Handler
 # =============================================================================
 
+
 def gateway_command(args):
     """Handle gateway subcommands."""
-    subcmd = getattr(args, 'gateway_command', None)
-    
+    subcmd = getattr(args, "gateway_command", None)
+
     # Default to run if no subcommand
     if subcmd is None or subcmd == "run":
-        verbose = getattr(args, 'verbose', False)
-        replace = getattr(args, 'replace', False)
+        verbose = getattr(args, "verbose", False)
+        replace = getattr(args, "replace", False)
         run_gateway(verbose, replace=replace)
         return
 
@@ -931,7 +976,7 @@ def gateway_command(args):
 
     # Service management commands
     if subcmd == "install":
-        force = getattr(args, 'force', False)
+        force = getattr(args, "force", False)
         if is_linux():
             systemd_install(force)
         elif is_macos():
@@ -940,7 +985,7 @@ def gateway_command(args):
             print("Service installation not supported on this platform.")
             print("Run manually: hermes gateway run")
             sys.exit(1)
-    
+
     elif subcmd == "uninstall":
         if is_linux():
             systemd_uninstall()
@@ -949,7 +994,7 @@ def gateway_command(args):
         else:
             print("Not supported on this platform.")
             sys.exit(1)
-    
+
     elif subcmd == "start":
         if is_linux():
             systemd_start()
@@ -958,11 +1003,11 @@ def gateway_command(args):
         else:
             print("Not supported on this platform.")
             sys.exit(1)
-    
+
     elif subcmd == "stop":
         # Try service first, fall back to killing processes directly
         service_available = False
-        
+
         if is_linux() and get_systemd_unit_path().exists():
             try:
                 systemd_stop()
@@ -975,7 +1020,7 @@ def gateway_command(args):
                 service_available = True
             except subprocess.CalledProcessError:
                 pass
-        
+
         if not service_available:
             # Kill gateway processes directly
             killed = kill_gateway_processes()
@@ -983,11 +1028,11 @@ def gateway_command(args):
                 print(f"✓ Stopped {killed} gateway process(es)")
             else:
                 print("✗ No gateway processes found")
-    
+
     elif subcmd == "restart":
         # Try service first, fall back to killing and restarting
         service_available = False
-        
+
         if is_linux() and get_systemd_unit_path().exists():
             try:
                 systemd_restart()
@@ -1000,23 +1045,24 @@ def gateway_command(args):
                 service_available = True
             except subprocess.CalledProcessError:
                 pass
-        
+
         if not service_available:
             # Manual restart: kill existing processes
             killed = kill_gateway_processes()
             if killed:
                 print(f"✓ Stopped {killed} gateway process(es)")
-            
+
             import time
+
             time.sleep(2)
-            
+
             # Start fresh
             print("Starting gateway...")
             run_gateway(verbose=False)
-    
+
     elif subcmd == "status":
-        deep = getattr(args, 'deep', False)
-        
+        deep = getattr(args, "deep", False)
+
         # Check for service first
         if is_linux() and get_systemd_unit_path().exists():
             systemd_status(deep)

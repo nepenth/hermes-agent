@@ -19,8 +19,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-
+from typing import Any
 
 DEFAULT_DB_PATH = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "state.db"
 
@@ -156,8 +155,7 @@ class SessionDB:
         # since the title column is guaranteed to exist at this point)
         try:
             cursor.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title_unique "
-                "ON sessions(title) WHERE title IS NOT NULL"
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_title_unique ON sessions(title) WHERE title IS NOT NULL"
             )
         except sqlite3.OperationalError:
             pass  # Index already exists
@@ -185,7 +183,7 @@ class SessionDB:
         session_id: str,
         source: str,
         model: str = None,
-        model_config: Dict[str, Any] = None,
+        model_config: dict[str, Any] = None,
         system_prompt: str = None,
         user_id: str = None,
         parent_session_id: str = None,
@@ -225,9 +223,7 @@ class SessionDB:
         )
         self._conn.commit()
 
-    def update_token_counts(
-        self, session_id: str, input_tokens: int = 0, output_tokens: int = 0
-    ) -> None:
+    def update_token_counts(self, session_id: str, input_tokens: int = 0, output_tokens: int = 0) -> None:
         """Increment token counters on a session."""
         self._conn.execute(
             """UPDATE sessions SET
@@ -238,11 +234,9 @@ class SessionDB:
         )
         self._conn.commit()
 
-    def get_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def get_session(self, session_id: str) -> dict[str, Any] | None:
         """Get a session by ID."""
-        cursor = self._conn.execute(
-            "SELECT * FROM sessions WHERE id = ?", (session_id,)
-        )
+        cursor = self._conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
@@ -250,7 +244,7 @@ class SessionDB:
     MAX_TITLE_LENGTH = 100
 
     @staticmethod
-    def sanitize_title(title: Optional[str]) -> Optional[str]:
+    def sanitize_title(title: str | None) -> str | None:
         """Validate and sanitize a session title.
 
         - Strips leading/trailing whitespace
@@ -271,27 +265,26 @@ class SessionDB:
         # Remove ASCII control characters (0x00-0x1F, 0x7F) but keep
         # whitespace chars (\t=0x09, \n=0x0A, \r=0x0D) so they can be
         # normalized to spaces by the whitespace collapsing step below
-        cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', title)
+        cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", title)
 
         # Remove problematic Unicode control characters:
         # - Zero-width chars (U+200B-U+200F, U+FEFF)
         # - Directional overrides (U+202A-U+202E, U+2066-U+2069)
         # - Object replacement (U+FFFC), interlinear annotation (U+FFF9-U+FFFB)
         cleaned = re.sub(
-            r'[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]',
-            '', cleaned,
+            r"[\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff\ufffc\ufff9-\ufffb]",
+            "",
+            cleaned,
         )
 
         # Collapse internal whitespace runs and strip
-        cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
         if not cleaned:
             return None
 
         if len(cleaned) > SessionDB.MAX_TITLE_LENGTH:
-            raise ValueError(
-                f"Title too long ({len(cleaned)} chars, max {SessionDB.MAX_TITLE_LENGTH})"
-            )
+            raise ValueError(f"Title too long ({len(cleaned)} chars, max {SessionDB.MAX_TITLE_LENGTH})")
 
         return cleaned
 
@@ -312,9 +305,7 @@ class SessionDB:
             )
             conflict = cursor.fetchone()
             if conflict:
-                raise ValueError(
-                    f"Title '{title}' is already in use by session {conflict['id']}"
-                )
+                raise ValueError(f"Title '{title}' is already in use by session {conflict['id']}")
         cursor = self._conn.execute(
             "UPDATE sessions SET title = ? WHERE id = ?",
             (title, session_id),
@@ -322,23 +313,19 @@ class SessionDB:
         self._conn.commit()
         return cursor.rowcount > 0
 
-    def get_session_title(self, session_id: str) -> Optional[str]:
+    def get_session_title(self, session_id: str) -> str | None:
         """Get the title for a session, or None."""
-        cursor = self._conn.execute(
-            "SELECT title FROM sessions WHERE id = ?", (session_id,)
-        )
+        cursor = self._conn.execute("SELECT title FROM sessions WHERE id = ?", (session_id,))
         row = cursor.fetchone()
         return row["title"] if row else None
 
-    def get_session_by_title(self, title: str) -> Optional[Dict[str, Any]]:
+    def get_session_by_title(self, title: str) -> dict[str, Any] | None:
         """Look up a session by exact title. Returns session dict or None."""
-        cursor = self._conn.execute(
-            "SELECT * FROM sessions WHERE title = ?", (title,)
-        )
+        cursor = self._conn.execute("SELECT * FROM sessions WHERE title = ?", (title,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def resolve_session_by_title(self, title: str) -> Optional[str]:
+    def resolve_session_by_title(self, title: str) -> str | None:
         """Resolve a title to a session ID, preferring the latest in a lineage.
 
         If the exact title exists, returns that session's ID.
@@ -353,8 +340,7 @@ class SessionDB:
         # Escape SQL LIKE wildcards (%, _) in the title to prevent false matches
         escaped = title.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         cursor = self._conn.execute(
-            "SELECT id, title, started_at FROM sessions "
-            "WHERE title LIKE ? ESCAPE '\\' ORDER BY started_at DESC",
+            "SELECT id, title, started_at FROM sessions WHERE title LIKE ? ESCAPE '\\' ORDER BY started_at DESC",
             (f"{escaped} #%",),
         )
         numbered = cursor.fetchall()
@@ -373,8 +359,9 @@ class SessionDB:
         the highest existing number and increments.
         """
         import re
+
         # Strip existing #N suffix to find the true base
-        match = re.match(r'^(.*?) #(\d+)$', base_title)
+        match = re.match(r"^(.*?) #(\d+)$", base_title)
         if match:
             base = match.group(1)
         else:
@@ -395,7 +382,7 @@ class SessionDB:
         # Find the highest number
         max_num = 1  # The unnumbered original counts as #1
         for t in existing:
-            m = re.match(r'^.* #(\d+)$', t)
+            m = re.match(r"^.* #(\d+)$", t)
             if m:
                 max_num = max(max_num, int(m.group(1)))
 
@@ -406,7 +393,7 @@ class SessionDB:
         source: str = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List sessions with preview (first user message) and last active timestamp.
 
         Returns dicts with keys: id, source, model, title, started_at, ended_at,
@@ -506,7 +493,7 @@ class SessionDB:
         self._conn.commit()
         return msg_id
 
-    def get_messages(self, session_id: str) -> List[Dict[str, Any]]:
+    def get_messages(self, session_id: str) -> list[dict[str, Any]]:
         """Load all messages for a session, ordered by timestamp."""
         cursor = self._conn.execute(
             "SELECT * FROM messages WHERE session_id = ? ORDER BY timestamp, id",
@@ -524,7 +511,7 @@ class SessionDB:
             result.append(msg)
         return result
 
-    def get_messages_as_conversation(self, session_id: str) -> List[Dict[str, Any]]:
+    def get_messages_as_conversation(self, session_id: str) -> list[dict[str, Any]]:
         """
         Load messages in the OpenAI conversation format (role + content dicts).
         Used by the gateway to restore conversation history.
@@ -556,11 +543,11 @@ class SessionDB:
     def search_messages(
         self,
         query: str,
-        source_filter: List[str] = None,
-        role_filter: List[str] = None,
+        source_filter: list[str] = None,
+        role_filter: list[str] = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Full-text search across session messages using FTS5.
 
@@ -628,8 +615,7 @@ class SessionDB:
                     (match["session_id"], match["id"], match["id"]),
                 )
                 context_msgs = [
-                    {"role": r["role"], "content": (r["content"] or "")[:200]}
-                    for r in ctx_cursor.fetchall()
+                    {"role": r["role"], "content": (r["content"] or "")[:200]} for r in ctx_cursor.fetchall()
                 ]
                 match["context"] = context_msgs
             except Exception:
@@ -645,7 +631,7 @@ class SessionDB:
         source: str = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """List sessions, optionally filtered by source."""
         if source:
             cursor = self._conn.execute(
@@ -666,9 +652,7 @@ class SessionDB:
     def session_count(self, source: str = None) -> int:
         """Count sessions, optionally filtered by source."""
         if source:
-            cursor = self._conn.execute(
-                "SELECT COUNT(*) FROM sessions WHERE source = ?", (source,)
-            )
+            cursor = self._conn.execute("SELECT COUNT(*) FROM sessions WHERE source = ?", (source,))
         else:
             cursor = self._conn.execute("SELECT COUNT(*) FROM sessions")
         return cursor.fetchone()[0]
@@ -676,9 +660,7 @@ class SessionDB:
     def message_count(self, session_id: str = None) -> int:
         """Count messages, optionally for a specific session."""
         if session_id:
-            cursor = self._conn.execute(
-                "SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)
-            )
+            cursor = self._conn.execute("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,))
         else:
             cursor = self._conn.execute("SELECT COUNT(*) FROM messages")
         return cursor.fetchone()[0]
@@ -687,7 +669,7 @@ class SessionDB:
     # Export and cleanup
     # =========================================================================
 
-    def export_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def export_session(self, session_id: str) -> dict[str, Any] | None:
         """Export a single session with all its messages as a dict."""
         session = self.get_session(session_id)
         if not session:
@@ -695,7 +677,7 @@ class SessionDB:
         messages = self.get_messages(session_id)
         return {**session, "messages": messages}
 
-    def export_all(self, source: str = None) -> List[Dict[str, Any]]:
+    def export_all(self, source: str = None) -> list[dict[str, Any]]:
         """
         Export all sessions (with messages) as a list of dicts.
         Suitable for writing to a JSONL file for backup/analysis.
@@ -709,9 +691,7 @@ class SessionDB:
 
     def clear_messages(self, session_id: str) -> None:
         """Delete all messages for a session and reset its counters."""
-        self._conn.execute(
-            "DELETE FROM messages WHERE session_id = ?", (session_id,)
-        )
+        self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         self._conn.execute(
             "UPDATE sessions SET message_count = 0, tool_call_count = 0 WHERE id = ?",
             (session_id,),
@@ -720,9 +700,7 @@ class SessionDB:
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session and all its messages. Returns True if found."""
-        cursor = self._conn.execute(
-            "SELECT COUNT(*) FROM sessions WHERE id = ?", (session_id,)
-        )
+        cursor = self._conn.execute("SELECT COUNT(*) FROM sessions WHERE id = ?", (session_id,))
         if cursor.fetchone()[0] == 0:
             return False
         self._conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
@@ -736,6 +714,7 @@ class SessionDB:
         Only prunes ended sessions (not active ones).
         """
         import time as _time
+
         cutoff = _time.time() - (older_than_days * 86400)
 
         if source:

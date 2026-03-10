@@ -23,9 +23,7 @@ except ImportError:
         import msvcrt
     except ImportError:
         msvcrt = None
-from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from hermes_time import now as _hermes_now
 
@@ -44,7 +42,7 @@ _LOCK_DIR = _hermes_home / "cron"
 _LOCK_FILE = _LOCK_DIR / ".tick.lock"
 
 
-def _resolve_origin(job: dict) -> Optional[dict]:
+def _resolve_origin(job: dict) -> dict | None:
     """Extract origin info from a job, returning {platform, chat_id, chat_name} or None."""
     origin = job.get("origin")
     if not origin:
@@ -87,11 +85,16 @@ def _deliver_result(job: dict, content: str) -> None:
             # Fall back to home channel
             chat_id = os.getenv(f"{platform_name.upper()}_HOME_CHANNEL", "")
             if not chat_id:
-                logger.warning("Job '%s' deliver=%s but no chat_id or home channel. Set via: hermes config set %s_HOME_CHANNEL <channel_id>", job["id"], deliver, platform_name.upper())
+                logger.warning(
+                    "Job '%s' deliver=%s but no chat_id or home channel. Set via: hermes config set %s_HOME_CHANNEL <channel_id>",
+                    job["id"],
+                    deliver,
+                    platform_name.upper(),
+                )
                 return
 
+    from gateway.config import Platform, load_gateway_config
     from tools.send_message_tool import _send_to_platform
-    from gateway.config import load_gateway_config, Platform
 
     platform_map = {
         "telegram": Platform.TELEGRAM,
@@ -123,6 +126,7 @@ def _deliver_result(job: dict, content: str) -> None:
         # asyncio.run() fails if there's already a running loop in this thread;
         # spin up a new thread to avoid that.
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, _send_to_platform(platform, pconfig, chat_id, content))
             result = future.result(timeout=30)
@@ -137,25 +141,26 @@ def _deliver_result(job: dict, content: str) -> None:
         # Mirror the delivered content into the target's gateway session
         try:
             from gateway.mirror import mirror_to_session
+
             mirror_to_session(platform_name, chat_id, content, source_label="cron")
         except Exception:
             pass
 
 
-def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
+def run_job(job: dict) -> tuple[bool, str, str, str | None]:
     """
     Execute a single cron job.
-    
+
     Returns:
         Tuple of (success, full_output_doc, final_response, error_message)
     """
     from run_agent import AIAgent
-    
+
     job_id = job["id"]
     job_name = job["name"]
     prompt = job["prompt"]
     origin = _resolve_origin(job)
-    
+
     logger.info("Running job '%s' (ID: %s)", job_name, job_id)
     logger.info("Prompt: %s", prompt[:100])
 
@@ -170,6 +175,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         # Re-read .env and config.yaml fresh every run so provider/key
         # changes take effect without a gateway restart.
         from dotenv import load_dotenv
+
         try:
             load_dotenv(str(_hermes_home / ".env"), override=True, encoding="utf-8")
         except UnicodeDecodeError:
@@ -181,6 +187,7 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         _cfg = {}
         try:
             import yaml
+
             _cfg_path = str(_hermes_home / "config.yaml")
             if os.path.exists(_cfg_path):
                 with open(_cfg_path) as _f:
@@ -210,12 +217,13 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         prefill_file = os.getenv("HERMES_PREFILL_MESSAGES_FILE", "") or _cfg.get("prefill_messages_file", "")
         if prefill_file:
             import json as _json
+
             pfpath = Path(prefill_file).expanduser()
             if not pfpath.is_absolute():
                 pfpath = _hermes_home / pfpath
             if pfpath.exists():
                 try:
-                    with open(pfpath, "r", encoding="utf-8") as _pf:
+                    with open(pfpath, encoding="utf-8") as _pf:
                         prefill_messages = _json.load(_pf)
                     if not isinstance(prefill_messages, list):
                         prefill_messages = None
@@ -229,9 +237,10 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         pr = _cfg.get("provider_routing", {})
 
         from hermes_cli.runtime_provider import (
-            resolve_runtime_provider,
             format_runtime_provider_error,
+            resolve_runtime_provider,
         )
+
         try:
             runtime = resolve_runtime_provider(
                 requested=os.getenv("HERMES_INFERENCE_PROVIDER"),
@@ -254,20 +263,20 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
             providers_order=pr.get("order"),
             provider_sort=pr.get("sort"),
             quiet_mode=True,
-            session_id=f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
+            session_id=f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}",
         )
-        
+
         result = agent.run_conversation(prompt)
-        
+
         final_response = result.get("final_response", "")
         if not final_response:
             final_response = "(No response generated)"
-        
+
         output = f"""# Cron Job: {job_name}
 
 **Job ID:** {job_id}
-**Run Time:** {_hermes_now().strftime('%Y-%m-%d %H:%M:%S')}
-**Schedule:** {job.get('schedule_display', 'N/A')}
+**Run Time:** {_hermes_now().strftime("%Y-%m-%d %H:%M:%S")}
+**Schedule:** {job.get("schedule_display", "N/A")}
 
 ## Prompt
 
@@ -277,19 +286,19 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
 
 {final_response}
 """
-        
+
         logger.info("Job '%s' completed successfully", job_name)
         return True, output, final_response, None
-        
+
     except Exception as e:
         error_msg = f"{type(e).__name__}: {str(e)}"
         logger.error("Job '%s' failed: %s", job_name, error_msg)
-        
+
         output = f"""# Cron Job: {job_name} (FAILED)
 
 **Job ID:** {job_id}
-**Run Time:** {_hermes_now().strftime('%Y-%m-%d %H:%M:%S')}
-**Schedule:** {job.get('schedule_display', 'N/A')}
+**Run Time:** {_hermes_now().strftime("%Y-%m-%d %H:%M:%S")}
+**Schedule:** {job.get("schedule_display", "N/A")}
 
 ## Prompt
 
@@ -314,13 +323,13 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
 def tick(verbose: bool = True) -> int:
     """
     Check and run all due jobs.
-    
+
     Uses a file lock so only one tick runs at a time, even if the gateway's
     in-process ticker and a standalone daemon or manual tick overlap.
-    
+
     Args:
         verbose: Whether to print status messages
-    
+
     Returns:
         Number of jobs executed (0 if another tick is already running)
     """
@@ -334,7 +343,7 @@ def tick(verbose: bool = True) -> int:
             fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         elif msvcrt:
             msvcrt.locking(lock_fd.fileno(), msvcrt.LK_NBLCK, 1)
-    except (OSError, IOError):
+    except OSError:
         logger.debug("Tick skipped — another instance holds the lock")
         if lock_fd is not None:
             lock_fd.close()
@@ -344,11 +353,11 @@ def tick(verbose: bool = True) -> int:
         due_jobs = get_due_jobs()
 
         if verbose and not due_jobs:
-            logger.info("%s - No jobs due", _hermes_now().strftime('%H:%M:%S'))
+            logger.info("%s - No jobs due", _hermes_now().strftime("%H:%M:%S"))
             return 0
 
         if verbose:
-            logger.info("%s - %s job(s) due", _hermes_now().strftime('%H:%M:%S'), len(due_jobs))
+            logger.info("%s - %s job(s) due", _hermes_now().strftime("%H:%M:%S"), len(due_jobs))
 
         executed = 0
         for job in due_jobs:
@@ -360,7 +369,9 @@ def tick(verbose: bool = True) -> int:
                     logger.info("Output saved to: %s", output_file)
 
                 # Deliver the final response to the origin/target chat
-                deliver_content = final_response if success else f"⚠️ Cron job '{job.get('name', job['id'])}' failed:\n{error}"
+                deliver_content = (
+                    final_response if success else f"⚠️ Cron job '{job.get('name', job['id'])}' failed:\n{error}"
+                )
                 if deliver_content:
                     try:
                         _deliver_result(job, deliver_content)
@@ -371,7 +382,7 @@ def tick(verbose: bool = True) -> int:
                 executed += 1
 
             except Exception as e:
-                logger.error("Error processing job %s: %s", job['id'], e)
+                logger.error("Error processing job %s: %s", job["id"], e)
                 mark_job_run(job["id"], False, str(e))
 
         return executed
@@ -381,7 +392,7 @@ def tick(verbose: bool = True) -> int:
         elif msvcrt:
             try:
                 msvcrt.locking(lock_fd.fileno(), msvcrt.LK_UNLCK, 1)
-            except (OSError, IOError):
+            except OSError:
                 pass
         lock_fd.close()
 

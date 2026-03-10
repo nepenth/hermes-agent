@@ -65,6 +65,7 @@ HONCHO_TOOL_SCHEMA = {
 
 # ── Tool handler ──
 
+
 def _handle_query_user_context(args: dict, **kw) -> str:
     """Execute the Honcho context query."""
     query = args.get("query", "")
@@ -83,6 +84,7 @@ def _handle_query_user_context(args: dict, **kw) -> str:
 
 
 # ── Availability check ──
+
 
 def _check_honcho_available() -> bool:
     """Tool is only available when Honcho is active."""

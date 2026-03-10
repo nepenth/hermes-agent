@@ -15,7 +15,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -35,23 +35,26 @@ def _get_config():
         _HASS_TOKEN or os.getenv("HASS_TOKEN", ""),
     )
 
+
 # Regex for valid HA entity_id format (e.g. "light.living_room", "sensor.temperature_1")
 _ENTITY_ID_RE = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
 
 # Service domains blocked for security -- these allow arbitrary code/command
 # execution on the HA host or enable SSRF attacks on the local network.
 # HA provides zero service-level access control; all safety must be in our layer.
-_BLOCKED_DOMAINS = frozenset({
-    "shell_command",    # arbitrary shell commands as root in HA container
-    "command_line",     # sensors/switches that execute shell commands
-    "python_script",    # sandboxed but can escalate via hass.services.call()
-    "pyscript",         # scripting integration with broader access
-    "hassio",           # addon control, host shutdown/reboot, stdin to containers
-    "rest_command",     # HTTP requests from HA server (SSRF vector)
-})
+_BLOCKED_DOMAINS = frozenset(
+    {
+        "shell_command",  # arbitrary shell commands as root in HA container
+        "command_line",  # sensors/switches that execute shell commands
+        "python_script",  # sandboxed but can escalate via hass.services.call()
+        "pyscript",  # scripting integration with broader access
+        "hassio",  # addon control, host shutdown/reboot, stdin to containers
+        "rest_command",  # HTTP requests from HA server (SSRF vector)
+    }
+)
 
 
-def _get_headers(token: str = "") -> Dict[str, str]:
+def _get_headers(token: str = "") -> dict[str, str]:
     """Return authorization headers for HA REST API."""
     if not token:
         _, token = _get_config()
@@ -65,11 +68,12 @@ def _get_headers(token: str = "") -> Dict[str, str]:
 # Async helpers (called from sync handlers via run_until_complete)
 # ---------------------------------------------------------------------------
 
+
 def _filter_and_summarize(
     states: list,
-    domain: Optional[str] = None,
-    area: Optional[str] = None,
-) -> Dict[str, Any]:
+    domain: str | None = None,
+    area: str | None = None,
+) -> dict[str, Any]:
     """Filter raw HA states by domain/area and return a compact summary."""
     if domain:
         states = [s for s in states if s.get("entity_id", "").startswith(f"{domain}.")]
@@ -77,26 +81,29 @@ def _filter_and_summarize(
     if area:
         area_lower = area.lower()
         states = [
-            s for s in states
+            s
+            for s in states
             if area_lower in (s.get("attributes", {}).get("friendly_name", "") or "").lower()
             or area_lower in (s.get("attributes", {}).get("area", "") or "").lower()
         ]
 
     entities = []
     for s in states:
-        entities.append({
-            "entity_id": s["entity_id"],
-            "state": s["state"],
-            "friendly_name": s.get("attributes", {}).get("friendly_name", ""),
-        })
+        entities.append(
+            {
+                "entity_id": s["entity_id"],
+                "state": s["state"],
+                "friendly_name": s.get("attributes", {}).get("friendly_name", ""),
+            }
+        )
 
     return {"count": len(entities), "entities": entities}
 
 
 async def _async_list_entities(
-    domain: Optional[str] = None,
-    area: Optional[str] = None,
-) -> Dict[str, Any]:
+    domain: str | None = None,
+    area: str | None = None,
+) -> dict[str, Any]:
     """Fetch entity states from HA and optionally filter by domain/area."""
     import aiohttp
 
@@ -110,7 +117,7 @@ async def _async_list_entities(
     return _filter_and_summarize(states, domain, area)
 
 
-async def _async_get_state(entity_id: str) -> Dict[str, Any]:
+async def _async_get_state(entity_id: str) -> dict[str, Any]:
     """Fetch detailed state of a single entity."""
     import aiohttp
 
@@ -131,11 +138,11 @@ async def _async_get_state(entity_id: str) -> Dict[str, Any]:
 
 
 def _build_service_payload(
-    entity_id: Optional[str] = None,
-    data: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    entity_id: str | None = None,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Build the JSON payload for a HA service call."""
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
     if data:
         payload.update(data)
     # entity_id parameter takes precedence over data["entity_id"]
@@ -148,15 +155,17 @@ def _parse_service_response(
     domain: str,
     service: str,
     result: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Parse HA service call response into a structured result."""
     affected = []
     if isinstance(result, list):
         for s in result:
-            affected.append({
-                "entity_id": s.get("entity_id", ""),
-                "state": s.get("state", ""),
-            })
+            affected.append(
+                {
+                    "entity_id": s.get("entity_id", ""),
+                    "state": s.get("state", ""),
+                }
+            )
 
     return {
         "success": True,
@@ -168,9 +177,9 @@ def _parse_service_response(
 async def _async_call_service(
     domain: str,
     service: str,
-    entity_id: Optional[str] = None,
-    data: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    entity_id: str | None = None,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Call a Home Assistant service."""
     import aiohttp
 
@@ -178,15 +187,17 @@ async def _async_call_service(
     url = f"{hass_url}/api/services/{domain}/{service}"
     payload = _build_service_payload(entity_id, data)
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
+    async with (
+        aiohttp.ClientSession() as session,
+        session.post(
             url,
             headers=_get_headers(hass_token),
             json=payload,
             timeout=aiohttp.ClientTimeout(total=15),
-        ) as resp:
-            resp.raise_for_status()
-            result = await resp.json()
+        ) as resp,
+    ):
+        resp.raise_for_status()
+        result = await resp.json()
 
     return _parse_service_response(domain, service, result)
 
@@ -194,6 +205,7 @@ async def _async_call_service(
 # ---------------------------------------------------------------------------
 # Sync wrappers (handler signature: (args, **kw) -> str)
 # ---------------------------------------------------------------------------
+
 
 def _run_async(coro):
     """Run an async coroutine from a sync handler."""
@@ -205,6 +217,7 @@ def _run_async(coro):
     if loop and loop.is_running():
         # Already inside an event loop -- create a new thread
         import concurrent.futures
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(asyncio.run, coro)
             return future.result(timeout=30)
@@ -247,10 +260,12 @@ def _handle_call_service(args: dict, **kw) -> str:
         return json.dumps({"error": "Missing required parameters: domain and service"})
 
     if domain in _BLOCKED_DOMAINS:
-        return json.dumps({
-            "error": f"Service domain '{domain}' is blocked for security. "
-            f"Blocked domains: {', '.join(sorted(_BLOCKED_DOMAINS))}"
-        })
+        return json.dumps(
+            {
+                "error": f"Service domain '{domain}' is blocked for security. "
+                f"Blocked domains: {', '.join(sorted(_BLOCKED_DOMAINS))}"
+            }
+        )
 
     entity_id = args.get("entity_id")
     if entity_id and not _ENTITY_ID_RE.match(entity_id):
@@ -269,7 +284,8 @@ def _handle_call_service(args: dict, **kw) -> str:
 # List services
 # ---------------------------------------------------------------------------
 
-async def _async_list_services(domain: Optional[str] = None) -> Dict[str, Any]:
+
+async def _async_list_services(domain: str | None = None) -> dict[str, Any]:
     """Fetch available services from HA and optionally filter by domain."""
     import aiohttp
 
@@ -290,13 +306,10 @@ async def _async_list_services(domain: Optional[str] = None) -> Dict[str, Any]:
         d = svc_domain.get("domain", "")
         domain_services = {}
         for svc_name, svc_info in svc_domain.get("services", {}).items():
-            svc_entry: Dict[str, Any] = {"description": svc_info.get("description", "")}
+            svc_entry: dict[str, Any] = {"description": svc_info.get("description", "")}
             fields = svc_info.get("fields", {})
             if fields:
-                svc_entry["fields"] = {
-                    k: v.get("description", "") for k, v in fields.items()
-                    if isinstance(v, dict)
-                }
+                svc_entry["fields"] = {k: v.get("description", "") for k, v in fields.items() if isinstance(v, dict)}
             domain_services[svc_name] = svc_entry
         result.append({"domain": d, "services": domain_services})
 
@@ -317,6 +330,7 @@ def _handle_list_services(args: dict, **kw) -> str:
 # ---------------------------------------------------------------------------
 # Availability check
 # ---------------------------------------------------------------------------
+
 
 def _check_ha_available() -> bool:
     """Tool is only available when HASS_TOKEN is set."""
@@ -369,8 +383,7 @@ HA_GET_STATE_SCHEMA = {
             "entity_id": {
                 "type": "string",
                 "description": (
-                    "The entity ID to query (e.g. 'light.living_room', "
-                    "'climate.thermostat', 'sensor.temperature')."
+                    "The entity ID to query (e.g. 'light.living_room', 'climate.thermostat', 'sensor.temperature')."
                 ),
             },
         },
@@ -392,8 +405,7 @@ HA_LIST_SERVICES_SCHEMA = {
             "domain": {
                 "type": "string",
                 "description": (
-                    "Filter by domain (e.g. 'light', 'climate', 'switch'). "
-                    "Omit to list services for all domains."
+                    "Filter by domain (e.g. 'light', 'climate', 'switch'). Omit to list services for all domains."
                 ),
             },
         },
@@ -428,8 +440,7 @@ HA_CALL_SERVICE_SCHEMA = {
             "entity_id": {
                 "type": "string",
                 "description": (
-                    "Target entity ID (e.g. 'light.living_room'). "
-                    "Some services (like scene.turn_on) may not need this."
+                    "Target entity ID (e.g. 'light.living_room'). Some services (like scene.turn_on) may not need this."
                 ),
             },
             "data": {

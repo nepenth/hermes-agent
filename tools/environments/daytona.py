@@ -11,7 +11,6 @@ import shlex
 import threading
 import uuid
 import warnings
-from typing import Optional
 
 from tools.environments.base import BaseEnvironment
 from tools.interrupt import is_interrupted
@@ -32,8 +31,8 @@ class DaytonaEnvironment(BaseEnvironment):
         cwd: str = "/home/daytona",
         timeout: int = 60,
         cpu: int = 1,
-        memory: int = 5120,       # MB (hermes convention)
-        disk: int = 10240,        # MB (Daytona platform max is 10GB)
+        memory: int = 5120,  # MB (hermes convention)
+        disk: int = 10240,  # MB (Daytona platform max is 10GB)
         persistent_filesystem: bool = True,
         task_id: str = "default",
     ):
@@ -41,8 +40,8 @@ class DaytonaEnvironment(BaseEnvironment):
         super().__init__(cwd=cwd, timeout=timeout)
 
         from daytona import (
-            Daytona,
             CreateSandboxFromImageParams,
+            Daytona,
             DaytonaError,
             Resources,
             SandboxState,
@@ -73,13 +72,11 @@ class DaytonaEnvironment(BaseEnvironment):
             try:
                 self._sandbox = self._daytona.find_one(labels=labels)
                 self._sandbox.start()
-                logger.info("Daytona: resumed sandbox %s for task %s",
-                            self._sandbox.id, task_id)
+                logger.info("Daytona: resumed sandbox %s for task %s", self._sandbox.id, task_id)
             except DaytonaError:
                 self._sandbox = None
             except Exception as e:
-                logger.warning("Daytona: failed to resume sandbox for task %s: %s",
-                               task_id, e)
+                logger.warning("Daytona: failed to resume sandbox for task %s: %s", task_id, e)
                 self._sandbox = None
 
         # Create a fresh sandbox if we don't have one
@@ -92,8 +89,7 @@ class DaytonaEnvironment(BaseEnvironment):
                     resources=resources,
                 )
             )
-            logger.info("Daytona: created sandbox %s for task %s",
-                        self._sandbox.id, task_id)
+            logger.info("Daytona: created sandbox %s for task %s", self._sandbox.id, task_id)
 
         # Resolve cwd: detect actual home dir inside the sandbox
         if self._requested_cwd in ("~", "/home/daytona"):
@@ -112,7 +108,7 @@ class DaytonaEnvironment(BaseEnvironment):
             self._sandbox.start()
             logger.info("Daytona: restarted sandbox %s", self._sandbox.id)
 
-    def _exec_in_thread(self, exec_command: str, cwd: Optional[str], timeout: int) -> dict:
+    def _exec_in_thread(self, exec_command: str, cwd: str | None, timeout: int) -> dict:
         """Run exec in a background thread with interrupt polling.
 
         The Daytona SDK's exec(timeout=...) parameter is unreliable (the
@@ -130,7 +126,8 @@ class DaytonaEnvironment(BaseEnvironment):
         def _run():
             try:
                 response = self._sandbox.process.exec(
-                    timed_command, cwd=cwd,
+                    timed_command,
+                    cwd=cwd,
                 )
                 result_holder["value"] = {
                     "output": response.result or "",
@@ -169,9 +166,9 @@ class DaytonaEnvironment(BaseEnvironment):
             return {"error": result_holder["error"]}
         return result_holder["value"]
 
-    def execute(self, command: str, cwd: str = "", *,
-                timeout: Optional[int] = None,
-                stdin_data: Optional[str] = None) -> dict:
+    def execute(
+        self, command: str, cwd: str = "", *, timeout: int | None = None, stdin_data: str | None = None
+    ) -> dict:
         with self._lock:
             self._ensure_sandbox_ready()
 
@@ -189,6 +186,7 @@ class DaytonaEnvironment(BaseEnvironment):
 
         if "error" in result:
             from daytona import DaytonaError
+
             err = result["error"]
             if isinstance(err, DaytonaError):
                 with self._lock:
@@ -210,8 +208,7 @@ class DaytonaEnvironment(BaseEnvironment):
             try:
                 if self._persistent:
                     self._sandbox.stop()
-                    logger.info("Daytona: stopped sandbox %s (filesystem preserved)",
-                                self._sandbox.id)
+                    logger.info("Daytona: stopped sandbox %s (filesystem preserved)", self._sandbox.id)
                 else:
                     self._daytona.delete(self._sandbox)
                     logger.info("Daytona: deleted sandbox %s", self._sandbox.id)

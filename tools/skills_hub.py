@@ -23,15 +23,17 @@ import subprocess
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 import yaml
 
 from tools.skills_guard import (
-    ScanResult, scan_skill, should_allow_install, content_hash, TRUSTED_REPOS,
+    TRUSTED_REPOS,
+    ScanResult,
+    content_hash,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,24 +60,27 @@ INDEX_CACHE_TTL = 3600  # 1 hour
 # Data models
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class SkillMeta:
     """Minimal metadata returned by search results."""
+
     name: str
     description: str
-    source: str           # "official", "github", "clawhub", "claude-marketplace", "lobehub"
-    identifier: str       # source-specific ID (e.g. "openai/skills/skill-creator")
-    trust_level: str      # "builtin" | "trusted" | "community"
-    repo: Optional[str] = None
-    path: Optional[str] = None
-    tags: List[str] = field(default_factory=list)
+    source: str  # "official", "github", "clawhub", "claude-marketplace", "lobehub"
+    identifier: str  # source-specific ID (e.g. "openai/skills/skill-creator")
+    trust_level: str  # "builtin" | "trusted" | "community"
+    repo: str | None = None
+    path: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
 class SkillBundle:
     """A downloaded skill ready for quarantine/scanning/installation."""
+
     name: str
-    files: Dict[str, str]   # relative_path -> text content
+    files: dict[str, str]  # relative_path -> text content
     source: str
     identifier: str
     trust_level: str
@@ -84,6 +89,7 @@ class SkillBundle:
 # ---------------------------------------------------------------------------
 # GitHub Authentication
 # ---------------------------------------------------------------------------
+
 
 class GitHubAuth:
     """
@@ -95,11 +101,11 @@ class GitHubAuth:
     """
 
     def __init__(self):
-        self._cached_token: Optional[str] = None
-        self._cached_method: Optional[str] = None
+        self._cached_token: str | None = None
+        self._cached_method: str | None = None
         self._app_token_expiry: float = 0
 
-    def get_headers(self) -> Dict[str, str]:
+    def get_headers(self) -> dict[str, str]:
         """Return authorization headers for GitHub API requests."""
         token = self._resolve_token()
         headers = {"Accept": "application/vnd.github.v3+json"}
@@ -115,7 +121,7 @@ class GitHubAuth:
         self._resolve_token()
         return self._cached_method or "anonymous"
 
-    def _resolve_token(self) -> Optional[str]:
+    def _resolve_token(self) -> str | None:
         # Return cached token if still valid
         if self._cached_token:
             if self._cached_method != "github-app" or time.time() < self._app_token_expiry:
@@ -146,12 +152,14 @@ class GitHubAuth:
         self._cached_method = "anonymous"
         return None
 
-    def _try_gh_cli(self) -> Optional[str]:
+    def _try_gh_cli(self) -> str | None:
         """Try to get a token from the gh CLI."""
         try:
             result = subprocess.run(
                 ["gh", "auth", "token"],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
@@ -159,7 +167,7 @@ class GitHubAuth:
             logger.debug("gh CLI token lookup failed: %s", e)
         return None
 
-    def _try_github_app(self) -> Optional[str]:
+    def _try_github_app(self) -> str | None:
         """Try GitHub App JWT authentication if credentials are configured."""
         app_id = os.environ.get("GITHUB_APP_ID")
         key_path = os.environ.get("GITHUB_APP_PRIVATE_KEY_PATH")
@@ -208,21 +216,22 @@ class GitHubAuth:
 # Source adapter interface
 # ---------------------------------------------------------------------------
 
+
 class SkillSource(ABC):
     """Abstract base for all skill registry adapters."""
 
     @abstractmethod
-    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
+    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         """Search for skills matching a query string."""
         ...
 
     @abstractmethod
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    def fetch(self, identifier: str) -> SkillBundle | None:
         """Download a skill bundle by identifier."""
         ...
 
     @abstractmethod
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    def inspect(self, identifier: str) -> SkillMeta | None:
         """Fetch metadata for a skill without downloading all files."""
         ...
 
@@ -240,6 +249,7 @@ class SkillSource(ABC):
 # GitHub source adapter
 # ---------------------------------------------------------------------------
 
+
 class GitHubSource(SkillSource):
     """Fetch skills from GitHub repos via the Contents API."""
 
@@ -249,7 +259,7 @@ class GitHubSource(SkillSource):
         {"repo": "VoltAgent/awesome-agent-skills", "path": "skills/"},
     ]
 
-    def __init__(self, auth: GitHubAuth, extra_taps: Optional[List[Dict]] = None):
+    def __init__(self, auth: GitHubAuth, extra_taps: list[dict] | None = None):
         self.auth = auth
         self.taps = list(self.DEFAULT_TAPS)
         if extra_taps:
@@ -267,9 +277,9 @@ class GitHubSource(SkillSource):
                 return "trusted"
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
+    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         """Search all taps for skills matching the query."""
-        results: List[SkillMeta] = []
+        results: list[SkillMeta] = []
         query_lower = query.lower()
 
         for tap in self.taps:
@@ -287,15 +297,13 @@ class GitHubSource(SkillSource):
         _trust_rank = {"builtin": 2, "trusted": 1, "community": 0}
         seen = {}
         for r in results:
-            if r.name not in seen:
-                seen[r.name] = r
-            elif _trust_rank.get(r.trust_level, 0) > _trust_rank.get(seen[r.name].trust_level, 0):
+            if r.name not in seen or _trust_rank.get(r.trust_level, 0) > _trust_rank.get(seen[r.name].trust_level, 0):
                 seen[r.name] = r
         results = list(seen.values())
 
         return results[:limit]
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    def fetch(self, identifier: str) -> SkillBundle | None:
         """
         Download a skill from GitHub.
         identifier format: "owner/repo/path/to/skill-dir"
@@ -322,7 +330,7 @@ class GitHubSource(SkillSource):
             trust_level=trust,
         )
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    def inspect(self, identifier: str) -> SkillMeta | None:
         """Fetch just the SKILL.md metadata for preview."""
         parts = identifier.split("/", 2)
         if len(parts) < 3:
@@ -363,7 +371,7 @@ class GitHubSource(SkillSource):
 
     # -- Internal helpers --
 
-    def _list_skills_in_repo(self, repo: str, path: str) -> List[SkillMeta]:
+    def _list_skills_in_repo(self, repo: str, path: str) -> list[SkillMeta]:
         """List skill directories in a GitHub repo path, using cached index."""
         cache_key = f"{repo}_{path}".replace("/", "_").replace(" ", "_")
         cached = self._read_cache(cache_key)
@@ -382,7 +390,7 @@ class GitHubSource(SkillSource):
         if not isinstance(entries, list):
             return []
 
-        skills: List[SkillMeta] = []
+        skills: list[SkillMeta] = []
         for entry in entries:
             if entry.get("type") != "dir":
                 continue
@@ -400,7 +408,7 @@ class GitHubSource(SkillSource):
         self._write_cache(cache_key, [self._meta_to_dict(s) for s in skills])
         return skills
 
-    def _download_directory(self, repo: str, path: str) -> Dict[str, str]:
+    def _download_directory(self, repo: str, path: str) -> dict[str, str]:
         """Recursively download all text files from a GitHub directory."""
         url = f"https://api.github.com/repos/{repo}/contents/{path.rstrip('/')}"
         try:
@@ -414,7 +422,7 @@ class GitHubSource(SkillSource):
         if not isinstance(entries, list):
             return {}
 
-        files: Dict[str, str] = {}
+        files: dict[str, str] = {}
         for entry in entries:
             name = entry.get("name", "")
             entry_type = entry.get("type", "")
@@ -431,7 +439,7 @@ class GitHubSource(SkillSource):
 
         return files
 
-    def _fetch_file_content(self, repo: str, path: str) -> Optional[str]:
+    def _fetch_file_content(self, repo: str, path: str) -> str | None:
         """Fetch a single file's content from GitHub."""
         url = f"https://api.github.com/repos/{repo}/contents/{path}"
         try:
@@ -446,7 +454,7 @@ class GitHubSource(SkillSource):
             logger.debug("GitHub contents API fetch failed: %s", e)
         return None
 
-    def _read_cache(self, key: str) -> Optional[list]:
+    def _read_cache(self, key: str) -> list | None:
         """Read cached index if not expired."""
         cache_file = INDEX_CACHE_DIR / f"{key}.json"
         if not cache_file.exists():
@@ -486,10 +494,10 @@ class GitHubSource(SkillSource):
         """Parse YAML frontmatter from SKILL.md content."""
         if not content.startswith("---"):
             return {}
-        match = re.search(r'\n---\s*\n', content[3:])
+        match = re.search(r"\n---\s*\n", content[3:])
         if not match:
             return {}
-        yaml_text = content[3:match.start() + 3]
+        yaml_text = content[3 : match.start() + 3]
         try:
             parsed = yaml.safe_load(yaml_text)
             return parsed if isinstance(parsed, dict) else {}
@@ -500,6 +508,7 @@ class GitHubSource(SkillSource):
 # ---------------------------------------------------------------------------
 # ClawHub source adapter
 # ---------------------------------------------------------------------------
+
 
 class ClawHubSource(SkillSource):
     """
@@ -516,7 +525,7 @@ class ClawHubSource(SkillSource):
     def trust_level_for(self, identifier: str) -> str:
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
+    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         cache_key = f"clawhub_search_{hashlib.md5(query.encode()).hexdigest()}"
         cached = _read_index_cache(cache_key)
         if cached is not None:
@@ -548,19 +557,21 @@ class ClawHubSource(SkillSource):
             tags = item.get("tags", [])
             if not isinstance(tags, list):
                 tags = []
-            results.append(SkillMeta(
-                name=display_name,
-                description=summary,
-                source="clawhub",
-                identifier=slug,
-                trust_level="community",
-                tags=[str(t) for t in tags],
-            ))
+            results.append(
+                SkillMeta(
+                    name=display_name,
+                    description=summary,
+                    source="clawhub",
+                    identifier=slug,
+                    trust_level="community",
+                    tags=[str(t) for t in tags],
+                )
+            )
 
         _write_index_cache(cache_key, [_skill_meta_to_dict(s) for s in results])
         return results
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    def fetch(self, identifier: str) -> SkillBundle | None:
         slug = identifier.split("/")[-1]
 
         skill_data = self._get_json(f"{self.BASE_URL}/skills/{slug}")
@@ -593,7 +604,7 @@ class ClawHubSource(SkillSource):
             trust_level="community",
         )
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    def inspect(self, identifier: str) -> SkillMeta | None:
         slug = identifier.split("/")[-1]
         data = self._get_json(f"{self.BASE_URL}/skills/{slug}")
         if not isinstance(data, dict):
@@ -612,7 +623,7 @@ class ClawHubSource(SkillSource):
             tags=[str(t) for t in tags],
         )
 
-    def _get_json(self, url: str, timeout: int = 20) -> Optional[Any]:
+    def _get_json(self, url: str, timeout: int = 20) -> Any | None:
         try:
             resp = httpx.get(url, timeout=timeout)
             if resp.status_code != 200:
@@ -621,7 +632,7 @@ class ClawHubSource(SkillSource):
         except (httpx.HTTPError, json.JSONDecodeError):
             return None
 
-    def _resolve_latest_version(self, slug: str, skill_data: Dict[str, Any]) -> Optional[str]:
+    def _resolve_latest_version(self, slug: str, skill_data: dict[str, Any]) -> str | None:
         latest = skill_data.get("latestVersion")
         if isinstance(latest, dict):
             version = latest.get("version")
@@ -643,8 +654,8 @@ class ClawHubSource(SkillSource):
                     return version
         return None
 
-    def _extract_files(self, version_data: Dict[str, Any]) -> Dict[str, str]:
-        files: Dict[str, str] = {}
+    def _extract_files(self, version_data: dict[str, Any]) -> dict[str, str]:
+        files: dict[str, str] = {}
         file_list = version_data.get("files")
 
         if isinstance(file_list, dict):
@@ -674,7 +685,7 @@ class ClawHubSource(SkillSource):
 
         return files
 
-    def _fetch_text(self, url: str) -> Optional[str]:
+    def _fetch_text(self, url: str) -> str | None:
         try:
             resp = httpx.get(url, timeout=20)
             if resp.status_code == 200:
@@ -687,6 +698,7 @@ class ClawHubSource(SkillSource):
 # ---------------------------------------------------------------------------
 # Claude Code marketplace source adapter
 # ---------------------------------------------------------------------------
+
 
 class ClaudeMarketplaceSource(SkillSource):
     """
@@ -713,8 +725,8 @@ class ClaudeMarketplaceSource(SkillSource):
                 return "trusted"
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
-        results: List[SkillMeta] = []
+    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
+        results: list[SkillMeta] = []
         query_lower = query.lower()
 
         for marketplace_repo in self.KNOWN_MARKETPLACES:
@@ -730,18 +742,20 @@ class ClaudeMarketplaceSource(SkillSource):
                     else:
                         identifier = f"{marketplace_repo}/{source_path}"
 
-                    results.append(SkillMeta(
-                        name=plugin.get("name", ""),
-                        description=plugin.get("description", ""),
-                        source="claude-marketplace",
-                        identifier=identifier,
-                        trust_level=self.trust_level_for(identifier),
-                        repo=marketplace_repo,
-                    ))
+                    results.append(
+                        SkillMeta(
+                            name=plugin.get("name", ""),
+                            description=plugin.get("description", ""),
+                            source="claude-marketplace",
+                            identifier=identifier,
+                            trust_level=self.trust_level_for(identifier),
+                            repo=marketplace_repo,
+                        )
+                    )
 
         return results[:limit]
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    def fetch(self, identifier: str) -> SkillBundle | None:
         # Delegate to GitHub Contents API since marketplace skills live in GitHub repos
         gh = GitHubSource(auth=self.auth)
         bundle = gh.fetch(identifier)
@@ -749,7 +763,7 @@ class ClaudeMarketplaceSource(SkillSource):
             bundle.source = "claude-marketplace"
         return bundle
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    def inspect(self, identifier: str) -> SkillMeta | None:
         gh = GitHubSource(auth=self.auth)
         meta = gh.inspect(identifier)
         if meta:
@@ -757,7 +771,7 @@ class ClaudeMarketplaceSource(SkillSource):
             meta.trust_level = self.trust_level_for(identifier)
         return meta
 
-    def _fetch_marketplace_index(self, repo: str) -> List[dict]:
+    def _fetch_marketplace_index(self, repo: str) -> list[dict]:
         """Fetch and parse .claude-plugin/marketplace.json from a repo."""
         cache_key = f"claude_marketplace_{repo.replace('/', '_')}"
         cached = _read_index_cache(cache_key)
@@ -786,6 +800,7 @@ class ClaudeMarketplaceSource(SkillSource):
 # LobeHub source adapter
 # ---------------------------------------------------------------------------
 
+
 class LobeHubSource(SkillSource):
     """
     Fetch skills from LobeHub's agent marketplace (14,500+ agents).
@@ -802,13 +817,13 @@ class LobeHubSource(SkillSource):
     def trust_level_for(self, identifier: str) -> str:
         return "community"
 
-    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
+    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
         index = self._fetch_index()
         if not index:
             return []
 
         query_lower = query.lower()
-        results: List[SkillMeta] = []
+        results: list[SkillMeta] = []
 
         agents = index.get("agents", index) if isinstance(index, dict) else index
         if not isinstance(agents, list):
@@ -823,21 +838,23 @@ class LobeHubSource(SkillSource):
             searchable = f"{title} {desc} {' '.join(tags) if isinstance(tags, list) else ''}".lower()
             if query_lower in searchable:
                 identifier = agent.get("identifier", title.lower().replace(" ", "-"))
-                results.append(SkillMeta(
-                    name=identifier,
-                    description=desc[:200],
-                    source="lobehub",
-                    identifier=f"lobehub/{identifier}",
-                    trust_level="community",
-                    tags=tags if isinstance(tags, list) else [],
-                ))
+                results.append(
+                    SkillMeta(
+                        name=identifier,
+                        description=desc[:200],
+                        source="lobehub",
+                        identifier=f"lobehub/{identifier}",
+                        trust_level="community",
+                        tags=tags if isinstance(tags, list) else [],
+                    )
+                )
 
             if len(results) >= limit:
                 break
 
         return results
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    def fetch(self, identifier: str) -> SkillBundle | None:
         # Strip "lobehub/" prefix if present
         agent_id = identifier.split("/", 1)[-1] if identifier.startswith("lobehub/") else identifier
 
@@ -854,7 +871,7 @@ class LobeHubSource(SkillSource):
             trust_level="community",
         )
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    def inspect(self, identifier: str) -> SkillMeta | None:
         agent_id = identifier.split("/", 1)[-1] if identifier.startswith("lobehub/") else identifier
         index = self._fetch_index()
         if not index:
@@ -877,7 +894,7 @@ class LobeHubSource(SkillSource):
                 )
         return None
 
-    def _fetch_index(self) -> Optional[Any]:
+    def _fetch_index(self) -> Any | None:
         """Fetch the LobeHub agent index (cached for 1 hour)."""
         cache_key = "lobehub_index"
         cached = _read_index_cache(cache_key)
@@ -895,7 +912,7 @@ class LobeHubSource(SkillSource):
         _write_index_cache(cache_key, data)
         return data
 
-    def _fetch_agent(self, agent_id: str) -> Optional[dict]:
+    def _fetch_agent(self, agent_id: str) -> dict | None:
         """Fetch a single agent's JSON file."""
         url = f"https://chat-agents.lobehub.com/{agent_id}.json"
         try:
@@ -924,8 +941,8 @@ class LobeHubSource(SkillSource):
             "metadata:",
             "  hermes:",
             f"    tags: [{', '.join(str(t) for t in tag_list)}]",
-            f"  lobehub:",
-            f"    source: lobehub",
+            "  lobehub:",
+            "    source: lobehub",
             "---",
         ]
 
@@ -945,6 +962,7 @@ class LobeHubSource(SkillSource):
 # ---------------------------------------------------------------------------
 # Official optional skills source adapter
 # ---------------------------------------------------------------------------
+
 
 class OptionalSkillSource(SkillSource):
     """
@@ -967,8 +985,8 @@ class OptionalSkillSource(SkillSource):
 
     # -- search -----------------------------------------------------------
 
-    def search(self, query: str, limit: int = 10) -> List[SkillMeta]:
-        results: List[SkillMeta] = []
+    def search(self, query: str, limit: int = 10) -> list[SkillMeta]:
+        results: list[SkillMeta] = []
         query_lower = query.lower()
 
         for meta in self._scan_all():
@@ -982,7 +1000,7 @@ class OptionalSkillSource(SkillSource):
 
     # -- fetch ------------------------------------------------------------
 
-    def fetch(self, identifier: str) -> Optional[SkillBundle]:
+    def fetch(self, identifier: str) -> SkillBundle | None:
         # identifier format: "official/category/skill" or "official/skill"
         rel = identifier.split("/", 1)[-1] if identifier.startswith("official/") else identifier
         skill_dir = self._optional_dir / rel
@@ -1004,7 +1022,7 @@ class OptionalSkillSource(SkillSource):
         else:
             skill_dir = resolved
 
-        files: Dict[str, str] = {}
+        files: dict[str, str] = {}
         for f in skill_dir.rglob("*"):
             if f.is_file() and not f.name.startswith("."):
                 rel_path = str(f.relative_to(skill_dir))
@@ -1029,7 +1047,7 @@ class OptionalSkillSource(SkillSource):
 
     # -- inspect ----------------------------------------------------------
 
-    def inspect(self, identifier: str) -> Optional[SkillMeta]:
+    def inspect(self, identifier: str) -> SkillMeta | None:
         rel = identifier.split("/", 1)[-1] if identifier.startswith("official/") else identifier
         skill_name = rel.rsplit("/", 1)[-1]
 
@@ -1040,7 +1058,7 @@ class OptionalSkillSource(SkillSource):
 
     # -- internal helpers -------------------------------------------------
 
-    def _find_skill_dir(self, name: str) -> Optional[Path]:
+    def _find_skill_dir(self, name: str) -> Path | None:
         """Find a skill directory by name anywhere in optional-skills/."""
         if not self._optional_dir.is_dir():
             return None
@@ -1049,12 +1067,12 @@ class OptionalSkillSource(SkillSource):
                 return skill_md.parent
         return None
 
-    def _scan_all(self) -> List[SkillMeta]:
+    def _scan_all(self) -> list[SkillMeta]:
         """Enumerate all optional skills with metadata."""
         if not self._optional_dir.is_dir():
             return []
 
-        results: List[SkillMeta] = []
+        results: list[SkillMeta] = []
         for skill_md in sorted(self._optional_dir.rglob("SKILL.md")):
             parent = skill_md.parent
             rel_parts = parent.relative_to(self._optional_dir).parts
@@ -1078,15 +1096,17 @@ class OptionalSkillSource(SkillSource):
 
             rel_path = str(parent.relative_to(self._optional_dir))
 
-            results.append(SkillMeta(
-                name=name,
-                description=desc[:200],
-                source="official",
-                identifier=f"official/{rel_path}",
-                trust_level="builtin",
-                path=rel_path,
-                tags=tags if isinstance(tags, list) else [],
-            ))
+            results.append(
+                SkillMeta(
+                    name=name,
+                    description=desc[:200],
+                    source="official",
+                    identifier=f"official/{rel_path}",
+                    trust_level="builtin",
+                    path=rel_path,
+                    tags=tags if isinstance(tags, list) else [],
+                )
+            )
 
         return results
 
@@ -1095,10 +1115,10 @@ class OptionalSkillSource(SkillSource):
         """Parse YAML frontmatter from SKILL.md content."""
         if not content.startswith("---"):
             return {}
-        match = re.search(r'\n---\s*\n', content[3:])
+        match = re.search(r"\n---\s*\n", content[3:])
         if not match:
             return {}
-        yaml_text = content[3:match.start() + 3]
+        yaml_text = content[3 : match.start() + 3]
         try:
             parsed = yaml.safe_load(yaml_text)
             return parsed if isinstance(parsed, dict) else {}
@@ -1110,7 +1130,8 @@ class OptionalSkillSource(SkillSource):
 # Shared cache helpers (used by multiple adapters)
 # ---------------------------------------------------------------------------
 
-def _read_index_cache(key: str) -> Optional[Any]:
+
+def _read_index_cache(key: str) -> Any | None:
     """Read cached data if not expired."""
     cache_file = INDEX_CACHE_DIR / f"{key}.json"
     if not cache_file.exists():
@@ -1152,6 +1173,7 @@ def _skill_meta_to_dict(meta: SkillMeta) -> dict:
 # Lock file management
 # ---------------------------------------------------------------------------
 
+
 class HubLockFile:
     """Manages skills/.hub/lock.json — tracks provenance of installed hub skills."""
 
@@ -1179,7 +1201,7 @@ class HubLockFile:
         scan_verdict: str,
         skill_hash: str,
         install_path: str,
-        files: List[str],
+        files: list[str],
     ) -> None:
         data = self.load()
         data["installed"][name] = {
@@ -1190,8 +1212,8 @@ class HubLockFile:
             "content_hash": skill_hash,
             "install_path": install_path,
             "files": files,
-            "installed_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "installed_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
         self.save(data)
 
@@ -1200,11 +1222,11 @@ class HubLockFile:
         data["installed"].pop(name, None)
         self.save(data)
 
-    def get_installed(self, name: str) -> Optional[dict]:
+    def get_installed(self, name: str) -> dict | None:
         data = self.load()
         return data["installed"].get(name)
 
-    def list_installed(self) -> List[dict]:
+    def list_installed(self) -> list[dict]:
         data = self.load()
         result = []
         for name, entry in data["installed"].items():
@@ -1220,13 +1242,14 @@ class HubLockFile:
 # Taps management
 # ---------------------------------------------------------------------------
 
+
 class TapsManager:
     """Manages the taps.json file — custom GitHub repo sources."""
 
     def __init__(self, path: Path = TAPS_FILE):
         self.path = path
 
-    def load(self) -> List[dict]:
+    def load(self) -> list[dict]:
         if not self.path.exists():
             return []
         try:
@@ -1235,7 +1258,7 @@ class TapsManager:
         except (json.JSONDecodeError, OSError):
             return []
 
-    def save(self, taps: List[dict]) -> None:
+    def save(self, taps: list[dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps({"taps": taps}, indent=2) + "\n")
 
@@ -1257,7 +1280,7 @@ class TapsManager:
         self.save(new_taps)
         return True
 
-    def list_taps(self) -> List[dict]:
+    def list_taps(self) -> list[dict]:
         return self.load()
 
 
@@ -1265,11 +1288,13 @@ class TapsManager:
 # Audit log
 # ---------------------------------------------------------------------------
 
-def append_audit_log(action: str, skill_name: str, source: str,
-                     trust_level: str, verdict: str, extra: str = "") -> None:
+
+def append_audit_log(
+    action: str, skill_name: str, source: str, trust_level: str, verdict: str, extra: str = ""
+) -> None:
     """Append a line to the audit log."""
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     parts = [timestamp, action, skill_name, f"{source}:{trust_level}", verdict]
     if extra:
         parts.append(extra)
@@ -1284,6 +1309,7 @@ def append_audit_log(action: str, skill_name: str, source: str,
 # ---------------------------------------------------------------------------
 # Hub operations (high-level)
 # ---------------------------------------------------------------------------
+
 
 def ensure_hub_dirs() -> None:
     """Create the .hub directory structure if it doesn't exist."""
@@ -1347,15 +1373,18 @@ def install_from_quarantine(
     )
 
     append_audit_log(
-        "INSTALL", skill_name, bundle.source,
-        bundle.trust_level, scan_result.verdict,
+        "INSTALL",
+        skill_name,
+        bundle.source,
+        bundle.trust_level,
+        scan_result.verdict,
         content_hash(install_dir),
     )
 
     return install_dir
 
 
-def uninstall_skill(skill_name: str) -> Tuple[bool, str]:
+def uninstall_skill(skill_name: str) -> tuple[bool, str]:
     """Remove a hub-installed skill. Refuses to remove builtins."""
     lock = HubLockFile()
     entry = lock.get_installed(skill_name)
@@ -1372,7 +1401,7 @@ def uninstall_skill(skill_name: str) -> Tuple[bool, str]:
     return True, f"Uninstalled '{skill_name}' from {entry['install_path']}"
 
 
-def create_source_router(auth: Optional[GitHubAuth] = None) -> List[SkillSource]:
+def create_source_router(auth: GitHubAuth | None = None) -> list[SkillSource]:
     """
     Create all configured source adapters.
     Returns a list of active sources for search/fetch operations.
@@ -1383,8 +1412,8 @@ def create_source_router(auth: Optional[GitHubAuth] = None) -> List[SkillSource]
     taps_mgr = TapsManager()
     extra_taps = taps_mgr.list_taps()
 
-    sources: List[SkillSource] = [
-        OptionalSkillSource(),        # Official optional skills (highest priority)
+    sources: list[SkillSource] = [
+        OptionalSkillSource(),  # Official optional skills (highest priority)
         GitHubSource(auth=auth, extra_taps=extra_taps),
         ClawHubSource(),
         ClaudeMarketplaceSource(auth=auth),
@@ -1394,10 +1423,11 @@ def create_source_router(auth: Optional[GitHubAuth] = None) -> List[SkillSource]
     return sources
 
 
-def unified_search(query: str, sources: List[SkillSource],
-                   source_filter: str = "all", limit: int = 10) -> List[SkillMeta]:
+def unified_search(
+    query: str, sources: list[SkillSource], source_filter: str = "all", limit: int = 10
+) -> list[SkillMeta]:
     """Search all sources and merge results."""
-    all_results: List[SkillMeta] = []
+    all_results: list[SkillMeta] = []
 
     for src in sources:
         if source_filter != "all" and src.source_id() != source_filter:
@@ -1410,11 +1440,9 @@ def unified_search(query: str, sources: List[SkillSource],
 
     # Deduplicate by name, preferring higher trust levels
     _TRUST_RANK = {"builtin": 2, "trusted": 1, "community": 0}
-    seen: Dict[str, SkillMeta] = {}
+    seen: dict[str, SkillMeta] = {}
     for r in all_results:
-        if r.name not in seen:
-            seen[r.name] = r
-        elif _TRUST_RANK.get(r.trust_level, 0) > _TRUST_RANK.get(seen[r.name].trust_level, 0):
+        if r.name not in seen or _TRUST_RANK.get(r.trust_level, 0) > _TRUST_RANK.get(seen[r.name].trust_level, 0):
             seen[r.name] = r
     deduped = list(seen.values())
 

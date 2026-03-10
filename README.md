@@ -95,12 +95,8 @@ Quick start for contributors:
 ```bash
 git clone --recurse-submodules https://github.com/NousResearch/hermes-agent.git
 cd hermes-agent
-curl -LsSf https://astral.sh/uv/install.sh | sh
-uv venv .venv --python 3.11
-source .venv/bin/activate
-uv pip install -e ".[all,dev]"
-uv pip install -e "./mini-swe-agent"
-python -m pytest tests/ -q
+make setup      # creates .venv, installs everything
+make check      # lint + test (same as CI)
 ```
 
 ---

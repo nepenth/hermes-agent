@@ -34,7 +34,7 @@ import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from openai import OpenAI
 
@@ -43,7 +43,7 @@ from hermes_constants import OPENROUTER_BASE_URL
 logger = logging.getLogger(__name__)
 
 # Default auxiliary models for direct API-key providers (cheap/fast for side tasks)
-_API_KEY_PROVIDER_AUX_MODELS: Dict[str, str] = {
+_API_KEY_PROVIDER_AUX_MODELS: dict[str, str] = {
     "zai": "glm-4.5-flash",
     "kimi-coding": "kimi-k2-turbo-preview",
     "minimax": "MiniMax-M2.5-highspeed",
@@ -102,7 +102,7 @@ def _convert_content_for_responses(content: Any) -> Any:
     if not isinstance(content, list):
         return str(content) if content else ""
 
-    converted: List[Dict[str, Any]] = []
+    converted: list[dict[str, Any]] = []
     for part in content:
         if not isinstance(part, dict):
             continue
@@ -113,7 +113,7 @@ def _convert_content_for_responses(content: Any) -> Any:
             # chat.completions nests the URL: {"image_url": {"url": "..."}}
             image_data = part.get("image_url", {})
             url = image_data.get("url", "") if isinstance(image_data, dict) else str(image_data)
-            entry: Dict[str, Any] = {"type": "input_image", "image_url": url}
+            entry: dict[str, Any] = {"type": "input_image", "image_url": url}
             # Preserve detail if specified
             detail = image_data.get("detail") if isinstance(image_data, dict) else None
             if detail:
@@ -148,19 +148,21 @@ class _CodexCompletionsAdapter:
         # Convert chat.completions multimodal content blocks to Responses
         # API format (input_text / input_image instead of text / image_url).
         instructions = "You are a helpful assistant."
-        input_msgs: List[Dict[str, Any]] = []
+        input_msgs: list[dict[str, Any]] = []
         for msg in messages:
             role = msg.get("role", "user")
             content = msg.get("content") or ""
             if role == "system":
                 instructions = content if isinstance(content, str) else str(content)
             else:
-                input_msgs.append({
-                    "role": role,
-                    "content": _convert_content_for_responses(content),
-                })
+                input_msgs.append(
+                    {
+                        "role": role,
+                        "content": _convert_content_for_responses(content),
+                    }
+                )
 
-        resp_kwargs: Dict[str, Any] = {
+        resp_kwargs: dict[str, Any] = {
             "model": model,
             "instructions": instructions,
             "input": input_msgs or [{"role": "user", "content": ""}],
@@ -179,18 +181,20 @@ class _CodexCompletionsAdapter:
                 name = fn.get("name")
                 if not name:
                     continue
-                converted.append({
-                    "type": "function",
-                    "name": name,
-                    "description": fn.get("description", ""),
-                    "parameters": fn.get("parameters", {}),
-                })
+                converted.append(
+                    {
+                        "type": "function",
+                        "name": name,
+                        "description": fn.get("description", ""),
+                        "parameters": fn.get("parameters", {}),
+                    }
+                )
             if converted:
                 resp_kwargs["tools"] = converted
 
         # Stream and collect the response
-        text_parts: List[str] = []
-        tool_calls_raw: List[Any] = []
+        text_parts: list[str] = []
+        tool_calls_raw: list[Any] = []
         usage = None
 
         try:
@@ -208,14 +212,16 @@ class _CodexCompletionsAdapter:
                         if ptype in ("output_text", "text"):
                             text_parts.append(getattr(part, "text", ""))
                 elif item_type == "function_call":
-                    tool_calls_raw.append(SimpleNamespace(
-                        id=getattr(item, "call_id", ""),
-                        type="function",
-                        function=SimpleNamespace(
-                            name=getattr(item, "name", ""),
-                            arguments=getattr(item, "arguments", "{}"),
-                        ),
-                    ))
+                    tool_calls_raw.append(
+                        SimpleNamespace(
+                            id=getattr(item, "call_id", ""),
+                            type="function",
+                            function=SimpleNamespace(
+                                name=getattr(item, "name", ""),
+                                arguments=getattr(item, "arguments", "{}"),
+                            ),
+                        )
+                    )
 
             resp_usage = getattr(final, "usage", None)
             if resp_usage:
@@ -285,6 +291,7 @@ class _AsyncCodexCompletionsAdapter:
 
     async def create(self, **kwargs) -> Any:
         import asyncio
+
         return await asyncio.to_thread(self._sync.create, **kwargs)
 
 
@@ -304,7 +311,7 @@ class AsyncCodexAuxiliaryClient:
         self.base_url = sync_wrapper.base_url
 
 
-def _read_nous_auth() -> Optional[dict]:
+def _read_nous_auth() -> dict | None:
     """Read and validate ~/.hermes/auth.json for an active Nous provider.
 
     Returns the provider state dict if Nous is active with tokens,
@@ -336,10 +343,11 @@ def _nous_base_url() -> str:
     return os.getenv("NOUS_INFERENCE_BASE_URL", _NOUS_DEFAULT_BASE_URL)
 
 
-def _read_codex_access_token() -> Optional[str]:
+def _read_codex_access_token() -> str | None:
     """Read a valid Codex OAuth access token from Hermes auth store (~/.hermes/auth.json)."""
     try:
         from hermes_cli.auth import _read_codex_tokens
+
         data = _read_codex_tokens()
         tokens = data.get("tokens", {})
         access_token = tokens.get("access_token")
@@ -351,7 +359,7 @@ def _read_codex_access_token() -> Optional[str]:
         return None
 
 
-def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _resolve_api_key_provider() -> tuple[OpenAI | None, str | None]:
     """Try each API-key provider in PROVIDER_REGISTRY order.
 
     Returns (client, model) for the first provider whose env var is set,
@@ -398,6 +406,7 @@ def _resolve_api_key_provider() -> Tuple[Optional[OpenAI], Optional[str]]:
 
 # ── Provider resolution helpers ─────────────────────────────────────────────
 
+
 def _get_auxiliary_provider(task: str = "") -> str:
     """Read the provider override for a specific auxiliary task.
 
@@ -413,16 +422,15 @@ def _get_auxiliary_provider(task: str = "") -> str:
     return "auto"
 
 
-def _try_openrouter() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _try_openrouter() -> tuple[OpenAI | None, str | None]:
     or_key = os.getenv("OPENROUTER_API_KEY")
     if not or_key:
         return None, None
     logger.debug("Auxiliary client: OpenRouter")
-    return OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL,
-                   default_headers=_OR_HEADERS), _OPENROUTER_MODEL
+    return OpenAI(api_key=or_key, base_url=OPENROUTER_BASE_URL, default_headers=_OR_HEADERS), _OPENROUTER_MODEL
 
 
-def _try_nous() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _try_nous() -> tuple[OpenAI | None, str | None]:
     nous = _read_nous_auth()
     if not nous:
         return None, None
@@ -435,7 +443,7 @@ def _try_nous() -> Tuple[Optional[OpenAI], Optional[str]]:
     )
 
 
-def _try_custom_endpoint() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _try_custom_endpoint() -> tuple[OpenAI | None, str | None]:
     custom_base = os.getenv("OPENAI_BASE_URL")
     custom_key = os.getenv("OPENAI_API_KEY")
     if not custom_base or not custom_key:
@@ -445,7 +453,7 @@ def _try_custom_endpoint() -> Tuple[Optional[OpenAI], Optional[str]]:
     return OpenAI(api_key=custom_key, base_url=custom_base), model
 
 
-def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
+def _try_codex() -> tuple[Any | None, str | None]:
     codex_token = _read_codex_access_token()
     if not codex_token:
         return None, None
@@ -454,7 +462,7 @@ def _try_codex() -> Tuple[Optional[Any], Optional[str]]:
     return CodexAuxiliaryClient(real_client, _CODEX_AUX_MODEL), _CODEX_AUX_MODEL
 
 
-def _resolve_forced_provider(forced: str) -> Tuple[Optional[OpenAI], Optional[str]]:
+def _resolve_forced_provider(forced: str) -> tuple[OpenAI | None, str | None]:
     """Resolve a specific forced provider.  Returns (None, None) if creds missing."""
     if forced == "openrouter":
         client, model = _try_openrouter()
@@ -488,10 +496,9 @@ def _resolve_forced_provider(forced: str) -> Tuple[Optional[OpenAI], Optional[st
     return None, None
 
 
-def _resolve_auto() -> Tuple[Optional[OpenAI], Optional[str]]:
+def _resolve_auto() -> tuple[OpenAI | None, str | None]:
     """Full auto-detection chain: OpenRouter → Nous → custom → Codex → API-key → None."""
-    for try_fn in (_try_openrouter, _try_nous, _try_custom_endpoint,
-                   _try_codex, _resolve_api_key_provider):
+    for try_fn in (_try_openrouter, _try_nous, _try_custom_endpoint, _try_codex, _resolve_api_key_provider):
         client, model = try_fn()
         if client is not None:
             return client, model
@@ -501,7 +508,8 @@ def _resolve_auto() -> Tuple[Optional[OpenAI], Optional[str]]:
 
 # ── Public API ──────────────────────────────────────────────────────────────
 
-def get_text_auxiliary_client(task: str = "") -> Tuple[Optional[OpenAI], Optional[str]]:
+
+def get_text_auxiliary_client(task: str = "") -> tuple[OpenAI | None, str | None]:
     """Return (client, default_model_slug) for text-only auxiliary tasks.
 
     Args:
@@ -544,7 +552,7 @@ def get_async_text_auxiliary_client(task: str = ""):
     return AsyncOpenAI(**async_kwargs), model
 
 
-def get_vision_auxiliary_client() -> Tuple[Optional[OpenAI], Optional[str]]:
+def get_vision_auxiliary_client() -> tuple[OpenAI | None, str | None]:
     """Return (client, default_model_slug) for vision/multimodal auxiliary tasks.
 
     Checks AUXILIARY_VISION_PROVIDER for a forced provider, otherwise
@@ -564,8 +572,7 @@ def get_vision_auxiliary_client() -> Tuple[Optional[OpenAI], Optional[str]]:
     # back to the user's custom endpoint.  Many local models (Qwen-VL,
     # LLaVA, Pixtral, etc.) support vision — skipping them entirely
     # caused silent failures for local-only users.
-    for try_fn in (_try_openrouter, _try_nous, _try_codex,
-                   _try_custom_endpoint):
+    for try_fn in (_try_openrouter, _try_nous, _try_codex, _try_custom_endpoint):
         client, model = try_fn()
         if client is not None:
             return client, model
@@ -575,7 +582,7 @@ def get_vision_auxiliary_client() -> Tuple[Optional[OpenAI], Optional[str]]:
 
 def get_auxiliary_extra_body() -> dict:
     """Return extra_body kwargs for auxiliary API calls.
-    
+
     Includes Nous Portal product tags when the auxiliary client is backed
     by Nous Portal. Returns empty dict otherwise.
     """
@@ -584,7 +591,7 @@ def get_auxiliary_extra_body() -> dict:
 
 def auxiliary_max_tokens_param(value: int) -> dict:
     """Return the correct max tokens kwarg for the auxiliary client's provider.
-    
+
     OpenRouter and local models use 'max_tokens'. Direct OpenAI with newer
     models (gpt-4o, o-series, gpt-5+) requires 'max_completion_tokens'.
     The Codex adapter translates max_tokens internally, so we use max_tokens
@@ -593,8 +600,6 @@ def auxiliary_max_tokens_param(value: int) -> dict:
     custom_base = os.getenv("OPENAI_BASE_URL", "")
     or_key = os.getenv("OPENROUTER_API_KEY")
     # Only use max_completion_tokens for direct OpenAI custom endpoints
-    if (not or_key
-            and _read_nous_auth() is None
-            and "api.openai.com" in custom_base.lower()):
+    if not or_key and _read_nous_auth() is None and "api.openai.com" in custom_base.lower():
         return {"max_completion_tokens": value}
     return {"max_tokens": value}

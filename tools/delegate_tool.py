@@ -20,21 +20,22 @@ import contextlib
 import io
 import json
 import logging
-import os
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 # Tools that children must never have access to
-DELEGATE_BLOCKED_TOOLS = frozenset([
-    "delegate_task",   # no recursive delegation
-    "clarify",         # no user interaction
-    "memory",          # no writes to shared MEMORY.md
-    "send_message",    # no cross-platform side effects
-    "execute_code",    # children should reason step-by-step, not write scripts
-])
+DELEGATE_BLOCKED_TOOLS = frozenset(
+    [
+        "delegate_task",  # no recursive delegation
+        "clarify",  # no user interaction
+        "memory",  # no writes to shared MEMORY.md
+        "send_message",  # no cross-platform side effects
+        "execute_code",  # children should reason step-by-step, not write scripts
+    ]
+)
 
 MAX_CONCURRENT_CHILDREN = 3
 MAX_DEPTH = 2  # parent (0) -> child (1) -> grandchild rejected (2)
@@ -47,7 +48,7 @@ def check_delegate_requirements() -> bool:
     return True
 
 
-def _build_child_system_prompt(goal: str, context: Optional[str] = None) -> str:
+def _build_child_system_prompt(goal: str, context: str | None = None) -> str:
     """Build a focused system prompt for a child agent."""
     parts = [
         "You are a focused subagent working on a specific delegated task.",
@@ -69,15 +70,18 @@ def _build_child_system_prompt(goal: str, context: Optional[str] = None) -> str:
     return "\n".join(parts)
 
 
-def _strip_blocked_tools(toolsets: List[str]) -> List[str]:
+def _strip_blocked_tools(toolsets: list[str]) -> list[str]:
     """Remove toolsets that contain only blocked tools."""
     blocked_toolset_names = {
-        "delegation", "clarify", "memory", "code_execution",
+        "delegation",
+        "clarify",
+        "memory",
+        "code_execution",
     }
     return [t for t in toolsets if t not in blocked_toolset_names]
 
 
-def _build_child_progress_callback(task_index: int, parent_agent, task_count: int = 1) -> Optional[callable]:
+def _build_child_progress_callback(task_index: int, parent_agent, task_count: int = 1) -> Callable | None:
     """Build a callback that relays child agent tool calls to the parent display.
 
     Two display paths:
@@ -87,8 +91,8 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
     Returns None if no display mechanism is available, in which case the
     child agent runs with no progress callback (identical to current behavior).
     """
-    spinner = getattr(parent_agent, '_delegate_spinner', None)
-    parent_cb = getattr(parent_agent, 'tool_progress_callback', None)
+    spinner = getattr(parent_agent, "_delegate_spinner", None)
+    parent_cb = getattr(parent_agent, "tool_progress_callback", None)
 
     if not spinner and not parent_cb:
         return None  # No display → no callback → zero behavior change
@@ -98,7 +102,7 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
 
     # Gateway: batch tool names, flush periodically
     _BATCH_SIZE = 5
-    _batch: List[str] = []
+    _batch: list[str] = []
 
     def _callback(tool_name: str, preview: str = None):
         # Special "_thinking" event: model produced text content (reasoning)
@@ -106,7 +110,7 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
             if spinner:
                 short = (preview[:55] + "...") if preview and len(preview) > 55 else (preview or "")
                 try:
-                    spinner.print_above(f" {prefix}├─ 💭 \"{short}\"")
+                    spinner.print_above(f' {prefix}├─ 💭 "{short}"')
                 except Exception:
                     pass
             # Don't relay thinking to gateway (too noisy for chat)
@@ -116,17 +120,25 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
         if spinner:
             short = (preview[:35] + "...") if preview and len(preview) > 35 else (preview or "")
             tool_emojis = {
-                "terminal": "💻", "web_search": "🔍", "web_extract": "📄",
-                "read_file": "📖", "write_file": "✍️", "patch": "🔧",
-                "search_files": "🔎", "list_directory": "📂",
-                "browser_navigate": "🌐", "browser_click": "👆",
-                "text_to_speech": "🔊", "image_generate": "🎨",
-                "vision_analyze": "👁️", "process": "⚙️",
+                "terminal": "💻",
+                "web_search": "🔍",
+                "web_extract": "📄",
+                "read_file": "📖",
+                "write_file": "✍️",
+                "patch": "🔧",
+                "search_files": "🔎",
+                "list_directory": "📂",
+                "browser_navigate": "🌐",
+                "browser_click": "👆",
+                "text_to_speech": "🔊",
+                "image_generate": "🎨",
+                "vision_analyze": "👁️",
+                "process": "⚙️",
             }
             emoji = tool_emojis.get(tool_name, "⚡")
             line = f" {prefix}├─ {emoji} {tool_name}"
             if short:
-                line += f"  \"{short}\""
+                line += f'  "{short}"'
             try:
                 spinner.print_above(line)
             except Exception:
@@ -159,13 +171,13 @@ def _build_child_progress_callback(task_index: int, parent_agent, task_count: in
 def _run_single_child(
     task_index: int,
     goal: str,
-    context: Optional[str],
-    toolsets: Optional[List[str]],
-    model: Optional[str],
+    context: str | None,
+    toolsets: list[str] | None,
+    model: str | None,
     max_iterations: int,
     parent_agent,
     task_count: int = 1,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Spawn and run a single child agent. Called from within a thread.
     Returns a structured result dict.
@@ -216,7 +228,7 @@ def _run_single_child(
             skip_context_files=True,
             skip_memory=True,
             clarify_callback=None,
-            session_db=getattr(parent_agent, '_session_db', None),
+            session_db=getattr(parent_agent, "_session_db", None),
             providers_allowed=parent_agent.providers_allowed,
             providers_ignored=parent_agent.providers_ignored,
             providers_order=parent_agent.providers_order,
@@ -226,10 +238,10 @@ def _run_single_child(
         )
 
         # Set delegation depth so children can't spawn grandchildren
-        child._delegate_depth = getattr(parent_agent, '_delegate_depth', 0) + 1
+        child._delegate_depth = getattr(parent_agent, "_delegate_depth", 0) + 1
 
         # Register child for interrupt propagation
-        if hasattr(parent_agent, '_active_children'):
+        if hasattr(parent_agent, "_active_children"):
             parent_agent._active_children.append(child)
 
         # Run with stdout/stderr suppressed to prevent interleaved output
@@ -238,7 +250,7 @@ def _run_single_child(
             result = child.run_conversation(user_message=goal)
 
         # Flush any remaining batched progress to gateway
-        if child_progress_cb and hasattr(child_progress_cb, '_flush'):
+        if child_progress_cb and hasattr(child_progress_cb, "_flush"):
             try:
                 child_progress_cb._flush()
             except Exception:
@@ -258,7 +270,7 @@ def _run_single_child(
         else:
             status = "failed"
 
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "task_index": task_index,
             "status": status,
             "summary": summary,
@@ -284,7 +296,7 @@ def _run_single_child(
 
     finally:
         # Unregister child from interrupt propagation
-        if hasattr(parent_agent, '_active_children'):
+        if hasattr(parent_agent, "_active_children"):
             try:
                 parent_agent._active_children.remove(child)
             except (ValueError, UnboundLocalError):
@@ -292,11 +304,11 @@ def _run_single_child(
 
 
 def delegate_task(
-    goal: Optional[str] = None,
-    context: Optional[str] = None,
-    toolsets: Optional[List[str]] = None,
-    tasks: Optional[List[Dict[str, Any]]] = None,
-    max_iterations: Optional[int] = None,
+    goal: str | None = None,
+    context: str | None = None,
+    toolsets: list[str] | None = None,
+    tasks: list[dict[str, Any]] | None = None,
+    max_iterations: int | None = None,
     parent_agent=None,
 ) -> str:
     """
@@ -312,14 +324,11 @@ def delegate_task(
         return json.dumps({"error": "delegate_task requires a parent agent context."})
 
     # Depth limit
-    depth = getattr(parent_agent, '_delegate_depth', 0)
+    depth = getattr(parent_agent, "_delegate_depth", 0)
     if depth >= MAX_DEPTH:
-        return json.dumps({
-            "error": (
-                f"Delegation depth limit reached ({MAX_DEPTH}). "
-                "Subagents cannot spawn further subagents."
-            )
-        })
+        return json.dumps(
+            {"error": (f"Delegation depth limit reached ({MAX_DEPTH}). Subagents cannot spawn further subagents.")}
+        )
 
     # Load config
     cfg = _load_config()
@@ -366,7 +375,7 @@ def delegate_task(
     else:
         # Batch -- run in parallel with per-task progress lines
         completed_count = 0
-        spinner_ref = getattr(parent_agent, '_delegate_spinner', None)
+        spinner_ref = getattr(parent_agent, "_delegate_spinner", None)
 
         # Save stdout/stderr before the executor — redirect_stdout in child
         # threads races on sys.stdout and can leave it as devnull permanently.
@@ -412,7 +421,7 @@ def delegate_task(
                 status = entry.get("status", "?")
                 icon = "✓" if status == "completed" else "✗"
                 remaining = n_tasks - completed_count
-                completion_line = f"{icon} [{idx+1}/{n_tasks}] {label}  ({dur}s)"
+                completion_line = f"{icon} [{idx + 1}/{n_tasks}] {label}  ({dur}s)"
                 if spinner_ref:
                     try:
                         spinner_ref.print_above(completion_line)
@@ -437,16 +446,20 @@ def delegate_task(
 
     total_duration = round(time.monotonic() - overall_start, 2)
 
-    return json.dumps({
-        "results": results,
-        "total_duration_seconds": total_duration,
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "results": results,
+            "total_duration_seconds": total_duration,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _load_config() -> dict:
     """Load delegation config from CLI_CONFIG if available."""
     try:
         from cli import CLI_CONFIG
+
         return CLI_CONFIG.get("delegation", {})
     except Exception:
         return {}
@@ -537,10 +550,7 @@ DELEGATE_TASK_SCHEMA = {
             },
             "max_iterations": {
                 "type": "integer",
-                "description": (
-                    "Max tool-calling turns per subagent (default: 50). "
-                    "Only set lower for simple tasks."
-                ),
+                "description": ("Max tool-calling turns per subagent (default: 50). Only set lower for simple tasks."),
             },
         },
         "required": [],
@@ -561,6 +571,7 @@ registry.register(
         toolsets=args.get("toolsets"),
         tasks=args.get("tasks"),
         max_iterations=args.get("max_iterations"),
-        parent_agent=kw.get("parent_agent")),
+        parent_agent=kw.get("parent_agent"),
+    ),
     check_fn=check_delegate_requirements,
 )

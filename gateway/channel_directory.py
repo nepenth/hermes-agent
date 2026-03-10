@@ -10,7 +10,7 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,8 @@ DIRECTORY_PATH = Path.home() / ".hermes" / "channel_directory.json"
 # Build / refresh
 # ---------------------------------------------------------------------------
 
-def build_channel_directory(adapters: Dict[Any, Any]) -> Dict[str, Any]:
+
+def build_channel_directory(adapters: dict[Any, Any]) -> dict[str, Any]:
     """
     Build a channel directory from connected platform adapters and session data.
 
@@ -29,7 +30,7 @@ def build_channel_directory(adapters: Dict[Any, Any]) -> Dict[str, Any]:
     """
     from gateway.config import Platform
 
-    platforms: Dict[str, List[Dict[str, str]]] = {}
+    platforms: dict[str, list[dict[str, str]]] = {}
 
     for platform, adapter in adapters.items():
         try:
@@ -60,7 +61,7 @@ def build_channel_directory(adapters: Dict[Any, Any]) -> Dict[str, Any]:
     return directory
 
 
-def _build_discord(adapter) -> List[Dict[str, str]]:
+def _build_discord(adapter) -> list[dict[str, str]]:
     """Enumerate all text channels the Discord bot can see."""
     channels = []
     client = getattr(adapter, "_client", None)
@@ -74,12 +75,14 @@ def _build_discord(adapter) -> List[Dict[str, str]]:
 
     for guild in client.guilds:
         for ch in guild.text_channels:
-            channels.append({
-                "id": str(ch.id),
-                "name": ch.name,
-                "guild": guild.name,
-                "type": "channel",
-            })
+            channels.append(
+                {
+                    "id": str(ch.id),
+                    "name": ch.name,
+                    "guild": guild.name,
+                    "type": "channel",
+                }
+            )
         # Also include DM-capable users we've interacted with is not
         # feasible via guild enumeration; those come from sessions.
 
@@ -88,7 +91,7 @@ def _build_discord(adapter) -> List[Dict[str, str]]:
     return channels
 
 
-def _build_slack(adapter) -> List[Dict[str, str]]:
+def _build_slack(adapter) -> list[dict[str, str]]:
     """List Slack channels the bot has joined."""
     channels = []
     # Slack adapter may expose a web client
@@ -97,7 +100,6 @@ def _build_slack(adapter) -> List[Dict[str, str]]:
         return _build_from_sessions("slack")
 
     try:
-        import asyncio
         from tools.send_message_tool import _send_slack  # noqa: F401
         # Use the Slack Web API directly if available
     except Exception:
@@ -107,7 +109,7 @@ def _build_slack(adapter) -> List[Dict[str, str]]:
     return _build_from_sessions("slack")
 
 
-def _build_from_sessions(platform_name: str) -> List[Dict[str, str]]:
+def _build_from_sessions(platform_name: str) -> list[dict[str, str]]:
     """Pull known channels/contacts from sessions.json origin data."""
     sessions_path = Path.home() / ".hermes" / "sessions" / "sessions.json"
     if not sessions_path.exists():
@@ -127,11 +129,13 @@ def _build_from_sessions(platform_name: str) -> List[Dict[str, str]]:
             if not chat_id or chat_id in seen_ids:
                 continue
             seen_ids.add(chat_id)
-            entries.append({
-                "id": str(chat_id),
-                "name": origin.get("chat_name") or origin.get("user_name") or str(chat_id),
-                "type": session.get("chat_type", "dm"),
-            })
+            entries.append(
+                {
+                    "id": str(chat_id),
+                    "name": origin.get("chat_name") or origin.get("user_name") or str(chat_id),
+                    "type": session.get("chat_type", "dm"),
+                }
+            )
     except Exception as e:
         logger.debug("Channel directory: failed to read sessions for %s: %s", platform_name, e)
 
@@ -142,7 +146,8 @@ def _build_from_sessions(platform_name: str) -> List[Dict[str, str]]:
 # Read / resolve
 # ---------------------------------------------------------------------------
 
-def load_directory() -> Dict[str, Any]:
+
+def load_directory() -> dict[str, Any]:
     """Load the cached channel directory from disk."""
     if not DIRECTORY_PATH.exists():
         return {"updated_at": None, "platforms": {}}
@@ -153,7 +158,7 @@ def load_directory() -> Dict[str, Any]:
         return {"updated_at": None, "platforms": {}}
 
 
-def resolve_channel_name(platform_name: str, name: str) -> Optional[str]:
+def resolve_channel_name(platform_name: str, name: str) -> str | None:
     """
     Resolve a human-friendly channel name to a numeric ID.
 
@@ -206,8 +211,8 @@ def format_directory_for_display() -> str:
 
         # Group Discord channels by guild
         if plat_name == "discord":
-            guilds: Dict[str, List] = {}
-            dms: List = []
+            guilds: dict[str, list] = {}
+            dms: list = []
             for ch in channels:
                 guild = ch.get("guild")
                 if guild:

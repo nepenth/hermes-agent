@@ -19,9 +19,9 @@ import os
 import random
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any
 from urllib.parse import unquote
 
 import httpx
@@ -32,9 +32,9 @@ from gateway.platforms.base import (
     MessageEvent,
     MessageType,
     SendResult,
-    cache_image_from_bytes,
     cache_audio_from_bytes,
     cache_document_from_bytes,
+    cache_image_from_bytes,
     cache_image_from_url,
 )
 
@@ -59,6 +59,7 @@ _PHONE_RE = re.compile(r"\+[1-9]\d{6,14}")
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _redact_phone(phone: str) -> str:
     """Redact a phone number for logging: +15551234567 -> +155****4567."""
     if not phone:
@@ -68,7 +69,7 @@ def _redact_phone(phone: str) -> str:
     return phone[:4] + "****" + phone[-4:]
 
 
-def _parse_comma_list(value: str) -> List[str]:
+def _parse_comma_list(value: str) -> list[str]:
     """Split a comma-separated string into a list, stripping whitespace."""
     return [v.strip() for v in value.split(",") if v.strip()]
 
@@ -110,7 +111,7 @@ def _render_mentions(text: str, mentions: list) -> str:
     Signal encodes @mentions as the Unicode object replacement character
     with out-of-band metadata containing the mentioned user's UUID/number.
     """
-    if not mentions or "\uFFFC" not in text:
+    if not mentions or "\ufffc" not in text:
         return text
     # Sort mentions by start position (reverse) to replace from end to start
     # so indices don't shift as we replace
@@ -121,7 +122,7 @@ def _render_mentions(text: str, mentions: list) -> str:
         # Use the mention's number or UUID as the replacement
         identifier = mention.get("number") or mention.get("uuid") or "user"
         replacement = f"@{identifier}"
-        text = text[:start] + replacement + text[start + length:]
+        text = text[:start] + replacement + text[start + length :]
     return text
 
 
@@ -133,6 +134,7 @@ def check_signal_requirements() -> bool:
 # ---------------------------------------------------------------------------
 # Signal Adapter
 # ---------------------------------------------------------------------------
+
 
 class SignalAdapter(BasePlatformAdapter):
     """Signal messenger adapter using signal-cli HTTP daemon."""
@@ -152,22 +154,25 @@ class SignalAdapter(BasePlatformAdapter):
         self.group_allow_from = set(_parse_comma_list(group_allowed_str))
 
         # HTTP client
-        self.client: Optional[httpx.AsyncClient] = None
+        self.client: httpx.AsyncClient | None = None
 
         # Background tasks
-        self._sse_task: Optional[asyncio.Task] = None
-        self._health_monitor_task: Optional[asyncio.Task] = None
-        self._typing_tasks: Dict[str, asyncio.Task] = {}
+        self._sse_task: asyncio.Task | None = None
+        self._health_monitor_task: asyncio.Task | None = None
+        self._typing_tasks: dict[str, asyncio.Task] = {}
         self._running = False
         self._last_sse_activity = 0.0
-        self._sse_response: Optional[httpx.Response] = None
+        self._sse_response: httpx.Response | None = None
 
         # Normalize account for self-message filtering
         self._account_normalized = self.account.strip()
 
-        logger.info("Signal adapter initialized: url=%s account=%s groups=%s",
-                     self.http_url, _redact_phone(self.account),
-                     "enabled" if self.group_allow_from else "disabled")
+        logger.info(
+            "Signal adapter initialized: url=%s account=%s groups=%s",
+            self.http_url,
+            _redact_phone(self.account),
+            "enabled" if self.group_allow_from else "disabled",
+        )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -241,7 +246,8 @@ class SignalAdapter(BasePlatformAdapter):
             try:
                 logger.debug("Signal SSE: connecting to %s", url)
                 async with self.client.stream(
-                    "GET", url,
+                    "GET",
+                    url,
                     headers={"Accept": "text/event-stream"},
                     timeout=None,
                 ) as response:
@@ -306,9 +312,7 @@ class SignalAdapter(BasePlatformAdapter):
             if elapsed > HEALTH_CHECK_STALE_THRESHOLD:
                 logger.warning("Signal: SSE idle for %.0fs, checking daemon health", elapsed)
                 try:
-                    resp = await self.client.get(
-                        f"{self.http_url}/api/v1/check", timeout=10.0
-                    )
+                    resp = await self.client.get(f"{self.http_url}/api/v1/check", timeout=10.0)
                     if resp.status_code == 200:
                         # Daemon is alive but SSE is idle — update activity to
                         # avoid repeated warnings (connection may just be quiet)
@@ -345,11 +349,7 @@ class SignalAdapter(BasePlatformAdapter):
             return
 
         # Extract sender info
-        sender = (
-            envelope_data.get("sourceNumber")
-            or envelope_data.get("sourceUuid")
-            or envelope_data.get("source")
-        )
+        sender = envelope_data.get("sourceNumber") or envelope_data.get("sourceUuid") or envelope_data.get("source")
         sender_name = envelope_data.get("sourceName", "")
         sender_uuid = envelope_data.get("sourceUuid", "")
 
@@ -367,10 +367,7 @@ class SignalAdapter(BasePlatformAdapter):
 
         # Get data message — also check editMessage (edited messages contain
         # their updated dataMessage inside editMessage.dataMessage)
-        data_message = (
-            envelope_data.get("dataMessage")
-            or (envelope_data.get("editMessage") or {}).get("dataMessage")
-        )
+        data_message = envelope_data.get("dataMessage") or (envelope_data.get("editMessage") or {}).get("dataMessage")
         if not data_message:
             return
 
@@ -451,11 +448,11 @@ class SignalAdapter(BasePlatformAdapter):
         ts_ms = envelope_data.get("timestamp", 0)
         if ts_ms:
             try:
-                timestamp = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc)
+                timestamp = datetime.fromtimestamp(ts_ms / 1000, tz=UTC)
             except (ValueError, OSError):
-                timestamp = datetime.now(tz=timezone.utc)
+                timestamp = datetime.now(tz=UTC)
         else:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = datetime.now(tz=UTC)
 
         # Build and dispatch event
         event = MessageEvent(
@@ -468,8 +465,7 @@ class SignalAdapter(BasePlatformAdapter):
             timestamp=timestamp,
         )
 
-        logger.debug("Signal: message from %s in %s: %s",
-                      _redact_phone(sender), chat_id[:20], (text or "")[:50])
+        logger.debug("Signal: message from %s in %s: %s", _redact_phone(sender), chat_id[:20], (text or "")[:50])
 
         await self.handle_message(event)
 
@@ -479,10 +475,13 @@ class SignalAdapter(BasePlatformAdapter):
 
     async def _fetch_attachment(self, attachment_id: str) -> tuple:
         """Fetch an attachment via JSON-RPC and cache it. Returns (path, ext)."""
-        result = await self._rpc("getAttachment", {
-            "account": self.account,
-            "attachmentId": attachment_id,
-        })
+        result = await self._rpc(
+            "getAttachment",
+            {
+                "account": self.account,
+                "attachmentId": attachment_id,
+            },
+        )
 
         if not result:
             return None, ""
@@ -547,13 +546,13 @@ class SignalAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         text: str,
-        reply_to_message_id: Optional[str] = None,
+        reply_to_message_id: str | None = None,
         **kwargs,
     ) -> SendResult:
         """Send a text message."""
         await self._stop_typing_indicator(chat_id)
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "account": self.account,
             "message": text,
         }
@@ -571,7 +570,7 @@ class SignalAdapter(BasePlatformAdapter):
 
     async def send_typing(self, chat_id: str) -> None:
         """Send a typing indicator."""
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "account": self.account,
         }
 
@@ -586,7 +585,7 @@ class SignalAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         image_url: str,
-        caption: Optional[str] = None,
+        caption: str | None = None,
         **kwargs,
     ) -> SendResult:
         """Send an image. Supports http(s):// and file:// URLs."""
@@ -611,7 +610,7 @@ class SignalAdapter(BasePlatformAdapter):
         if file_size > SIGNAL_MAX_ATTACHMENT_SIZE:
             return SendResult(success=False, error=f"Image too large ({file_size} bytes)")
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "account": self.account,
             "message": caption or "",
             "attachments": [file_path],
@@ -631,8 +630,8 @@ class SignalAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         file_path: str,
-        caption: Optional[str] = None,
-        filename: Optional[str] = None,
+        caption: str | None = None,
+        filename: str | None = None,
         **kwargs,
     ) -> SendResult:
         """Send a document/file attachment."""
@@ -641,7 +640,7 @@ class SignalAdapter(BasePlatformAdapter):
         if not Path(file_path).exists():
             return SendResult(success=False, error="File not found")
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "account": self.account,
             "message": caption or "",
             "attachments": [file_path],
@@ -690,7 +689,7 @@ class SignalAdapter(BasePlatformAdapter):
     # Chat Info
     # ------------------------------------------------------------------
 
-    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
+    async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         """Get information about a chat/contact."""
         if chat_id.startswith("group:"):
             return {
@@ -700,10 +699,13 @@ class SignalAdapter(BasePlatformAdapter):
             }
 
         # Try to resolve contact name
-        result = await self._rpc("getContact", {
-            "account": self.account,
-            "contactAddress": chat_id,
-        })
+        result = await self._rpc(
+            "getContact",
+            {
+                "account": self.account,
+                "contactAddress": chat_id,
+            },
+        )
 
         name = chat_id
         if result and isinstance(result, dict):

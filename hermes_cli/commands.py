@@ -12,7 +12,6 @@ from typing import Any
 
 from prompt_toolkit.completion import Completer, Completion
 
-
 COMMANDS = {
     "/help": "Show this help message",
     "/tools": "List available tools",

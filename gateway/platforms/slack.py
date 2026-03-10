@@ -11,12 +11,13 @@ Uses slack-bolt (Python) with Socket Mode for:
 import asyncio
 import os
 import re
-from typing import Dict, List, Optional, Any
+from typing import Any
 
 try:
-    from slack_bolt.async_app import AsyncApp
     from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
+    from slack_bolt.async_app import AsyncApp
     from slack_sdk.web.async_client import AsyncWebClient
+
     SLACK_AVAILABLE = True
 except ImportError:
     SLACK_AVAILABLE = False
@@ -26,18 +27,17 @@ except ImportError:
 
 import sys
 from pathlib import Path as _Path
+
 sys.path.insert(0, str(_Path(__file__).resolve().parents[2]))
 
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
+    SUPPORTED_DOCUMENT_TYPES,
     BasePlatformAdapter,
     MessageEvent,
     MessageType,
     SendResult,
-    SUPPORTED_DOCUMENT_TYPES,
     cache_document_from_bytes,
-    cache_image_from_url,
-    cache_audio_from_url,
 )
 
 
@@ -66,9 +66,9 @@ class SlackAdapter(BasePlatformAdapter):
 
     def __init__(self, config: PlatformConfig):
         super().__init__(config, Platform.SLACK)
-        self._app: Optional[AsyncApp] = None
-        self._handler: Optional[AsyncSocketModeHandler] = None
-        self._bot_user_id: Optional[str] = None
+        self._app: AsyncApp | None = None
+        self._handler: AsyncSocketModeHandler | None = None
+        self._bot_user_id: str | None = None
 
     async def connect(self) -> bool:
         """Connect to Slack via Socket Mode."""
@@ -135,8 +135,8 @@ class SlackAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         content: str,
-        reply_to: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        reply_to: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> SendResult:
         """Send a message to a Slack channel or DM."""
         if not self._app:
@@ -193,8 +193,8 @@ class SlackAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         image_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send a local image file to Slack by uploading it."""
         if not self._app:
@@ -202,6 +202,7 @@ class SlackAdapter(BasePlatformAdapter):
 
         try:
             import os
+
             if not os.path.exists(image_path):
                 return SendResult(success=False, error=f"Image file not found: {image_path}")
 
@@ -222,8 +223,8 @@ class SlackAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         image_url: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send an image to Slack by uploading the URL as a file."""
         if not self._app:
@@ -247,7 +248,7 @@ class SlackAdapter(BasePlatformAdapter):
 
             return SendResult(success=True, raw_response=result)
 
-        except Exception as e:
+        except Exception:
             # Fall back to sending the URL as text
             text = f"{caption}\n{image_url}" if caption else image_url
             return await self.send(chat_id=chat_id, content=text, reply_to=reply_to)
@@ -256,8 +257,8 @@ class SlackAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         audio_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send an audio file to Slack."""
         if not self._app:
@@ -280,8 +281,8 @@ class SlackAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         video_path: str,
-        caption: Optional[str] = None,
-        reply_to: Optional[str] = None,
+        caption: str | None = None,
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send a video file to Slack."""
         if not self._app:
@@ -308,9 +309,9 @@ class SlackAdapter(BasePlatformAdapter):
         self,
         chat_id: str,
         file_path: str,
-        caption: Optional[str] = None,
-        file_name: Optional[str] = None,
-        reply_to: Optional[str] = None,
+        caption: str | None = None,
+        file_name: str | None = None,
+        reply_to: str | None = None,
     ) -> SendResult:
         """Send a document/file attachment to Slack."""
         if not self._app:
@@ -335,7 +336,7 @@ class SlackAdapter(BasePlatformAdapter):
             print(f"[{self.name}] Failed to send document: {e}")
             return await super().send_document(chat_id, file_path, caption, file_name, reply_to)
 
-    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
+    async def get_chat_info(self, chat_id: str) -> dict[str, Any]:
         """Get information about a Slack channel."""
         if not self._app:
             return {"name": chat_id, "type": "unknown"}
@@ -442,9 +443,7 @@ class SlackAdapter(BasePlatformAdapter):
 
                     # Download and cache
                     raw_bytes = await self._download_slack_file_bytes(url)
-                    cached_path = cache_document_from_bytes(
-                        raw_bytes, original_filename or f"document{ext}"
-                    )
+                    cached_path = cache_document_from_bytes(raw_bytes, original_filename or f"document{ext}")
                     doc_mime = SUPPORTED_DOCUMENT_TYPES[ext]
                     media_urls.append(cached_path)
                     media_types.append(doc_mime)
@@ -457,7 +456,7 @@ class SlackAdapter(BasePlatformAdapter):
                         try:
                             text_content = raw_bytes.decode("utf-8")
                             display_name = original_filename or f"document{ext}"
-                            display_name = re.sub(r'[^\w.\- ]', '_', display_name)
+                            display_name = re.sub(r"[^\w.\- ]", "_", display_name)
                             injection = f"[Content of {display_name}]:\n{text_content}"
                             if text:
                                 text = f"{injection}\n\n{text}"
@@ -499,16 +498,20 @@ class SlackAdapter(BasePlatformAdapter):
 
         # Map subcommands to gateway commands
         subcommand_map = {
-            "new": "/reset", "reset": "/reset",
-            "status": "/status", "stop": "/stop",
+            "new": "/reset",
+            "reset": "/reset",
+            "status": "/status",
+            "stop": "/stop",
             "help": "/help",
-            "model": "/model", "personality": "/personality",
-            "retry": "/retry", "undo": "/undo",
+            "model": "/model",
+            "personality": "/personality",
+            "retry": "/retry",
+            "undo": "/undo",
         }
         first_word = text.split()[0] if text else ""
         if first_word in subcommand_map:
             # Preserve arguments after the subcommand
-            rest = text[len(first_word):].strip()
+            rest = text[len(first_word) :].strip()
             text = f"{subcommand_map[first_word]} {rest}".strip() if rest else subcommand_map[first_word]
         elif text:
             pass  # Treat as a regular question
@@ -544,9 +547,11 @@ class SlackAdapter(BasePlatformAdapter):
 
         if audio:
             from gateway.platforms.base import cache_audio_from_bytes
+
             return cache_audio_from_bytes(response.content, ext)
         else:
             from gateway.platforms.base import cache_image_from_bytes
+
             return cache_image_from_bytes(response.content, ext)
 
     async def _download_slack_file_bytes(self, url: str) -> bytes:

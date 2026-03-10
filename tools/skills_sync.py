@@ -26,7 +26,6 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +40,7 @@ def _get_bundled_dir() -> Path:
     return Path(__file__).parent.parent / "skills"
 
 
-def _read_manifest() -> Dict[str, str]:
+def _read_manifest() -> dict[str, str]:
     """
     Read the manifest as a dict of {skill_name: origin_hash}.
 
@@ -64,11 +63,11 @@ def _read_manifest() -> Dict[str, str]:
                 # v1 format: plain name — empty hash triggers migration
                 result[line] = ""
         return result
-    except (OSError, IOError):
+    except OSError:
         return {}
 
 
-def _write_manifest(entries: Dict[str, str]):
+def _write_manifest(entries: dict[str, str]):
     """Write the manifest file atomically in v2 format (name:hash).
 
     Uses a temp file + os.replace() to avoid corruption if the process
@@ -101,7 +100,7 @@ def _write_manifest(entries: Dict[str, str]):
         logger.debug("Failed to write skills manifest %s: %s", MANIFEST_FILE, e, exc_info=True)
 
 
-def _discover_bundled_skills(bundled_dir: Path) -> List[Tuple[str, Path]]:
+def _discover_bundled_skills(bundled_dir: Path) -> list[tuple[str, Path]]:
     """
     Find all SKILL.md files in the bundled directory.
     Returns list of (skill_name, skill_directory_path) tuples.
@@ -139,7 +138,7 @@ def _dir_hash(directory: Path) -> str:
                 rel = fpath.relative_to(directory)
                 hasher.update(str(rel).encode("utf-8"))
                 hasher.update(fpath.read_bytes())
-    except (OSError, IOError):
+    except OSError:
         pass
     return hasher.hexdigest()
 
@@ -155,8 +154,12 @@ def sync_skills(quiet: bool = False) -> dict:
     bundled_dir = _get_bundled_dir()
     if not bundled_dir.exists():
         return {
-            "copied": [], "updated": [], "skipped": 0,
-            "user_modified": [], "cleaned": [], "total_bundled": 0,
+            "copied": [],
+            "updated": [],
+            "skipped": 0,
+            "user_modified": [],
+            "cleaned": [],
+            "total_bundled": 0,
         }
 
     SKILLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -187,7 +190,7 @@ def sync_skills(quiet: bool = False) -> dict:
                     manifest[skill_name] = bundled_hash
                     if not quiet:
                         print(f"  + {skill_name}")
-            except (OSError, IOError) as e:
+            except OSError as e:
                 if not quiet:
                     print(f"  ! Failed to copy {skill_name}: {e}")
                 # Do NOT add to manifest — next sync should retry
@@ -229,12 +232,12 @@ def sync_skills(quiet: bool = False) -> dict:
                             print(f"  ↑ {skill_name} (updated)")
                         # Remove backup after successful copy
                         shutil.rmtree(backup, ignore_errors=True)
-                    except (OSError, IOError):
+                    except OSError:
                         # Restore from backup
                         if backup.exists() and not dest.exists():
                             shutil.move(str(backup), str(dest))
                         raise
-                except (OSError, IOError) as e:
+                except OSError as e:
                     if not quiet:
                         print(f"  ! Failed to update {skill_name}: {e}")
             else:
@@ -257,7 +260,7 @@ def sync_skills(quiet: bool = False) -> dict:
             try:
                 dest_desc.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(desc_md, dest_desc)
-            except (OSError, IOError) as e:
+            except OSError as e:
                 logger.debug("Could not copy %s: %s", desc_md, e)
 
     _write_manifest(manifest)

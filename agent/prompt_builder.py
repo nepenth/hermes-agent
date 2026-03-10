@@ -8,7 +8,6 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -18,21 +17,29 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _CONTEXT_THREAT_PATTERNS = [
-    (r'ignore\s+(previous|all|above|prior)\s+instructions', "prompt_injection"),
-    (r'do\s+not\s+tell\s+the\s+user', "deception_hide"),
-    (r'system\s+prompt\s+override', "sys_prompt_override"),
-    (r'disregard\s+(your|all|any)\s+(instructions|rules|guidelines)', "disregard_rules"),
-    (r'act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)', "bypass_restrictions"),
-    (r'<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->', "html_comment_injection"),
+    (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
+    (r"do\s+not\s+tell\s+the\s+user", "deception_hide"),
+    (r"system\s+prompt\s+override", "sys_prompt_override"),
+    (r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)", "disregard_rules"),
+    (r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)", "bypass_restrictions"),
+    (r"<!--[^>]*(?:ignore|override|system|secret|hidden)[^>]*-->", "html_comment_injection"),
     (r'<\s*div\s+style\s*=\s*["\'].*display\s*:\s*none', "hidden_div"),
-    (r'translate\s+.*\s+into\s+.*\s+and\s+(execute|run|eval)', "translate_execute"),
-    (r'curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)', "exfil_curl"),
-    (r'cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass)', "read_secrets"),
+    (r"translate\s+.*\s+into\s+.*\s+and\s+(execute|run|eval)", "translate_execute"),
+    (r"curl\s+[^\n]*\$\{?\w*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL|API)", "exfil_curl"),
+    (r"cat\s+[^\n]*(\.env|credentials|\.netrc|\.pgpass)", "read_secrets"),
 ]
 
 _CONTEXT_INVISIBLE_CHARS = {
-    '\u200b', '\u200c', '\u200d', '\u2060', '\ufeff',
-    '\u202a', '\u202b', '\u202c', '\u202d', '\u202e',
+    "\u200b",
+    "\u200c",
+    "\u200d",
+    "\u2060",
+    "\ufeff",
+    "\u202a",
+    "\u202b",
+    "\u202c",
+    "\u202d",
+    "\u202e",
 }
 
 
@@ -52,9 +59,12 @@ def _scan_context_content(content: str, filename: str) -> str:
 
     if findings:
         logger.warning("Context file %s blocked: %s", filename, ", ".join(findings))
-        return f"[BLOCKED: {filename} contained potential prompt injection ({', '.join(findings)}). Content not loaded.]"
+        return (
+            f"[BLOCKED: {filename} contained potential prompt injection ({', '.join(findings)}). Content not loaded.]"
+        )
 
     return content
+
 
 # =========================================================================
 # Constants
@@ -131,10 +141,7 @@ PLATFORM_HINTS = {
         "files arrive as downloadable documents. You can also include image "
         "URLs in markdown format ![alt](url) and they will be sent as photos."
     ),
-    "cli": (
-        "You are a CLI AI Agent. Try not to use markdown but simple text "
-        "renderable inside a terminal."
-    ),
+    "cli": ("You are a CLI AI Agent. Try not to use markdown but simple text renderable inside a terminal."),
 }
 
 CONTEXT_FILE_MAX_CHARS = 20_000
@@ -146,18 +153,20 @@ CONTEXT_TRUNCATE_TAIL_RATIO = 0.2
 # Skills index
 # =========================================================================
 
+
 def _read_skill_description(skill_file: Path, max_chars: int = 60) -> str:
     """Read the description from a SKILL.md frontmatter, capped at max_chars."""
     try:
         raw = skill_file.read_text(encoding="utf-8")[:2000]
         match = re.search(
             r"^---\s*\n.*?description:\s*(.+?)\s*\n.*?^---",
-            raw, re.MULTILINE | re.DOTALL,
+            raw,
+            re.MULTILINE | re.DOTALL,
         )
         if match:
             desc = match.group(1).strip().strip("'\"")
             if len(desc) > max_chars:
-                desc = desc[:max_chars - 3] + "..."
+                desc = desc[: max_chars - 3] + "..."
             return desc
     except Exception:
         pass
@@ -172,6 +181,7 @@ def _skill_is_platform_compatible(skill_file: Path) -> bool:
     """
     try:
         from tools.skills_tool import _parse_frontmatter, skill_matches_platform
+
         raw = skill_file.read_text(encoding="utf-8")[:2000]
         frontmatter, _ = _parse_frontmatter(raw)
         return skill_matches_platform(frontmatter)
@@ -260,8 +270,7 @@ def build_skills_system_prompt() -> str:
         "load it with skill_view(name) and follow its instructions. "
         "If a skill has issues, fix it with skill_manage(action='patch').\n"
         "\n"
-        "<available_skills>\n"
-        + "\n".join(index_lines) + "\n"
+        "<available_skills>\n" + "\n".join(index_lines) + "\n"
         "</available_skills>\n"
         "\n"
         "If none match, proceed normally without loading a skill."
@@ -271,6 +280,7 @@ def build_skills_system_prompt() -> str:
 # =========================================================================
 # Context files (SOUL.md, AGENTS.md, .cursorrules)
 # =========================================================================
+
 
 def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE_MAX_CHARS) -> str:
     """Head/tail truncation with a marker in the middle."""
@@ -284,7 +294,7 @@ def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE
     return head + marker + tail
 
 
-def build_context_files_prompt(cwd: Optional[str] = None) -> str:
+def build_context_files_prompt(cwd: str | None = None) -> str:
     """Discover and load context files for the system prompt.
 
     Discovery: AGENTS.md (recursive), .cursorrules / .cursor/rules/*.mdc,
@@ -307,7 +317,9 @@ def build_context_files_prompt(cwd: Optional[str] = None) -> str:
     if top_level_agents:
         agents_files = []
         for root, dirs, files in os.walk(cwd_path):
-            dirs[:] = [d for d in dirs if not d.startswith('.') and d not in ('node_modules', '__pycache__', 'venv', '.venv')]
+            dirs[:] = [
+                d for d in dirs if not d.startswith(".") and d not in ("node_modules", "__pycache__", "venv", ".venv")
+            ]
             for f in files:
                 if f.lower() == "agents.md":
                     agents_files.append(Path(root) / f)
@@ -384,4 +396,7 @@ def build_context_files_prompt(cwd: Optional[str] = None) -> str:
 
     if not sections:
         return ""
-    return "# Project Context\n\nThe following project context files have been loaded and should be followed:\n\n" + "\n".join(sections)
+    return (
+        "# Project Context\n\nThe following project context files have been loaded and should be followed:\n\n"
+        + "\n".join(sections)
+    )

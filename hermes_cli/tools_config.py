@@ -11,32 +11,36 @@ the `platform_toolsets` key.
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
 
-import os
-
-from hermes_cli.config import (
-    load_config, save_config, get_env_value, save_env_value,
-    get_hermes_home,
-)
 from hermes_cli.colors import Colors, color
+from hermes_cli.config import (
+    get_env_value,
+    load_config,
+    save_config,
+    save_env_value,
+)
 
 PROJECT_ROOT = Path(__file__).parent.parent.resolve()
 
 
 # ─── UI Helpers (shared with setup.py) ────────────────────────────────────────
 
+
 def _print_info(text: str):
     print(color(f"  {text}", Colors.DIM))
+
 
 def _print_success(text: str):
     print(color(f"✓ {text}", Colors.GREEN))
 
+
 def _print_warning(text: str):
     print(color(f"⚠ {text}", Colors.YELLOW))
 
+
 def _print_error(text: str):
     print(color(f"✗ {text}", Colors.RED))
+
 
 def _prompt(question: str, default: str = None, password: bool = False) -> str:
     if default:
@@ -46,6 +50,7 @@ def _prompt(question: str, default: str = None, password: bool = False) -> str:
     try:
         if password:
             import getpass
+
             value = getpass.getpass(color(display, Colors.YELLOW))
         else:
             value = input(color(display, Colors.YELLOW))
@@ -53,6 +58,7 @@ def _prompt(question: str, default: str = None, password: bool = False) -> str:
     except (KeyboardInterrupt, EOFError):
         print()
         return default or ""
+
 
 def _prompt_yes_no(question: str, default: bool = True) -> bool:
     default_str = "Y/n" if default else "y/N"
@@ -64,9 +70,9 @@ def _prompt_yes_no(question: str, default: bool = True) -> bool:
             return default
         if not value:
             return default
-        if value in ('y', 'yes'):
+        if value in ("y", "yes"):
             return True
-        if value in ('n', 'no'):
+        if value in ("n", "no"):
             return False
 
 
@@ -76,24 +82,24 @@ def _prompt_yes_no(question: str, default: bool = True) -> bool:
 # Each entry: (toolset_name, label, description)
 # These map to keys in toolsets.py TOOLSETS dict.
 CONFIGURABLE_TOOLSETS = [
-    ("web",             "🔍 Web Search & Scraping",    "web_search, web_extract"),
-    ("browser",         "🌐 Browser Automation",       "navigate, click, type, scroll"),
-    ("terminal",        "💻 Terminal & Processes",      "terminal, process"),
-    ("file",            "📁 File Operations",           "read, write, patch, search"),
-    ("code_execution",  "⚡ Code Execution",            "execute_code"),
-    ("vision",          "👁️  Vision / Image Analysis",  "vision_analyze"),
-    ("image_gen",       "🎨 Image Generation",          "image_generate"),
-    ("moa",             "🧠 Mixture of Agents",         "mixture_of_agents"),
-    ("tts",             "🔊 Text-to-Speech",            "text_to_speech"),
-    ("skills",          "📚 Skills",                    "list, view, manage"),
-    ("todo",            "📋 Task Planning",             "todo"),
-    ("memory",          "💾 Memory",                    "persistent memory across sessions"),
-    ("session_search",  "🔎 Session Search",            "search past conversations"),
-    ("clarify",         "❓ Clarifying Questions",      "clarify"),
-    ("delegation",      "👥 Task Delegation",           "delegate_task"),
-    ("cronjob",         "⏰ Cron Jobs",                 "schedule, list, remove"),
-    ("rl",              "🧪 RL Training",               "Tinker-Atropos training tools"),
-    ("homeassistant",    "🏠 Home Assistant",           "smart home device control"),
+    ("web", "🔍 Web Search & Scraping", "web_search, web_extract"),
+    ("browser", "🌐 Browser Automation", "navigate, click, type, scroll"),
+    ("terminal", "💻 Terminal & Processes", "terminal, process"),
+    ("file", "📁 File Operations", "read, write, patch, search"),
+    ("code_execution", "⚡ Code Execution", "execute_code"),
+    ("vision", "👁️  Vision / Image Analysis", "vision_analyze"),
+    ("image_gen", "🎨 Image Generation", "image_generate"),
+    ("moa", "🧠 Mixture of Agents", "mixture_of_agents"),
+    ("tts", "🔊 Text-to-Speech", "text_to_speech"),
+    ("skills", "📚 Skills", "list, view, manage"),
+    ("todo", "📋 Task Planning", "todo"),
+    ("memory", "💾 Memory", "persistent memory across sessions"),
+    ("session_search", "🔎 Session Search", "search past conversations"),
+    ("clarify", "❓ Clarifying Questions", "clarify"),
+    ("delegation", "👥 Task Delegation", "delegate_task"),
+    ("cronjob", "⏰ Cron Jobs", "schedule, list, remove"),
+    ("rl", "🧪 RL Training", "Tinker-Atropos training tools"),
+    ("homeassistant", "🏠 Home Assistant", "smart home device control"),
 ]
 
 # Toolsets that are OFF by default for new installs.
@@ -103,11 +109,11 @@ _DEFAULT_OFF_TOOLSETS = {"moa", "homeassistant", "rl"}
 
 # Platform display config
 PLATFORMS = {
-    "cli":      {"label": "🖥️  CLI",       "default_toolset": "hermes-cli"},
-    "telegram": {"label": "📱 Telegram",   "default_toolset": "hermes-telegram"},
-    "discord":  {"label": "💬 Discord",    "default_toolset": "hermes-discord"},
-    "slack":    {"label": "💼 Slack",      "default_toolset": "hermes-slack"},
-    "whatsapp": {"label": "📱 WhatsApp",   "default_toolset": "hermes-whatsapp"},
+    "cli": {"label": "🖥️  CLI", "default_toolset": "hermes-cli"},
+    "telegram": {"label": "📱 Telegram", "default_toolset": "hermes-telegram"},
+    "discord": {"label": "💬 Discord", "default_toolset": "hermes-discord"},
+    "slack": {"label": "💼 Slack", "default_toolset": "hermes-slack"},
+    "whatsapp": {"label": "📱 WhatsApp", "default_toolset": "hermes-whatsapp"},
 }
 
 
@@ -131,7 +137,11 @@ TOOL_CATEGORIES = {
                 "name": "OpenAI TTS",
                 "tag": "Premium - high quality voices",
                 "env_vars": [
-                    {"key": "VOICE_TOOLS_OPENAI_KEY", "prompt": "OpenAI API key", "url": "https://platform.openai.com/api-keys"},
+                    {
+                        "key": "VOICE_TOOLS_OPENAI_KEY",
+                        "prompt": "OpenAI API key",
+                        "url": "https://platform.openai.com/api-keys",
+                    },
                 ],
                 "tts_provider": "openai",
             },
@@ -139,7 +149,11 @@ TOOL_CATEGORIES = {
                 "name": "ElevenLabs",
                 "tag": "Premium - most natural voices",
                 "env_vars": [
-                    {"key": "ELEVENLABS_API_KEY", "prompt": "ElevenLabs API key", "url": "https://elevenlabs.io/app/settings/api-keys"},
+                    {
+                        "key": "ELEVENLABS_API_KEY",
+                        "prompt": "ElevenLabs API key",
+                        "url": "https://elevenlabs.io/app/settings/api-keys",
+                    },
                 ],
                 "tts_provider": "elevenlabs",
             },
@@ -224,7 +238,11 @@ TOOL_CATEGORIES = {
                 "name": "Tinker / Atropos",
                 "tag": "RL training platform",
                 "env_vars": [
-                    {"key": "TINKER_API_KEY", "prompt": "Tinker API key", "url": "https://tinker-console.thinkingmachines.ai/keys"},
+                    {
+                        "key": "TINKER_API_KEY",
+                        "prompt": "Tinker API key",
+                        "url": "https://tinker-console.thinkingmachines.ai/keys",
+                    },
                     {"key": "WANDB_API_KEY", "prompt": "WandB API key", "url": "https://wandb.ai/authorize"},
                 ],
                 "post_setup": "rl_training",
@@ -236,24 +254,26 @@ TOOL_CATEGORIES = {
 # Simple env-var requirements for toolsets NOT in TOOL_CATEGORIES.
 # Used as a fallback for tools like vision/moa that just need an API key.
 TOOLSET_ENV_REQUIREMENTS = {
-    "vision":     [("OPENROUTER_API_KEY",   "https://openrouter.ai/keys")],
-    "moa":        [("OPENROUTER_API_KEY",   "https://openrouter.ai/keys")],
+    "vision": [("OPENROUTER_API_KEY", "https://openrouter.ai/keys")],
+    "moa": [("OPENROUTER_API_KEY", "https://openrouter.ai/keys")],
 }
 
 
 # ─── Post-Setup Hooks ─────────────────────────────────────────────────────────
 
+
 def _run_post_setup(post_setup_key: str):
     """Run post-setup hooks for tools that need extra installation steps."""
     import shutil
+
     if post_setup_key == "browserbase":
         node_modules = PROJECT_ROOT / "node_modules" / "agent-browser"
         if not node_modules.exists() and shutil.which("npm"):
             _print_info("    Installing Node.js dependencies for browser tools...")
             import subprocess
+
             result = subprocess.run(
-                ["npm", "install", "--silent"],
-                capture_output=True, text=True, cwd=str(PROJECT_ROOT)
+                ["npm", "install", "--silent"], capture_output=True, text=True, cwd=str(PROJECT_ROOT)
             )
             if result.returncode == 0:
                 _print_success("    Node.js dependencies installed")
@@ -270,16 +290,17 @@ def _run_post_setup(post_setup_key: str):
             if tinker_dir.exists() and (tinker_dir / "pyproject.toml").exists():
                 _print_info("    Installing tinker-atropos submodule...")
                 import subprocess
+
                 uv_bin = shutil.which("uv")
                 if uv_bin:
                     result = subprocess.run(
                         [uv_bin, "pip", "install", "--python", sys.executable, "-e", str(tinker_dir)],
-                        capture_output=True, text=True
+                        capture_output=True,
+                        text=True,
                     )
                 else:
                     result = subprocess.run(
-                        [sys.executable, "-m", "pip", "install", "-e", str(tinker_dir)],
-                        capture_output=True, text=True
+                        [sys.executable, "-m", "pip", "install", "-e", str(tinker_dir)], capture_output=True, text=True
                     )
                 if result.returncode == 0:
                     _print_success("    tinker-atropos installed")
@@ -294,7 +315,8 @@ def _run_post_setup(post_setup_key: str):
 
 # ─── Platform / Toolset Helpers ───────────────────────────────────────────────
 
-def _get_enabled_platforms() -> List[str]:
+
+def _get_enabled_platforms() -> list[str]:
     """Return platform keys that are configured (have tokens or are CLI)."""
     enabled = ["cli"]
     if get_env_value("TELEGRAM_BOT_TOKEN"):
@@ -308,9 +330,9 @@ def _get_enabled_platforms() -> List[str]:
     return enabled
 
 
-def _get_platform_tools(config: dict, platform: str) -> Set[str]:
+def _get_platform_tools(config: dict, platform: str) -> set[str]:
     """Resolve which individual toolset names are enabled for a platform."""
-    from toolsets import resolve_toolset, TOOLSETS
+    from toolsets import resolve_toolset
 
     platform_toolsets = config.get("platform_toolsets", {})
     toolset_names = platform_toolsets.get(platform)
@@ -335,7 +357,7 @@ def _get_platform_tools(config: dict, platform: str) -> Set[str]:
     return enabled_toolsets
 
 
-def _save_platform_tools(config: dict, platform: str, enabled_toolset_keys: Set[str]):
+def _save_platform_tools(config: dict, platform: str, enabled_toolset_keys: set[str]):
     """Save the selected toolset keys for a platform to config."""
     config.setdefault("platform_toolsets", {})
     config["platform_toolsets"][platform] = sorted(enabled_toolset_keys)
@@ -364,6 +386,7 @@ def _toolset_has_keys(ts_key: str) -> bool:
 
 # ─── Menu Helpers ─────────────────────────────────────────────────────────────
 
+
 def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
     """Single-select menu (arrow keys). Uses curses to avoid simple_term_menu
     rendering bugs in tmux, iTerm, and other non-standard terminals."""
@@ -371,6 +394,7 @@ def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
     # Curses-based single-select — works in tmux, iTerm, and standard terminals
     try:
         import curses
+
         result_holder = [default]
 
         def _curses_menu(stdscr):
@@ -386,8 +410,9 @@ def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
                 stdscr.clear()
                 max_y, max_x = stdscr.getmaxyx()
                 try:
-                    stdscr.addnstr(0, 0, question, max_x - 1,
-                                   curses.A_BOLD | (curses.color_pair(2) if curses.has_colors() else 0))
+                    stdscr.addnstr(
+                        0, 0, question, max_x - 1, curses.A_BOLD | (curses.color_pair(2) if curses.has_colors() else 0)
+                    )
                 except curses.error:
                     pass
 
@@ -410,14 +435,14 @@ def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
                 stdscr.refresh()
                 key = stdscr.getch()
 
-                if key in (curses.KEY_UP, ord('k')):
+                if key in (curses.KEY_UP, ord("k")):
                     cursor = (cursor - 1) % len(choices)
-                elif key in (curses.KEY_DOWN, ord('j')):
+                elif key in (curses.KEY_DOWN, ord("j")):
                     cursor = (cursor + 1) % len(choices)
                 elif key in (curses.KEY_ENTER, 10, 13):
                     result_holder[0] = cursor
                     return
-                elif key in (27, ord('q')):
+                elif key in (27, ord("q")):
                     return
 
         curses.wrapper(_curses_menu)
@@ -431,7 +456,7 @@ def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
     for i, c in enumerate(choices):
         marker = "●" if i == default else "○"
         style = Colors.GREEN if i == default else ""
-        print(color(f"  {marker} {i+1}. {c}", style) if style else f"  {marker} {i+1}. {c}")
+        print(color(f"  {marker} {i + 1}. {c}", style) if style else f"  {marker} {i + 1}. {c}")
     while True:
         try:
             val = input(color(f"  Select [1-{len(choices)}] ({default + 1}): ", Colors.DIM))
@@ -445,7 +470,7 @@ def _prompt_choice(question: str, choices: list, default: int = 0) -> int:
             return default
 
 
-def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str]:
+def _prompt_toolset_checklist(platform_label: str, enabled: set[str]) -> set[str]:
     """Multi-select checklist of toolsets. Returns set of selected toolset keys."""
 
     labels = []
@@ -455,15 +480,13 @@ def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str
             suffix = "  [no API key]"
         labels.append(f"{ts_label}  ({ts_desc}){suffix}")
 
-    pre_selected_indices = [
-        i for i, (ts_key, _, _) in enumerate(CONFIGURABLE_TOOLSETS)
-        if ts_key in enabled
-    ]
+    pre_selected_indices = [i for i, (ts_key, _, _) in enumerate(CONFIGURABLE_TOOLSETS) if ts_key in enabled]
 
     # Curses-based multi-select — arrow keys + space to toggle + enter to confirm.
     # simple_term_menu has rendering bugs in tmux, iTerm, and other terminals.
     try:
         import curses
+
         selected = set(pre_selected_indices)
         result_holder = [None]
 
@@ -483,7 +506,13 @@ def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str
                 max_y, max_x = stdscr.getmaxyx()
                 header = f"Tools for {platform_label}  —  ↑↓ navigate, SPACE toggle, ENTER confirm"
                 try:
-                    stdscr.addnstr(0, 0, header, max_x - 1, curses.A_BOLD | curses.color_pair(2) if curses.has_colors() else curses.A_BOLD)
+                    stdscr.addnstr(
+                        0,
+                        0,
+                        header,
+                        max_x - 1,
+                        curses.A_BOLD | curses.color_pair(2) if curses.has_colors() else curses.A_BOLD,
+                    )
                 except curses.error:
                     pass
 
@@ -514,11 +543,11 @@ def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str
                 stdscr.refresh()
                 key = stdscr.getch()
 
-                if key in (curses.KEY_UP, ord('k')):
+                if key in (curses.KEY_UP, ord("k")):
                     cursor = (cursor - 1) % len(labels)
-                elif key in (curses.KEY_DOWN, ord('j')):
+                elif key in (curses.KEY_DOWN, ord("j")):
                     cursor = (cursor + 1) % len(labels)
-                elif key == ord(' '):
+                elif key == ord(" "):
                     if cursor in selected:
                         selected.discard(cursor)
                     else:
@@ -526,7 +555,7 @@ def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str
                 elif key in (curses.KEY_ENTER, 10, 13):
                     result_holder[0] = {CONFIGURABLE_TOOLSETS[i][0] for i in selected}
                     return
-                elif key in (27, ord('q')):  # ESC or q
+                elif key in (27, ord("q")):  # ESC or q
                     result_holder[0] = enabled
                     return
 
@@ -565,9 +594,10 @@ def _prompt_toolset_checklist(platform_label: str, enabled: Set[str]) -> Set[str
 
 # ─── Provider-Aware Configuration ────────────────────────────────────────────
 
+
 def _configure_toolset(ts_key: str, config: dict):
     """Configure a toolset - provider selection + API keys.
-    
+
     Uses TOOL_CATEGORIES for provider-aware config, falls back to simple
     env var prompts for toolsets not in TOOL_CATEGORIES.
     """
@@ -591,7 +621,9 @@ def _configure_tool_category(ts_key: str, cat: dict, config: dict):
         req = cat["requires_python"]
         if sys.version_info < req:
             print()
-            _print_error(f"  {name} requires Python {req[0]}.{req[1]}+ (current: {sys.version_info.major}.{sys.version_info.minor})")
+            _print_error(
+                f"  {name} requires Python {req[0]}.{req[1]}+ (current: {sys.version_info.major}.{sys.version_info.minor})"
+            )
             _print_info("  Upgrade Python and reinstall to enable this tool.")
             return
 
@@ -610,7 +642,7 @@ def _configure_tool_category(ts_key: str, cat: dict, config: dict):
         # Multiple providers - let user choose
         print()
         # Use custom title if provided (e.g. "Select Search Provider")
-        title = cat.get("setup_title", f"Choose a provider")
+        title = cat.get("setup_title", "Choose a provider")
         print(color(f"  --- {icon} {name} - {title} ---", Colors.CYAN))
         if cat.get("setup_note"):
             _print_info(f"  {cat['setup_note']}")
@@ -626,7 +658,11 @@ def _configure_tool_category(ts_key: str, cat: dict, config: dict):
                 if p.get("tts_provider") and config.get("tts", {}).get("provider") == p["tts_provider"]:
                     configured = " [active]"
                 elif not env_vars:
-                    configured = " [active]" if config.get("tts", {}).get("provider", "edge") == p.get("tts_provider", "") else ""
+                    configured = (
+                        " [active]"
+                        if config.get("tts", {}).get("provider", "edge") == p.get("tts_provider", "")
+                        else ""
+                    )
                 else:
                     configured = " [configured]"
             provider_choices.append(f"{p['name']}{tag}{configured}")
@@ -688,9 +724,9 @@ def _configure_provider(provider: dict, config: dict):
 
             if value:
                 save_env_value(var["key"], value)
-                _print_success(f"    Saved")
+                _print_success("    Saved")
             else:
-                _print_warning(f"    Skipped")
+                _print_warning("    Skipped")
                 all_configured = False
 
     # Run post-setup hooks if needed
@@ -721,9 +757,9 @@ def _configure_simple_requirements(ts_key: str):
         value = _prompt(f"    {var}", password=True)
         if value and value.strip():
             save_env_value(var, value.strip())
-            _print_success(f"    Saved")
+            _print_success("    Saved")
         else:
-            _print_warning(f"    Skipped")
+            _print_warning("    Skipped")
 
 
 def _reconfigure_tool(config: dict):
@@ -827,9 +863,9 @@ def _reconfigure_provider(provider: dict, config: dict):
         value = _prompt(f"    {var.get('prompt', var['key'])} (Enter to keep current)", password=not default_val)
         if value and value.strip():
             save_env_value(var["key"], value.strip())
-            _print_success(f"    Updated")
+            _print_success("    Updated")
         else:
-            _print_info(f"    Kept current")
+            _print_info("    Kept current")
 
 
 def _reconfigure_simple_requirements(ts_key: str):
@@ -851,12 +887,13 @@ def _reconfigure_simple_requirements(ts_key: str):
         value = _prompt(f"    {var} (Enter to keep current)", password=True)
         if value and value.strip():
             save_env_value(var, value.strip())
-            _print_success(f"    Updated")
+            _print_success("    Updated")
         else:
-            _print_info(f"    Kept current")
+            _print_info("    Kept current")
 
 
 # ─── Main Entry Point ─────────────────────────────────────────────────────────
+
 
 def tools_command(args=None, first_install: bool = False, config: dict = None):
     """Entry point for `hermes tools` and `hermes setup tools`.
@@ -907,7 +944,8 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
             # TTS (Edge vs OpenAI vs ElevenLabs), etc. are shown even when
             # a free provider exists.
             to_configure = [
-                ts_key for ts_key in sorted(new_enabled)
+                ts_key
+                for ts_key in sorted(new_enabled)
                 if TOOL_CATEGORIES.get(ts_key) or TOOLSET_ENV_REQUIREMENTS.get(ts_key)
             ]
 
@@ -981,7 +1019,7 @@ def tools_command(args=None, first_install: bool = False, config: dict = None):
 
             # Configure newly enabled toolsets that need API keys
             for ts_key in sorted(added):
-                if (TOOL_CATEGORIES.get(ts_key) or TOOLSET_ENV_REQUIREMENTS.get(ts_key)):
+                if TOOL_CATEGORIES.get(ts_key) or TOOLSET_ENV_REQUIREMENTS.get(ts_key):
                     if not _toolset_has_keys(ts_key):
                         _configure_toolset(ts_key, config)
 

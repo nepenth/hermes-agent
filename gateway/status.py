@@ -13,7 +13,6 @@ concurrently under distinct configurations).
 
 import os
 from pathlib import Path
-from typing import Optional
 
 
 def _get_pid_path() -> Path:
@@ -37,7 +36,7 @@ def remove_pid_file() -> None:
         pass
 
 
-def get_running_pid() -> Optional[int]:
+def get_running_pid() -> int | None:
     """Return the PID of a running gateway instance, or ``None``.
 
     Checks the PID file and verifies the process is actually alive.

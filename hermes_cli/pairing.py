@@ -8,6 +8,7 @@ Usage:
     hermes pairing clear-pending     # Clear all expired/pending codes
 """
 
+
 def pairing_command(args):
     """Handle hermes pairing subcommands."""
     from gateway.pairing import PairingStore
@@ -72,10 +73,10 @@ def _cmd_approve(store, platform: str, code: str):
         name = result.get("user_name", "")
         display = f"{name} ({uid})" if name else uid
         print(f"\n  Approved! User {display} on {platform} can now use the bot~")
-        print(f"  They'll be recognized automatically on their next message.\n")
+        print("  They'll be recognized automatically on their next message.\n")
     else:
         print(f"\n  Code '{code}' not found or expired for platform '{platform}'.")
-        print(f"  Run 'hermes pairing list' to see pending codes.\n")
+        print("  Run 'hermes pairing list' to see pending codes.\n")
 
 
 def _cmd_revoke(store, platform: str, user_id: str):

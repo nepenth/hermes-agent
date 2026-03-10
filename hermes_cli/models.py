@@ -8,26 +8,26 @@ Add, remove, or reorder entries here — both `hermes setup` and
 from __future__ import annotations
 
 import json
-import urllib.request
 import urllib.error
+import urllib.request
 from difflib import get_close_matches
-from typing import Any, Optional
+from typing import Any
 
 # (model_id, display description shown in menus)
 OPENROUTER_MODELS: list[tuple[str, str]] = [
-    ("anthropic/claude-opus-4.6",       "recommended"),
-    ("anthropic/claude-sonnet-4.5",     ""),
-    ("openai/gpt-5.4-pro",              ""),
-    ("openai/gpt-5.4",                  ""),
-    ("openai/gpt-5.3-codex",            ""),
-    ("google/gemini-3-pro-preview",     ""),
-    ("google/gemini-3-flash-preview",   ""),
-    ("qwen/qwen3.5-plus-02-15",         ""),
-    ("qwen/qwen3.5-35b-a3b",            ""),
-    ("stepfun/step-3.5-flash",          ""),
-    ("z-ai/glm-5",                      ""),
-    ("moonshotai/kimi-k2.5",            ""),
-    ("minimax/minimax-m2.5",            ""),
+    ("anthropic/claude-opus-4.6", "recommended"),
+    ("anthropic/claude-sonnet-4.5", ""),
+    ("openai/gpt-5.4-pro", ""),
+    ("openai/gpt-5.4", ""),
+    ("openai/gpt-5.3-codex", ""),
+    ("google/gemini-3-pro-preview", ""),
+    ("google/gemini-3-flash-preview", ""),
+    ("qwen/qwen3.5-plus-02-15", ""),
+    ("qwen/qwen3.5-35b-a3b", ""),
+    ("stepfun/step-3.5-flash", ""),
+    ("z-ai/glm-5", ""),
+    ("moonshotai/kimi-k2.5", ""),
+    ("minimax/minimax-m2.5", ""),
 ]
 
 _PROVIDER_MODELS: dict[str, list[str]] = {
@@ -93,9 +93,7 @@ def menu_labels() -> list[str]:
 
 # All provider IDs and aliases that are valid for the provider:model syntax.
 _KNOWN_PROVIDER_NAMES: set[str] = (
-    set(_PROVIDER_LABELS.keys())
-    | set(_PROVIDER_ALIASES.keys())
-    | {"openrouter", "custom"}
+    set(_PROVIDER_LABELS.keys()) | set(_PROVIDER_ALIASES.keys()) | {"openrouter", "custom"}
 )
 
 
@@ -107,8 +105,13 @@ def list_available_providers() -> list[dict[str, str]]:
     """
     # Canonical providers in display order
     _PROVIDER_ORDER = [
-        "openrouter", "nous", "openai-codex",
-        "zai", "kimi-coding", "minimax", "minimax-cn",
+        "openrouter",
+        "nous",
+        "openai-codex",
+        "zai",
+        "kimi-coding",
+        "minimax",
+        "minimax-cn",
     ]
     # Build reverse alias map
     aliases_for: dict[str, list[str]] = {}
@@ -123,16 +126,19 @@ def list_available_providers() -> list[dict[str, str]]:
         has_creds = False
         try:
             from hermes_cli.runtime_provider import resolve_runtime_provider
+
             runtime = resolve_runtime_provider(requested=pid)
             has_creds = bool(runtime.get("api_key"))
         except Exception:
             pass
-        result.append({
-            "id": pid,
-            "label": label,
-            "aliases": alias_list,
-            "authenticated": has_creds,
-        })
+        result.append(
+            {
+                "id": pid,
+                "label": label,
+                "aliases": alias_list,
+                "authenticated": has_creds,
+            }
+        )
     return result
 
 
@@ -157,13 +163,13 @@ def parse_model_input(raw: str, current_provider: str) -> tuple[str, str]:
     colon = stripped.find(":")
     if colon > 0:
         provider_part = stripped[:colon].strip().lower()
-        model_part = stripped[colon + 1:].strip()
+        model_part = stripped[colon + 1 :].strip()
         if provider_part and model_part and provider_part in _KNOWN_PROVIDER_NAMES:
             return (normalize_provider(provider_part), model_part)
     return (current_provider, stripped)
 
 
-def curated_models_for_provider(provider: Optional[str]) -> list[tuple[str, str]]:
+def curated_models_for_provider(provider: str | None) -> list[tuple[str, str]]:
     """Return ``(model_id, description)`` tuples for a provider's curated list."""
     normalized = normalize_provider(provider)
     if normalized == "openrouter":
@@ -172,7 +178,7 @@ def curated_models_for_provider(provider: Optional[str]) -> list[tuple[str, str]
     return [(m, "") for m in models]
 
 
-def normalize_provider(provider: Optional[str]) -> str:
+def normalize_provider(provider: str | None) -> str:
     """Normalize provider aliases to Hermes' canonical provider ids.
 
     Note: ``"auto"`` passes through unchanged — use
@@ -183,7 +189,7 @@ def normalize_provider(provider: Optional[str]) -> str:
     return _PROVIDER_ALIASES.get(normalized, normalized)
 
 
-def provider_model_ids(provider: Optional[str]) -> list[str]:
+def provider_model_ids(provider: str | None) -> list[str]:
     """Return the best known model catalog for a provider."""
     normalized = normalize_provider(provider)
     if normalized == "openrouter":
@@ -196,10 +202,10 @@ def provider_model_ids(provider: Optional[str]) -> list[str]:
 
 
 def fetch_api_models(
-    api_key: Optional[str],
-    base_url: Optional[str],
+    api_key: str | None,
+    base_url: str | None,
     timeout: float = 5.0,
-) -> Optional[list[str]]:
+) -> list[str] | None:
     """Fetch the list of available model IDs from the provider's ``/models`` endpoint.
 
     Returns a list of model ID strings, or ``None`` if the endpoint could not
@@ -225,10 +231,10 @@ def fetch_api_models(
 
 def validate_requested_model(
     model_name: str,
-    provider: Optional[str],
+    provider: str | None,
     *,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> dict[str, Any]:
     """
     Validate a ``/model`` value for the active provider.
@@ -286,10 +292,7 @@ def validate_requested_model(
                 "accepted": False,
                 "persist": False,
                 "recognized": False,
-                "message": (
-                    f"Error: `{requested}` is not a valid model for this provider."
-                    f"{suggestion_text}"
-                ),
+                "message": (f"Error: `{requested}` is not a valid model for this provider.{suggestion_text}"),
             }
 
     # api_models is None — couldn't reach API, fall back to catalog check

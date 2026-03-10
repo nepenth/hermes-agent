@@ -7,12 +7,12 @@ protecting head and tail context.
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.auxiliary_client import get_text_auxiliary_client
 from agent.model_metadata import (
-    get_model_context_length,
     estimate_messages_tokens_rough,
+    get_model_context_length,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ class ContextCompressor:
         self.client, default_model = get_text_auxiliary_client("compression")
         self.summary_model = summary_model_override or default_model
 
-    def update_from_response(self, usage: Dict[str, Any]):
+    def update_from_response(self, usage: dict[str, Any]):
         """Update tracked token usage from API response."""
         self.last_prompt_tokens = usage.get("prompt_tokens", 0)
         self.last_completion_tokens = usage.get("completion_tokens", 0)
@@ -67,12 +67,12 @@ class ContextCompressor:
         tokens = prompt_tokens if prompt_tokens is not None else self.last_prompt_tokens
         return tokens >= self.threshold_tokens
 
-    def should_compress_preflight(self, messages: List[Dict[str, Any]]) -> bool:
+    def should_compress_preflight(self, messages: list[dict[str, Any]]) -> bool:
         """Quick pre-flight check using rough estimate (before API call)."""
         rough_estimate = estimate_messages_tokens_rough(messages)
         return rough_estimate >= self.threshold_tokens
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current compression status for display/logging."""
         return {
             "last_prompt_tokens": self.last_prompt_tokens,
@@ -82,7 +82,7 @@ class ContextCompressor:
             "compression_count": self.compression_count,
         }
 
-    def _generate_summary(self, turns_to_summarize: List[Dict[str, Any]]) -> Optional[str]:
+    def _generate_summary(self, turns_to_summarize: list[dict[str, Any]]) -> str | None:
         """Generate a concise summary of conversation turns.
 
         Tries the auxiliary model first, then falls back to the user's main
@@ -140,7 +140,9 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
                 logging.warning(f"Main model summary also failed: {fallback_err}")
 
         # 3. All models failed — return None so the caller drops turns without a summary
-        logging.warning("Context compression: no model available for summary. Middle turns will be dropped without summary.")
+        logging.warning(
+            "Context compression: no model available for summary. Middle turns will be dropped without summary."
+        )
         return None
 
     def _call_summary_model(self, client, model: str, prompt: str) -> str:
@@ -186,12 +188,14 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
 
         # Don't fallback to the same provider that just failed
         from hermes_constants import OPENROUTER_BASE_URL
+
         if custom_base.rstrip("/") == OPENROUTER_BASE_URL.rstrip("/"):
             return None, None
 
         model = os.getenv("LLM_MODEL") or os.getenv("OPENAI_MODEL") or self.model
         try:
             from openai import OpenAI as _OpenAI
+
             client = _OpenAI(api_key=custom_key, base_url=custom_base)
             logger.debug("Built fallback auxiliary client: %s via %s", model, custom_base)
             return client, model
@@ -210,7 +214,7 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
             return tc.get("id", "")
         return getattr(tc, "id", "") or ""
 
-    def _sanitize_tool_pairs(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _sanitize_tool_pairs(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Fix orphaned tool_call / tool_result pairs after compression.
 
         Two failure modes:
@@ -243,8 +247,7 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
         orphaned_results = result_call_ids - surviving_call_ids
         if orphaned_results:
             messages = [
-                m for m in messages
-                if not (m.get("role") == "tool" and m.get("tool_call_id") in orphaned_results)
+                m for m in messages if not (m.get("role") == "tool" and m.get("tool_call_id") in orphaned_results)
             ]
             if not self.quiet_mode:
                 logger.info("Compression sanitizer: removed %d orphaned tool result(s)", len(orphaned_results))
@@ -252,25 +255,27 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
         # 2. Add stub results for assistant tool_calls whose results were dropped
         missing_results = surviving_call_ids - result_call_ids
         if missing_results:
-            patched: List[Dict[str, Any]] = []
+            patched: list[dict[str, Any]] = []
             for msg in messages:
                 patched.append(msg)
                 if msg.get("role") == "assistant":
                     for tc in msg.get("tool_calls") or []:
                         cid = self._get_tool_call_id(tc)
                         if cid in missing_results:
-                            patched.append({
-                                "role": "tool",
-                                "content": "[Result from earlier conversation — see context summary above]",
-                                "tool_call_id": cid,
-                            })
+                            patched.append(
+                                {
+                                    "role": "tool",
+                                    "content": "[Result from earlier conversation — see context summary above]",
+                                    "tool_call_id": cid,
+                                }
+                            )
             messages = patched
             if not self.quiet_mode:
                 logger.info("Compression sanitizer: added %d stub tool result(s)", len(missing_results))
 
         return messages
 
-    def _align_boundary_forward(self, messages: List[Dict[str, Any]], idx: int) -> int:
+    def _align_boundary_forward(self, messages: list[dict[str, Any]], idx: int) -> int:
         """Push a compress-start boundary forward past any orphan tool results.
 
         If ``messages[idx]`` is a tool result, slide forward until we hit a
@@ -280,7 +285,7 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
             idx += 1
         return idx
 
-    def _align_boundary_backward(self, messages: List[Dict[str, Any]], idx: int) -> int:
+    def _align_boundary_backward(self, messages: list[dict[str, Any]], idx: int) -> int:
         """Pull a compress-end boundary backward to avoid splitting a
         tool_call / result group.
 
@@ -298,7 +303,7 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
             idx -= 1
         return idx
 
-    def compress(self, messages: List[Dict[str, Any]], current_tokens: int = None) -> List[Dict[str, Any]]:
+    def compress(self, messages: list[dict[str, Any]], current_tokens: int = None) -> list[dict[str, Any]]:
         """Compress conversation messages by summarizing middle turns.
 
         Keeps first N + last N turns, summarizes everything in between.
@@ -308,7 +313,9 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
         n_messages = len(messages)
         if n_messages <= self.protect_first_n + self.protect_last_n + 1:
             if not self.quiet_mode:
-                print(f"⚠️  Cannot compress: only {n_messages} messages (need > {self.protect_first_n + self.protect_last_n + 1})")
+                print(
+                    f"⚠️  Cannot compress: only {n_messages} messages (need > {self.protect_first_n + self.protect_last_n + 1})"
+                )
             return messages
 
         compress_start = self.protect_first_n
@@ -323,14 +330,20 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
             return messages
 
         turns_to_summarize = messages[compress_start:compress_end]
-        display_tokens = current_tokens if current_tokens else self.last_prompt_tokens or estimate_messages_tokens_rough(messages)
+        display_tokens = (
+            current_tokens if current_tokens else self.last_prompt_tokens or estimate_messages_tokens_rough(messages)
+        )
 
         if not self.quiet_mode:
-            print(f"\n📦 Context compression triggered ({display_tokens:,} tokens ≥ {self.threshold_tokens:,} threshold)")
-            print(f"   📊 Model context limit: {self.context_length:,} tokens ({self.threshold_percent*100:.0f}% = {self.threshold_tokens:,})")
+            print(
+                f"\n📦 Context compression triggered ({display_tokens:,} tokens ≥ {self.threshold_tokens:,} threshold)"
+            )
+            print(
+                f"   📊 Model context limit: {self.context_length:,} tokens ({self.threshold_percent * 100:.0f}% = {self.threshold_tokens:,})"
+            )
 
         if not self.quiet_mode:
-            print(f"   🗜️  Summarizing turns {compress_start+1}-{compress_end} ({len(turns_to_summarize)} turns)")
+            print(f"   🗜️  Summarizing turns {compress_start + 1}-{compress_end} ({len(turns_to_summarize)} turns)")
 
         summary = self._generate_summary(turns_to_summarize)
 
@@ -338,7 +351,9 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
         for i in range(compress_start):
             msg = messages[i].copy()
             if i == 0 and msg.get("role") == "system" and self.compression_count == 0:
-                msg["content"] = (msg.get("content") or "") + "\n\n[Note: Some earlier conversation turns may be summarized to preserve context space.]"
+                msg["content"] = (
+                    msg.get("content") or ""
+                ) + "\n\n[Note: Some earlier conversation turns may be summarized to preserve context space.]"
             compressed.append(msg)
 
         if summary:

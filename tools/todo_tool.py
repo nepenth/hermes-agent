@@ -15,8 +15,7 @@ Design:
 """
 
 import json
-from typing import Dict, Any, List, Optional
-
+from typing import Any
 
 # Valid status values for todo items
 VALID_STATUSES = {"pending", "in_progress", "completed", "cancelled"}
@@ -33,9 +32,9 @@ class TodoStore:
     """
 
     def __init__(self):
-        self._items: List[Dict[str, str]] = []
+        self._items: list[dict[str, str]] = []
 
-    def write(self, todos: List[Dict[str, Any]], merge: bool = False) -> List[Dict[str, str]]:
+    def write(self, todos: list[dict[str, Any]], merge: bool = False) -> list[dict[str, str]]:
         """
         Write todos. Returns the full current list after writing.
 
@@ -79,7 +78,7 @@ class TodoStore:
             self._items = rebuilt
         return self.read()
 
-    def read(self) -> List[Dict[str, str]]:
+    def read(self) -> list[dict[str, str]]:
         """Return a copy of the current list."""
         return [item.copy() for item in self._items]
 
@@ -87,7 +86,7 @@ class TodoStore:
         """Check if there are any items in the list."""
         return len(self._items) > 0
 
-    def format_for_injection(self) -> Optional[str]:
+    def format_for_injection(self) -> str | None:
         """
         Render the todo list for post-compression injection.
 
@@ -113,7 +112,7 @@ class TodoStore:
         return "\n".join(lines)
 
     @staticmethod
-    def _validate(item: Dict[str, Any]) -> Dict[str, str]:
+    def _validate(item: dict[str, Any]) -> dict[str, str]:
         """
         Validate and normalize a todo item.
 
@@ -136,9 +135,9 @@ class TodoStore:
 
 
 def todo_tool(
-    todos: Optional[List[Dict[str, Any]]] = None,
+    todos: list[dict[str, Any]] | None = None,
     merge: bool = False,
-    store: Optional[TodoStore] = None,
+    store: TodoStore | None = None,
 ) -> str:
     """
     Single entry point for the todo tool. Reads or writes depending on params.
@@ -165,16 +164,19 @@ def todo_tool(
     completed = sum(1 for i in items if i["status"] == "completed")
     cancelled = sum(1 for i in items if i["status"] == "cancelled")
 
-    return json.dumps({
-        "todos": items,
-        "summary": {
-            "total": len(items),
-            "pending": pending,
-            "in_progress": in_progress,
-            "completed": completed,
-            "cancelled": cancelled,
+    return json.dumps(
+        {
+            "todos": items,
+            "summary": {
+                "total": len(items),
+                "pending": pending,
+                "in_progress": in_progress,
+                "completed": completed,
+                "cancelled": cancelled,
+            },
         },
-    }, ensure_ascii=False)
+        ensure_ascii=False,
+    )
 
 
 def check_todo_requirements() -> bool:
@@ -214,34 +216,27 @@ TODO_SCHEMA = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "id": {
-                            "type": "string",
-                            "description": "Unique item identifier"
-                        },
-                        "content": {
-                            "type": "string",
-                            "description": "Task description"
-                        },
+                        "id": {"type": "string", "description": "Unique item identifier"},
+                        "content": {"type": "string", "description": "Task description"},
                         "status": {
                             "type": "string",
                             "enum": ["pending", "in_progress", "completed", "cancelled"],
-                            "description": "Current status"
-                        }
+                            "description": "Current status",
+                        },
                     },
-                    "required": ["id", "content", "status"]
-                }
+                    "required": ["id", "content", "status"],
+                },
             },
             "merge": {
                 "type": "boolean",
                 "description": (
-                    "true: update existing items by id, add new ones. "
-                    "false (default): replace the entire list."
+                    "true: update existing items by id, add new ones. false (default): replace the entire list."
                 ),
-                "default": False
-            }
+                "default": False,
+            },
         },
-        "required": []
-    }
+        "required": [],
+    },
 }
 
 
@@ -253,6 +248,7 @@ registry.register(
     toolset="todo",
     schema=TODO_SCHEMA,
     handler=lambda args, **kw: todo_tool(
-        todos=args.get("todos"), merge=args.get("merge", False), store=kw.get("store")),
+        todos=args.get("todos"), merge=args.get("merge", False), store=kw.get("store")
+    ),
     check_fn=check_todo_requirements,
 )

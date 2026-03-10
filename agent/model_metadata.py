@@ -9,7 +9,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 import yaml
@@ -18,7 +18,7 @@ from hermes_constants import OPENROUTER_MODELS_URL
 
 logger = logging.getLogger(__name__)
 
-_model_metadata_cache: Dict[str, Dict[str, Any]] = {}
+_model_metadata_cache: dict[str, dict[str, Any]] = {}
 _model_metadata_cache_time: float = 0
 _MODEL_CACHE_TTL = 3600
 
@@ -63,7 +63,7 @@ DEFAULT_CONTEXT_LENGTHS = {
 }
 
 
-def fetch_model_metadata(force_refresh: bool = False) -> Dict[str, Dict[str, Any]]:
+def fetch_model_metadata(force_refresh: bool = False) -> dict[str, dict[str, Any]]:
     """Fetch model metadata from OpenRouter (cached for 1 hour)."""
     global _model_metadata_cache, _model_metadata_cache_time
 
@@ -104,7 +104,7 @@ def _get_context_cache_path() -> Path:
     return hermes_home / "context_length_cache.yaml"
 
 
-def _load_context_cache() -> Dict[str, int]:
+def _load_context_cache() -> dict[str, int]:
     """Load the model+provider → context_length cache from disk."""
     path = _get_context_cache_path()
     if not path.exists():
@@ -139,14 +139,14 @@ def save_context_length(model: str, base_url: str, length: int) -> None:
         logger.debug("Failed to save context length cache: %s", e)
 
 
-def get_cached_context_length(model: str, base_url: str) -> Optional[int]:
+def get_cached_context_length(model: str, base_url: str) -> int | None:
     """Look up a previously discovered context length for model+provider."""
     key = f"{model}@{base_url}"
     cache = _load_context_cache()
     return cache.get(key)
 
 
-def get_next_probe_tier(current_length: int) -> Optional[int]:
+def get_next_probe_tier(current_length: int) -> int | None:
     """Return the next lower probe tier, or None if already at minimum."""
     for tier in CONTEXT_PROBE_TIERS:
         if tier < current_length:
@@ -154,7 +154,7 @@ def get_next_probe_tier(current_length: int) -> Optional[int]:
     return None
 
 
-def parse_context_limit_from_error(error_msg: str) -> Optional[int]:
+def parse_context_limit_from_error(error_msg: str) -> int | None:
     """Try to extract the actual context limit from an API error message.
 
     Many providers include the limit in their error text, e.g.:
@@ -166,11 +166,11 @@ def parse_context_limit_from_error(error_msg: str) -> Optional[int]:
     error_lower = error_msg.lower()
     # Pattern: look for numbers near context-related keywords
     patterns = [
-        r'(?:max(?:imum)?|limit)\s*(?:context\s*)?(?:length|size|window)?\s*(?:is|of|:)?\s*(\d{4,})',
-        r'context\s*(?:length|size|window)\s*(?:is|of|:)?\s*(\d{4,})',
-        r'(\d{4,})\s*(?:token)?\s*(?:context|limit)',
-        r'>\s*(\d{4,})\s*(?:max|limit|token)',  # "250000 tokens > 200000 maximum"
-        r'(\d{4,})\s*(?:max(?:imum)?)\b',  # "200000 maximum"
+        r"(?:max(?:imum)?|limit)\s*(?:context\s*)?(?:length|size|window)?\s*(?:is|of|:)?\s*(\d{4,})",
+        r"context\s*(?:length|size|window)\s*(?:is|of|:)?\s*(\d{4,})",
+        r"(\d{4,})\s*(?:token)?\s*(?:context|limit)",
+        r">\s*(\d{4,})\s*(?:max|limit|token)",  # "250000 tokens > 200000 maximum"
+        r"(\d{4,})\s*(?:max(?:imum)?)\b",  # "200000 maximum"
     ]
     for pattern in patterns:
         match = re.search(pattern, error_lower)
@@ -218,7 +218,7 @@ def estimate_tokens_rough(text: str) -> int:
     return len(text) // 4
 
 
-def estimate_messages_tokens_rough(messages: List[Dict[str, Any]]) -> int:
+def estimate_messages_tokens_rough(messages: list[dict[str, Any]]) -> int:
     """Rough token estimate for a message list (pre-flight only)."""
     total_chars = sum(len(str(msg)) for msg in messages)
     return total_chars // 4

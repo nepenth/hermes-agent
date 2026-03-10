@@ -3,22 +3,22 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from hermes_cli.auth import (
-    AuthError,
     PROVIDER_REGISTRY,
+    AuthError,
     format_auth_error,
-    resolve_provider,
-    resolve_nous_runtime_credentials,
-    resolve_codex_runtime_credentials,
     resolve_api_key_provider_credentials,
+    resolve_codex_runtime_credentials,
+    resolve_nous_runtime_credentials,
+    resolve_provider,
 )
 from hermes_cli.config import load_config
 from hermes_constants import OPENROUTER_BASE_URL
 
 
-def _get_model_config() -> Dict[str, Any]:
+def _get_model_config() -> dict[str, Any]:
     config = load_config()
     model_cfg = config.get("model")
     if isinstance(model_cfg, dict):
@@ -28,7 +28,7 @@ def _get_model_config() -> Dict[str, Any]:
     return {}
 
 
-def resolve_requested_provider(requested: Optional[str] = None) -> str:
+def resolve_requested_provider(requested: str | None = None) -> str:
     """Resolve provider request from explicit arg, env, then config."""
     if requested and requested.strip():
         return requested.strip().lower()
@@ -48,9 +48,9 @@ def resolve_requested_provider(requested: Optional[str] = None) -> str:
 def _resolve_openrouter_runtime(
     *,
     requested_provider: str,
-    explicit_api_key: Optional[str] = None,
-    explicit_base_url: Optional[str] = None,
-) -> Dict[str, Any]:
+    explicit_api_key: str | None = None,
+    explicit_base_url: str | None = None,
+) -> dict[str, Any]:
     model_cfg = _get_model_config()
     cfg_base_url = model_cfg.get("base_url") if isinstance(model_cfg.get("base_url"), str) else ""
     cfg_provider = model_cfg.get("provider") if isinstance(model_cfg.get("provider"), str) else ""
@@ -81,19 +81,9 @@ def _resolve_openrouter_runtime(
     # provider (issues #420, #560).
     _is_openrouter_url = "openrouter.ai" in base_url
     if _is_openrouter_url:
-        api_key = (
-            explicit_api_key
-            or os.getenv("OPENROUTER_API_KEY")
-            or os.getenv("OPENAI_API_KEY")
-            or ""
-        )
+        api_key = explicit_api_key or os.getenv("OPENROUTER_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
     else:
-        api_key = (
-            explicit_api_key
-            or os.getenv("OPENAI_API_KEY")
-            or os.getenv("OPENROUTER_API_KEY")
-            or ""
-        )
+        api_key = explicit_api_key or os.getenv("OPENAI_API_KEY") or os.getenv("OPENROUTER_API_KEY") or ""
 
     source = "explicit" if (explicit_api_key or explicit_base_url) else "env/config"
 
@@ -108,10 +98,10 @@ def _resolve_openrouter_runtime(
 
 def resolve_runtime_provider(
     *,
-    requested: Optional[str] = None,
-    explicit_api_key: Optional[str] = None,
-    explicit_base_url: Optional[str] = None,
-) -> Dict[str, Any]:
+    requested: str | None = None,
+    explicit_api_key: str | None = None,
+    explicit_base_url: str | None = None,
+) -> dict[str, Any]:
     """Resolve runtime provider credentials for agent execution."""
     requested_provider = resolve_requested_provider(requested)
 

@@ -12,8 +12,7 @@ a thin dispatcher that delegates to a platform-provided callback.
 """
 
 import json
-from typing import Dict, Any, List, Optional, Callable
-
+from collections.abc import Callable
 
 # Maximum number of predefined choices the agent can offer.
 # A 5th "Other (type your answer)" option is always appended by the UI.
@@ -22,8 +21,8 @@ MAX_CHOICES = 4
 
 def clarify_tool(
     question: str,
-    choices: Optional[List[str]] = None,
-    callback: Optional[Callable] = None,
+    choices: list[str] | None = None,
+    callback: Callable | None = None,
 ) -> str:
     """
     Ask the user a question, optionally with multiple-choice options.
@@ -68,11 +67,14 @@ def clarify_tool(
             ensure_ascii=False,
         )
 
-    return json.dumps({
-        "question": question,
-        "choices_offered": choices,
-        "user_response": str(user_response).strip(),
-    }, ensure_ascii=False)
+    return json.dumps(
+        {
+            "question": question,
+            "choices_offered": choices,
+            "user_response": str(user_response).strip(),
+        },
+        ensure_ascii=False,
+    )
 
 
 def check_clarify_requirements() -> bool:
@@ -133,8 +135,7 @@ registry.register(
     toolset="clarify",
     schema=CLARIFY_SCHEMA,
     handler=lambda args, **kw: clarify_tool(
-        question=args.get("question", ""),
-        choices=args.get("choices"),
-        callback=kw.get("callback")),
+        question=args.get("question", ""), choices=args.get("choices"), callback=kw.get("callback")
+    ),
     check_fn=check_clarify_requirements,
 )

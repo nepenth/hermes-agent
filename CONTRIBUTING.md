@@ -65,18 +65,7 @@ If your skill is specialized, community-contributed, or niche, it's better suite
 ```bash
 git clone --recurse-submodules https://github.com/NousResearch/hermes-agent.git
 cd hermes-agent
-
-# Create venv with Python 3.11
-uv venv venv --python 3.11
-export VIRTUAL_ENV="$(pwd)/venv"
-
-# Install with all extras (messaging, cron, CLI menus, dev tools)
-uv pip install -e ".[all,dev]"
-uv pip install -e "./mini-swe-agent"
-uv pip install -e "./tinker-atropos"
-
-# Optional: browser tools
-npm install
+make setup   # creates .venv, installs all deps
 ```
 
 ### Configure for development
@@ -90,22 +79,16 @@ touch ~/.hermes/.env
 echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.hermes/.env
 ```
 
-### Run
+### Common commands
 
 ```bash
-# Symlink for global access
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
-
-# Verify
-hermes doctor
-hermes chat -q "Hello"
-```
-
-### Run tests
-
-```bash
-pytest tests/ -v
+make test          # run unit tests
+make lint          # ruff check
+make fmt           # ruff format + fix
+make check         # lint + test (same as CI)
+make dev-cli       # auto-restart hermes CLI on file changes
+make dev-gateway   # auto-restart gateway on file changes
+make test-watch    # rerun tests on file changes
 ```
 
 ---
@@ -227,7 +210,7 @@ User message → AIAgent._run_agent_loop()
 
 ## Code Style
 
-- **PEP 8** with practical exceptions (we don't enforce strict line length)
+- **Formatting**: Enforced by **ruff** (config in `pyproject.toml`). Run `make fmt` to auto-fix, `make lint` to check. Pre-commit hooks handle this automatically.
 - **Comments**: Only when explaining non-obvious intent, trade-offs, or API quirks. Don't narrate what the code does — `# increment counter` adds nothing
 - **Error handling**: Catch specific exceptions. Log with `logger.warning()`/`logger.error()` — use `exc_info=True` for unexpected errors so stack traces appear in logs
 - **Cross-platform**: Never assume Unix. See [Cross-Platform Compatibility](#cross-platform-compatibility)
@@ -457,7 +440,7 @@ refactor/description   # Code restructuring
 
 ### Before submitting
 
-1. **Run tests**: `pytest tests/ -v`
+1. **Run checks**: `make check` (lint + test — same as CI)
 2. **Test manually**: Run `hermes` and exercise the code path you changed
 3. **Check cross-platform impact**: If you touch file I/O, process management, or terminal handling, consider Windows and macOS
 4. **Keep PRs focused**: One logical change per PR. Don't mix a bug fix with a refactor with a new feature.

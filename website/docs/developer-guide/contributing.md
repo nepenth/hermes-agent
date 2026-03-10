@@ -27,7 +27,7 @@ We value contributions in this order:
 | Requirement | Notes |
 |-------------|-------|
 | **Git** | With `--recurse-submodules` support |
-| **Python 3.10+** | uv will install it if missing |
+| **Python 3.11+** | uv will install it if missing |
 | **uv** | Fast Python package manager ([install](https://docs.astral.sh/uv/)) |
 | **Node.js 18+** | Optional — needed for browser tools and WhatsApp bridge |
 
@@ -36,18 +36,7 @@ We value contributions in this order:
 ```bash
 git clone --recurse-submodules https://github.com/NousResearch/hermes-agent.git
 cd hermes-agent
-
-# Create venv with Python 3.11
-uv venv venv --python 3.11
-export VIRTUAL_ENV="$(pwd)/venv"
-
-# Install with all extras (messaging, cron, CLI menus, dev tools)
-uv pip install -e ".[all,dev]"
-uv pip install -e "./mini-swe-agent"
-uv pip install -e "./tinker-atropos"
-
-# Optional: browser tools
-npm install
+make setup   # creates .venv, installs all deps, sets up pre-commit
 ```
 
 ### Configure for Development
@@ -61,27 +50,21 @@ touch ~/.hermes/.env
 echo 'OPENROUTER_API_KEY=sk-or-v1-your-key' >> ~/.hermes/.env
 ```
 
-### Run
+### Common Commands
 
 ```bash
-# Symlink for global access
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/venv/bin/hermes" ~/.local/bin/hermes
-
-# Verify
-hermes doctor
-hermes chat -q "Hello"
-```
-
-### Run Tests
-
-```bash
-pytest tests/ -v
+make test          # run unit tests
+make lint          # ruff check
+make fmt           # ruff format + fix
+make check         # lint + test (same as CI)
+make dev-cli       # auto-restart hermes CLI on file changes
+make dev-gateway   # auto-restart gateway on file changes
+make test-watch    # rerun tests on file changes
 ```
 
 ## Code Style
 
-- **PEP 8** with practical exceptions (no strict line length enforcement)
+- **Formatting**: Enforced by **ruff** (config in `pyproject.toml`). Run `make fmt` to auto-fix, `make lint` to check. Pre-commit hooks handle this automatically.
 - **Comments**: Only when explaining non-obvious intent, trade-offs, or API quirks
 - **Error handling**: Catch specific exceptions. Use `logger.warning()`/`logger.error()` with `exc_info=True` for unexpected errors
 - **Cross-platform**: Never assume Unix (see below)
@@ -169,7 +152,7 @@ refactor/description   # Code restructuring
 
 ### Before Submitting
 
-1. **Run tests**: `pytest tests/ -v`
+1. **Run checks**: `make check` (lint + test — same as CI)
 2. **Test manually**: Run `hermes` and exercise the code path you changed
 3. **Check cross-platform impact**: Consider macOS and different Linux distros
 4. **Keep PRs focused**: One logical change per PR
