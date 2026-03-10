@@ -2757,7 +2757,17 @@ class AIAgent:
 
             tool_start_time = time.time()
 
-            if function_name == "todo":
+            # ACP tool bridge: delegate file/terminal ops to the editor
+            if (hasattr(self, '_acp_tool_bridge') and self._acp_tool_bridge
+                    and function_name in self._acp_tool_bridge.DELEGATED_TOOLS):
+                try:
+                    function_result = self._acp_tool_bridge.dispatch(
+                        function_name, function_args)
+                except Exception as e:
+                    function_result = json.dumps(
+                        {"error": f"ACP tool bridge error: {e}"})
+                tool_duration = time.time() - tool_start_time
+            elif function_name == "todo":
                 from tools.todo_tool import todo_tool as _todo_tool
                 function_result = _todo_tool(
                     todos=function_args.get("todos"),
