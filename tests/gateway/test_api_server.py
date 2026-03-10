@@ -310,18 +310,29 @@ class TestChatCompletionsEndpoint:
             assert resp.status == 400
 
     @pytest.mark.asyncio
-    async def test_stream_true_returns_501(self, adapter):
+    async def test_stream_true_returns_sse(self, adapter):
+        """stream=true returns SSE format with the full response."""
         app = _create_app(adapter)
         async with TestClient(TestServer(app)) as cli:
-            resp = await cli.post(
-                "/v1/chat/completions",
-                json={
-                    "model": "test",
-                    "messages": [{"role": "user", "content": "hi"}],
-                    "stream": True,
-                },
-            )
-            assert resp.status == 501
+            with patch.object(adapter, "_run_agent", new_callable=AsyncMock) as mock_run:
+                mock_run.return_value = (
+                    {"final_response": "Hello!", "messages": [], "api_calls": 1},
+                    {"input_tokens": 10, "output_tokens": 5, "total_tokens": 15},
+                )
+                resp = await cli.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": "test",
+                        "messages": [{"role": "user", "content": "hi"}],
+                        "stream": True,
+                    },
+                )
+                assert resp.status == 200
+                assert "text/event-stream" in resp.headers.get("Content-Type", "")
+                body = await resp.text()
+                assert "data: " in body
+                assert "[DONE]" in body
+                assert "Hello!" in body
 
     @pytest.mark.asyncio
     async def test_no_user_message_returns_400(self, adapter):
