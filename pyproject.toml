@@ -40,7 +40,7 @@ dependencies = [
 [project.optional-dependencies]
 modal = ["swe-rex[modal]>=1.4.0"]
 daytona = ["daytona>=0.148.0"]
-dev = ["pytest", "pytest-asyncio", "pytest-xdist", "mcp>=1.2.0"]
+dev = ["pytest", "pytest-asyncio", "pytest-xdist", "mcp>=1.2.0", "ruff", "pre-commit", "watchfiles"]
 messaging = ["python-telegram-bot>=20.0", "discord.py>=2.0", "aiohttp>=3.9.0", "slack-bolt>=1.18.0", "slack-sdk>=3.27.0"]
 cron = ["croniter"]
 slack = ["slack-bolt>=1.18.0", "slack-sdk>=3.27.0"]
@@ -78,6 +78,38 @@ py-modules = ["run_agent", "model_tools", "toolsets", "batch_runner", "trajector
 
 [tool.setuptools.packages.find]
 include = ["tools", "hermes_cli", "gateway", "cron", "honcho_integration"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "E402",   # late imports — intentional throughout codebase
+    "E501",   # line too long — handled by formatter where it can
+    "E731",   # lambda assignments — used in registry pattern
+    "E741",   # ambiguous variable name
+    "F811",   # redefined unused — intentional overrides
+    "F841",   # unused variable
+    "B007",   # unused loop variable
+    "B904",   # raise from
+    "B905",   # zip strict
+    "B027",   # empty method without abstract decorator
+    "SIM102", # collapsible if
+    "SIM103", # needless bool
+    "SIM105", # suppressible exception
+    "SIM108", # ternary
+    "SIM110", # reimplemented builtin
+    "SIM112", # uncapitalized env var
+    "SIM115", # open file with context handler
+    "SIM117", # multiple with statements
+    "SIM118", # in-dict-keys
+    "SIM212", # if-expr twisted arms
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tools", "hermes_cli", "gateway", "agent", "cron"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

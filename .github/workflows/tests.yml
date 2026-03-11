@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -6,37 +6,38 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel in-progress runs for the same PR/branch
 concurrency:
-  group: tests-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uvx ruff check run_agent.py model_tools.py toolsets.py cli.py hermes_state.py batch_runner.py tools/ hermes_cli/ gateway/ agent/ cron/
+      - run: uvx ruff format --check run_agent.py model_tools.py toolsets.py cli.py hermes_state.py batch_runner.py tools/ hermes_cli/ gateway/ agent/ cron/
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-
-      - name: Set up Python 3.11
-        run: uv python install 3.11
-
-      - name: Install dependencies
-        run: |
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.11
+      - run: |
           uv venv .venv --python 3.11
           source .venv/bin/activate
           uv pip install -e ".[all,dev]"
-
-      - name: Run tests
-        run: |
+      - run: |
           source .venv/bin/activate
           python -m pytest tests/ -q --ignore=tests/integration --tb=short -n auto
         env:
-          # Ensure tests don't accidentally call real APIs
           OPENROUTER_API_KEY: ""
           OPENAI_API_KEY: ""
           NOUS_API_KEY: ""
