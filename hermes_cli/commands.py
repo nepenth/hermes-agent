@@ -34,6 +34,7 @@ COMMANDS_BY_CATEGORY = {
         "/provider": "Show available providers and current provider",
         "/prompt": "View/set custom system prompt",
         "/personality": "Set a predefined personality",
+        "/reasoning": "Show or change reasoning effort (none|low|medium|high|xhigh)",
         "/verbose": "Cycle tool progress display: off → new → all → verbose",
         "/skin": "Show or change the display skin/theme",
     },

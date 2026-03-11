@@ -366,7 +366,7 @@ class GatewayRunner:
         """Load reasoning effort from config or env var.
         
         Checks HERMES_REASONING_EFFORT env var first, then agent.reasoning_effort
-        in config.yaml. Valid: "xhigh", "high", "medium", "low", "minimal", "none".
+        in config.yaml. Valid: "none", "low", "medium", "high", "xhigh".
         Returns None to use default (medium).
         """
         effort = os.getenv("HERMES_REASONING_EFFORT", "")
@@ -385,7 +385,7 @@ class GatewayRunner:
         effort = effort.lower().strip()
         if effort == "none":
             return {"enabled": False}
-        valid = ("xhigh", "high", "medium", "low", "minimal")
+        valid = ("low", "medium", "high", "xhigh")
         if effort in valid:
             return {"enabled": True, "effort": effort}
         logger.warning("Unknown reasoning_effort '%s', using default (medium)", effort)
