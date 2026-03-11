@@ -60,6 +60,7 @@ function switchStepPlatform(platform) {
 
 function toggleMobileNav() {
   document.getElementById("nav-mobile").classList.toggle("open");
+  document.getElementById("nav-hamburger").classList.toggle("open");
 }
 
 function toggleSpecs() {

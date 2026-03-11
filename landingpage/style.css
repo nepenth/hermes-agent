@@ -199,9 +199,35 @@ strong {
     display: none;
     background: none;
     border: none;
-    color: var(--text-dim);
     cursor: pointer;
-    padding: 4px;
+    padding: 6px;
+    width: 34px;
+    height: 34px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+}
+
+.hamburger-bar {
+    display: block;
+    width: 20px;
+    height: 2px;
+    background: var(--text-dim);
+    border-radius: 1px;
+    transition: transform 0.25s var(--ease-out-quint), opacity 0.2s var(--ease-out-quad);
+    transform-origin: center;
+}
+
+.nav-hamburger.open .hamburger-bar:nth-child(1) {
+    transform: translateY(7px) rotate(45deg);
+}
+
+.nav-hamburger.open .hamburger-bar:nth-child(2) {
+    opacity: 0;
+}
+
+.nav-hamburger.open .hamburger-bar:nth-child(3) {
+    transform: translateY(-7px) rotate(-45deg);
 }
 
 .nav-mobile {
@@ -592,6 +618,8 @@ strong {
     color: var(--primary-light);
     opacity: 0.85;
     flex-shrink: 0;
+    display: flex;
+    line-height: 0;
 }
 
 .feature-card h3 {
@@ -969,7 +997,7 @@ strong {
     }
 
     .nav-hamburger {
-        display: block;
+        display: flex;
     }
 
     /* --- Hero --- */
@@ -1063,20 +1091,12 @@ strong {
     }
 
     .feature-card {
-        padding: 20px 18px;
-    }
-
-    .feature-icon {
-        font-size: 24px;
-        margin-bottom: 12px;
-    }
-
-    .feature-card h3 {
-        font-size: 15px;
+        padding: 16px 18px;
     }
 
     .feature-card p {
         font-size: 13px;
+        line-height: 1.5;
     }
 
     /* --- Terminal demo --- */
