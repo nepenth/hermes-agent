@@ -165,10 +165,16 @@ This means you can customize behavior per-frontend without losing capabilities:
 Bearer token auth via the `Authorization` header:
 
 ```
-Authorization: Bearer your-secret-key
+Authorization: Bearer ***
 ```
 
 Configure the key via `API_SERVER_KEY` env var. If no key is set, all requests are allowed (for local-only use).
+
+:::warning Security
+The API server gives full access to hermes-agent's toolset, **including terminal commands**. If you change the bind address to `0.0.0.0` (network-accessible), **always set `API_SERVER_KEY`** — without it, anyone on your network can execute arbitrary commands on your machine.
+
+The default bind address (`127.0.0.1`) is safe for local-only use.
+:::
 
 ## Configuration
 

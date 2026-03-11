@@ -166,6 +166,28 @@ from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageTyp
 logger = logging.getLogger(__name__)
 
 
+def _resolve_model() -> str:
+    """Resolve the model name from env vars and config.yaml.
+
+    Priority: HERMES_MODEL env > LLM_MODEL env > config.yaml model.default > fallback.
+    """
+    model = os.getenv("HERMES_MODEL") or os.getenv("LLM_MODEL") or "anthropic/claude-opus-4.6"
+    try:
+        import yaml
+        _cfg_path = Path.home() / ".hermes" / "config.yaml"
+        if _cfg_path.exists():
+            with open(_cfg_path, encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            model_cfg = cfg.get("model", {})
+            if isinstance(model_cfg, str):
+                model = model_cfg
+            elif isinstance(model_cfg, dict):
+                model = model_cfg.get("default", model)
+    except Exception:
+        pass
+    return model
+
+
 def _resolve_runtime_agent_kwargs() -> dict:
     """Resolve provider credentials for gateway-created AIAgent instances."""
     from hermes_cli.runtime_provider import (
@@ -207,6 +229,7 @@ class GatewayRunner:
         self._reasoning_config = self._load_reasoning_config()
         self._provider_routing = self._load_provider_routing()
         self._fallback_model = self._load_fallback_model()
+        self._streaming_config = self._load_streaming_config()
 
         # Wire process registry into session store for reset protection
         from tools.process_registry import process_registry
@@ -460,6 +483,40 @@ class GatewayRunner:
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _load_streaming_config() -> dict:
+        """Load streaming config from config.yaml at startup.
+
+        Returns a dict like {"enabled": False, "telegram": True, ...}.
+        Per-platform keys override the global 'enabled' flag.
+        The HERMES_STREAMING_ENABLED env var overrides everything.
+        """
+        config = {"enabled": False}
+        try:
+            import yaml as _y
+            cfg_path = _hermes_home / "config.yaml"
+            if cfg_path.exists():
+                with open(cfg_path, encoding="utf-8") as _f:
+                    cfg = _y.safe_load(_f) or {}
+                s_cfg = cfg.get("streaming", {})
+                if isinstance(s_cfg, dict):
+                    config = s_cfg
+        except Exception:
+            pass
+        # Env var override
+        if os.getenv("HERMES_STREAMING_ENABLED", "").lower() in ("true", "1", "yes"):
+            config["enabled"] = True
+        return config
+
+    def _is_streaming_enabled(self, platform_key: str) -> bool:
+        """Check if streaming is enabled for a given platform."""
+        cfg = self._streaming_config
+        # Per-platform override
+        if platform_key and cfg.get(platform_key) is not None:
+            return str(cfg[platform_key]).lower() in ("true", "1", "yes")
+        # Global default
+        return str(cfg.get("enabled", False)).lower() in ("true", "1", "yes")
 
     async def start(self) -> bool:
         """
@@ -3084,25 +3141,8 @@ class GatewayRunner:
         _stream_q = None
         _stream_done = None
         _stream_msg_id = [None]
-        _streaming_enabled = False
-
-        try:
-            import yaml as _s_yaml
-            _s_cfg_path = _hermes_home / "config.yaml"
-            if _s_cfg_path.exists():
-                with open(_s_cfg_path, encoding="utf-8") as _s_f:
-                    _s_data = _s_yaml.safe_load(_s_f) or {}
-                _s_cfg = _s_data.get("streaming", {})
-                if isinstance(_s_cfg, dict):
-                    _platform_key = source.platform.value if source.platform else ""
-                    if _platform_key and _s_cfg.get(_platform_key) is not None:
-                        _streaming_enabled = str(_s_cfg[_platform_key]).lower() in ("true", "1", "yes")
-                    else:
-                        _streaming_enabled = str(_s_cfg.get("enabled", False)).lower() in ("true", "1", "yes")
-        except Exception:
-            pass
-        if os.getenv("HERMES_STREAMING_ENABLED", "").lower() in ("true", "1", "yes"):
-            _streaming_enabled = True
+        _platform_key = source.platform.value if source.platform else ""
+        _streaming_enabled = self._is_streaming_enabled(_platform_key)
 
         if _streaming_enabled:
             _stream_q = queue.Queue()

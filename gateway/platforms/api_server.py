@@ -182,26 +182,10 @@ class APIServerAdapter(BasePlatformAdapter):
         base_url, etc. from config.yaml / env vars.
         """
         from run_agent import AIAgent
-        from gateway.run import _resolve_runtime_agent_kwargs
+        from gateway.run import _resolve_runtime_agent_kwargs, _resolve_model
 
         runtime_kwargs = _resolve_runtime_agent_kwargs()
-
-        # Read model from env/config (same as gateway run.py)
-        model = os.getenv("HERMES_MODEL") or os.getenv("LLM_MODEL") or "anthropic/claude-opus-4.6"
-        try:
-            import yaml
-            from pathlib import Path
-            config_yaml_path = Path.home() / ".hermes" / "config.yaml"
-            if config_yaml_path.exists():
-                with open(config_yaml_path, encoding="utf-8") as f:
-                    cfg = yaml.safe_load(f) or {}
-                model_cfg = cfg.get("model", {})
-                if isinstance(model_cfg, str):
-                    model = model_cfg
-                elif isinstance(model_cfg, dict):
-                    model = model_cfg.get("default", model)
-        except Exception:
-            pass
+        model = _resolve_model()
 
         max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "90"))
 
@@ -415,54 +399,6 @@ class APIServerAdapter(BasePlatformAdapter):
             usage = agent_usage or usage
         except Exception:
             pass
-
-        # Finish chunk
-        finish_chunk = {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-            "usage": {
-                "prompt_tokens": usage.get("input_tokens", 0),
-                "completion_tokens": usage.get("output_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-            },
-        }
-        await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
-        await response.write(b"data: [DONE]\n\n")
-
-        return response
-
-    async def _write_sse_chat_completion(
-        self, request: "web.Request", completion_id: str, model: str,
-        created: int, content: str, usage: Dict[str, int],
-    ) -> "web.StreamResponse":
-        """Write a chat completion as SSE chunks (pseudo-streaming).
-
-        Returns the full response as three SSE events (role, content, finish)
-        followed by [DONE]. Not true token-by-token streaming, but compatible
-        with clients like Open WebUI that require SSE format.
-        """
-        response = web.StreamResponse(
-            status=200,
-            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
-        )
-        await response.prepare(request)
-
-        # Role chunk
-        role_chunk = {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
-        }
-        await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
-
-        # Content chunk (full response in one chunk for now)
-        content_chunk = {
-            "id": completion_id, "object": "chat.completion.chunk",
-            "created": created, "model": model,
-            "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
-        }
-        await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
 
         # Finish chunk
         finish_chunk = {
