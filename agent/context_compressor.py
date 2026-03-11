@@ -17,6 +17,13 @@ from agent.model_metadata import (
 
 logger = logging.getLogger(__name__)
 
+SUMMARY_PREFIX = (
+    "[CONTEXT COMPACTION] An earlier part of this conversation was "
+    "summarized to preserve context space. Below is the summary — use it "
+    "to build on the work already done and avoid duplicating effort:"
+)
+LEGACY_SUMMARY_PREFIX = "[CONTEXT SUMMARY]:"
+
 
 class ContextCompressor:
     """Compresses conversation context when approaching the model's context limit.
@@ -166,9 +173,19 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
                 raise
 
         summary = response.choices[0].message.content.strip()
-        if not summary.startswith("[CONTEXT SUMMARY]:"):
-            summary = "[CONTEXT SUMMARY]: " + summary
-        return summary
+        return self._with_summary_prefix(summary)
+
+    @staticmethod
+    def _with_summary_prefix(summary: str) -> str:
+        """Normalize the summary prefix to the current standard.
+
+        Strips any legacy ``[CONTEXT SUMMARY]:`` prefix the model may have
+        produced and prepends the current ``SUMMARY_PREFIX`` handoff text.
+        """
+        text = (summary or "").strip()
+        if text.startswith(LEGACY_SUMMARY_PREFIX):
+            text = text[len(LEGACY_SUMMARY_PREFIX):].lstrip()
+        return f"{SUMMARY_PREFIX}\n{text}"
 
     def _get_fallback_client(self):
         """Try to build a fallback client from the main model's endpoint config.
@@ -338,7 +355,7 @@ Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
         for i in range(compress_start):
             msg = messages[i].copy()
             if i == 0 and msg.get("role") == "system" and self.compression_count == 0:
-                msg["content"] = (msg.get("content") or "") + "\n\n[Note: Some earlier conversation turns may be summarized to preserve context space.]"
+                msg["content"] = (msg.get("content") or "") + "\n\n[Note: Some earlier conversation turns have been compacted into a handoff summary to preserve context space. Build on that summary rather than re-doing work.]"
             compressed.append(msg)
 
         if summary:

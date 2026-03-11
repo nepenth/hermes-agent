@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import patch, MagicMock
 
-from agent.context_compressor import ContextCompressor
+from agent.context_compressor import ContextCompressor, SUMMARY_PREFIX
 
 
 @pytest.fixture()
@@ -141,7 +141,7 @@ class TestGenerateSummaryNoneContent:
 
         summary = c._generate_summary(messages)
         assert isinstance(summary, str)
-        assert "CONTEXT SUMMARY" in summary
+        assert summary.startswith(SUMMARY_PREFIX)
 
     def test_none_content_in_system_message_compress(self):
         """System message with content=None should not crash during compress."""
@@ -174,7 +174,7 @@ class TestCompressWithClient:
 
         # Should have summary message in the middle
         contents = [m.get("content", "") for m in result]
-        assert any("CONTEXT SUMMARY" in c for c in contents)
+        assert any(c.startswith(SUMMARY_PREFIX) for c in contents)
         assert len(result) < len(msgs)
 
     def test_summarization_does_not_split_tool_call_pairs(self):
@@ -246,7 +246,7 @@ class TestCompressWithClient:
             {"role": "assistant", "content": "msg 5"},
         ]
         result = c.compress(msgs)
-        summary_msg = [m for m in result if "CONTEXT SUMMARY" in (m.get("content") or "")]
+        summary_msg = [m for m in result if (m.get("content") or "").startswith(SUMMARY_PREFIX)]
         assert len(summary_msg) == 1
         assert summary_msg[0]["role"] == "user"
 
@@ -274,7 +274,7 @@ class TestCompressWithClient:
             {"role": "assistant", "content": "msg 7"},
         ]
         result = c.compress(msgs)
-        summary_msg = [m for m in result if "CONTEXT SUMMARY" in (m.get("content") or "")]
+        summary_msg = [m for m in result if (m.get("content") or "").startswith(SUMMARY_PREFIX)]
         assert len(summary_msg) == 1
         assert summary_msg[0]["role"] == "assistant"
 
