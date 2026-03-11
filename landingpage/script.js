@@ -62,6 +62,37 @@ function toggleMobileNav() {
   document.getElementById("nav-mobile").classList.toggle("open");
 }
 
+function toggleSpecs() {
+  const wrapper = document.getElementById("specs-wrapper");
+  const btn = document.getElementById("specs-toggle");
+  const label = btn.querySelector(".toggle-label");
+  const isOpen = wrapper.classList.contains("open");
+
+  if (isOpen) {
+    wrapper.style.maxHeight = wrapper.scrollHeight + "px";
+    requestAnimationFrame(() => {
+      wrapper.style.maxHeight = "0";
+    });
+    wrapper.classList.remove("open");
+    btn.classList.remove("open");
+    if (label) label.textContent = "More details";
+  } else {
+    wrapper.classList.add("open");
+    wrapper.style.maxHeight = wrapper.scrollHeight + "px";
+    btn.classList.add("open");
+    if (label) label.textContent = "Less";
+    wrapper.addEventListener(
+      "transitionend",
+      () => {
+        if (wrapper.classList.contains("open")) {
+          wrapper.style.maxHeight = "none";
+        }
+      },
+      { once: true }
+    );
+  }
+}
+
 // --- Copy to clipboard ---
 function copyInstall() {
   const text = document.getElementById("install-command").textContent;
@@ -93,7 +124,7 @@ function copyText(btn) {
 // --- Scroll-triggered fade-in ---
 function initScrollAnimations() {
   const elements = document.querySelectorAll(
-    ".feature-card, .spec-row, .install-step, " +
+    ".feature-card, .install-step, " +
       ".section-header, .terminal-window",
   );
 

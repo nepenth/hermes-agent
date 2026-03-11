@@ -28,6 +28,27 @@
     --container: 1080px;
     --radius: 12px;
     --radius-sm: 8px;
+
+    --ease-in-quad: cubic-bezier(.55, .085, .68, .53);
+    --ease-in-cubic: cubic-bezier(.550, .055, .675, .19);
+    --ease-in-quart: cubic-bezier(.895, .03, .685, .22);
+    --ease-in-quint: cubic-bezier(.755, .05, .855, .06);
+    --ease-in-expo: cubic-bezier(.95, .05, .795, .035);
+    --ease-in-circ: cubic-bezier(.6, .04, .98, .335);
+
+    --ease-out-quad: cubic-bezier(.25, .46, .45, .94);
+    --ease-out-cubic: cubic-bezier(.215, .61, .355, 1);
+    --ease-out-quart: cubic-bezier(.165, .84, .44, 1);
+    --ease-out-quint: cubic-bezier(.23, 1, .32, 1);
+    --ease-out-expo: cubic-bezier(.19, 1, .22, 1);
+    --ease-out-circ: cubic-bezier(.075, .82, .165, 1);
+
+    --ease-in-out-quad: cubic-bezier(.455, .03, .515, .955);
+    --ease-in-out-cubic: cubic-bezier(.645, .045, .355, 1);
+    --ease-in-out-quart: cubic-bezier(.77, 0, .175, 1);
+    --ease-in-out-quint: cubic-bezier(.86, 0, .07, 1);
+    --ease-in-out-expo: cubic-bezier(1, 0, 0, 1);
+    --ease-in-out-circ: cubic-bezier(.785, .135, .15, .86);
 }
 
 html {
@@ -52,7 +73,7 @@ body {
 a {
     color: var(--primary);
     text-decoration: none;
-    transition: color 0.2s;
+    transition: color 0.2s var(--ease-out-quad);
 }
 a:hover {
     color: var(--primary-light);
@@ -137,6 +158,7 @@ strong {
     color: var(--text);
     font-weight: 600;
     font-size: 15px;
+    transition: color 0.2s var(--ease-out-quad);
 }
 .nav-logo:hover { color: var(--primary-light); }
 
@@ -165,7 +187,7 @@ strong {
     display: flex;
     align-items: center;
     gap: 4px;
-    transition: color 0.2s;
+    transition: color 0.2s var(--ease-out-quad);
 }
 .nav-links a:hover { color: #fff; }
 
@@ -205,6 +227,7 @@ strong {
     font-size: 15px;
     font-weight: 500;
     padding: 4px 0;
+    transition: color 0.2s var(--ease-out-quad);
 }
 
 .nav-mobile a:hover {
@@ -265,7 +288,7 @@ strong {
     text-align: center;
     text-shadow: 0 0 20px rgba(48, 80, 255, 0.3);
     opacity: 0.85;
-    transition: opacity 0.3s;
+    transition: opacity 0.3s var(--ease-out-cubic);
     overflow-x: auto;
     white-space: pre;
 }
@@ -310,7 +333,7 @@ strong {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    transition: border-color 0.3s;
+    transition: border-color 0.3s var(--ease-out-quad);
 }
 
 .install-widget:hover {
@@ -355,7 +378,7 @@ strong {
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: color 0.2s var(--ease-out-quad), background 0.2s var(--ease-out-quad);
     background: transparent;
     color: var(--text-muted);
 }
@@ -398,7 +421,7 @@ strong {
     overflow: hidden;
     text-overflow: ellipsis;
     text-align: left;
-    transition: opacity 0.15s;
+    transition: opacity 0.15s var(--ease-out-quad);
 }
 
 /* --- Code block tabs (install step section) --- */
@@ -415,7 +438,7 @@ strong {
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: color 0.2s var(--ease-out-quad), background 0.2s var(--ease-out-quad);
     background: transparent;
     color: var(--text-muted);
 }
@@ -443,7 +466,7 @@ strong {
     border-radius: 6px;
     font-family: var(--font-sans);
     font-size: 12px;
-    transition: all 0.2s;
+    transition: color 0.2s var(--ease-out-quad), background 0.2s var(--ease-out-quad);
 }
 .copy-btn:hover {
     color: var(--primary-light);
@@ -471,7 +494,7 @@ strong {
     border-radius: var(--radius);
     font-size: 14px;
     font-weight: 550;
-    transition: all 0.25s;
+    transition: background 0.25s var(--ease-out-quint), border-color 0.25s var(--ease-out-quad), color 0.2s var(--ease-out-quad), transform 0.25s var(--ease-out-quint);
     border: 1px solid transparent;
 }
 
@@ -530,7 +553,7 @@ strong {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 20px;
-    transition: all 0.3s;
+    transition: border-color 0.3s var(--ease-out-quad), background 0.3s var(--ease-out-quad), transform 0.3s var(--ease-out-quint);
 }
 
 .feature-card:hover {
@@ -539,17 +562,23 @@ strong {
     transform: translateY(-2px);
 }
 
+.feature-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
 .feature-icon {
-    margin-bottom: 16px;
     color: var(--primary-light);
     opacity: 0.85;
+    flex-shrink: 0;
 }
 
 .feature-card h3 {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
     color: #fff;
-    margin-bottom: 10px;
     letter-spacing: -0.01em;
 }
 
@@ -562,6 +591,8 @@ strong {
 /* --- Terminal Demo --- */
 .section-demo {
     padding-bottom: 60px;
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
 }
 
 .terminal-window {
@@ -635,14 +666,59 @@ strong {
 .t-highlight { color: #90B0FF; }
 .t-tool { color: var(--text-muted); }
 
+/* --- Specs Toggle --- */
+.features-more {
+    text-align: center;
+    margin-top: 32px;
+}
+
+.more-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 14px;
+    font-family: inherit;
+    padding: 8px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.2s var(--ease-out-quad), border-color 0.2s var(--ease-out-quad);
+}
+
+.more-toggle:hover {
+    color: var(--primary-light);
+    border-color: var(--primary-light);
+}
+
+.more-chevron {
+    transition: transform 0.3s var(--ease-in-out-cubic);
+}
+
+.more-toggle.open .more-chevron {
+    transform: rotate(180deg);
+}
+
+.specs-wrapper {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s var(--ease-out-quart), opacity 0.3s var(--ease-out-quad);
+    opacity: 0;
+}
+
+.specs-wrapper.open {
+    opacity: 1;
+}
+
 /* --- Specs --- */
 .section-specs {
-    border-top: 1px solid var(--border);
 }
 
 .specs-list {
     max-width: 720px;
     margin: 0 auto;
+    padding-top: 24px;
 }
 
 .spec-row {
@@ -673,7 +749,7 @@ strong {
 .spec-value a {
     color: var(--text);
     border-bottom: 1px solid var(--border-hover);
-    transition: border-color 0.2s, color 0.2s;
+    transition: border-color 0.2s var(--ease-out-quad), color 0.2s var(--ease-out-quad);
 }
 
 .spec-value a:hover {
@@ -807,7 +883,7 @@ strong {
 
 .footer-copy a {
     color: var(--text-dim);
-    transition: color 0.2s;
+    transition: color 0.2s var(--ease-out-quad);
 }
 
 .footer-copy a:hover {
@@ -818,7 +894,7 @@ strong {
 .fade-in {
     opacity: 0;
     transform: translateY(20px);
-    transition: opacity 0.6s ease, transform 0.6s ease;
+    transition: opacity 0.6s var(--ease-out-quart), transform 0.6s var(--ease-out-quart);
 }
 
 .fade-in.visible {
