@@ -114,14 +114,10 @@ To run hermes-agent as a **always-on service** for Telegram, Discord, or Slack (
 ### Step 3: API keys
 
 ```bash
-mkdir -p ~/.hermes
-cat > ~/.hermes/.env << 'EOF'
-OPENROUTER_API_KEY=sk-or-v1-xxxxxxxxxxxxx
-TELEGRAM_BOT_TOKEN=123456789:ABCdefGHIjklMNOpqrSTUvwxYZ
-TELEGRAM_ALLOWED_USERS=123456789
-EOF
-chmod 600 ~/.hermes/.env
+hermes setup
 ```
+
+The interactive wizard walks you through configuring API keys (OpenRouter, Telegram, Discord, etc.) and writes them to `~/.hermes/.env`.
 
 ### Step 4: Enable linger + activate
 
