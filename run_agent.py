@@ -158,6 +158,7 @@ class AIAgent:
         tool_delay: float = 1.0,
         enabled_toolsets: List[str] = None,
         disabled_toolsets: List[str] = None,
+        agent_tool_policy=None,
         save_trajectories: bool = False,
         verbose_logging: bool = False,
         quiet_mode: bool = False,
@@ -180,6 +181,7 @@ class AIAgent:
         prefill_messages: List[Dict[str, Any]] = None,
         platform: str = None,
         skip_context_files: bool = False,
+        agent_workspace: str = None,
         skip_memory: bool = False,
         session_db=None,
         honcho_session_key: str = None,
@@ -241,6 +243,8 @@ class AIAgent:
         self.ephemeral_system_prompt = ephemeral_system_prompt
         self.platform = platform  # "cli", "telegram", "discord", "whatsapp", etc.
         self.skip_context_files = skip_context_files
+        self._agent_tool_policy = agent_tool_policy
+        self._agent_workspace = Path(agent_workspace) if agent_workspace else None
         self.log_prefix_chars = log_prefix_chars
         self.log_prefix = f"{log_prefix} " if log_prefix else ""
         # Store effective base URL for feature detection (prompt caching, reasoning, etc.)
@@ -427,6 +431,7 @@ class AIAgent:
             enabled_toolsets=enabled_toolsets,
             disabled_toolsets=disabled_toolsets,
             quiet_mode=self.quiet_mode,
+            agent_tool_policy=agent_tool_policy,
         )
         
         # Show tool configuration and store valid tool names for validation

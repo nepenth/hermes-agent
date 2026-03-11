@@ -179,10 +179,12 @@ def _skill_is_platform_compatible(skill_file: Path) -> bool:
         return True  # Err on the side of showing the skill
 
 
-def build_skills_system_prompt() -> str:
+def build_skills_system_prompt(agent_skills_dir: Optional[Path] = None) -> str:
     """Build a compact skill index for the system prompt.
 
     Scans ~/.hermes/skills/ for SKILL.md files grouped by category.
+    When agent_skills_dir is provided and exists, also scans it for SKILL.md
+    files. Agent skills take priority (listed first in each category).
     Includes per-skill descriptions from frontmatter so the model can
     match skills by meaning, not just name.
     Filters out skills incompatible with the current OS platform.
@@ -190,33 +192,36 @@ def build_skills_system_prompt() -> str:
     hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
     skills_dir = hermes_home / "skills"
 
-    if not skills_dir.exists():
-        return ""
-
     # Collect skills with descriptions, grouped by category
     # Each entry: (skill_name, description)
     # Supports sub-categories: skills/mlops/training/axolotl/SKILL.md
     # → category "mlops/training", skill "axolotl"
     skills_by_category: dict[str, list[tuple[str, str]]] = {}
-    for skill_file in skills_dir.rglob("SKILL.md"):
-        # Skip skills incompatible with the current OS platform
-        if not _skill_is_platform_compatible(skill_file):
-            continue
-        rel_path = skill_file.relative_to(skills_dir)
-        parts = rel_path.parts
-        if len(parts) >= 2:
-            # Category is everything between skills_dir and the skill folder
-            # e.g. parts = ("mlops", "training", "axolotl", "SKILL.md")
-            #   → category = "mlops/training", skill_name = "axolotl"
-            # e.g. parts = ("github", "github-auth", "SKILL.md")
-            #   → category = "github", skill_name = "github-auth"
-            skill_name = parts[-2]
-            category = "/".join(parts[:-2]) if len(parts) > 2 else parts[0]
-        else:
-            category = "general"
-            skill_name = skill_file.parent.name
-        desc = _read_skill_description(skill_file)
-        skills_by_category.setdefault(category, []).append((skill_name, desc))
+
+    def _scan_skills_dir(scan_dir: Path):
+        """Scan a directory for SKILL.md files and add them to skills_by_category."""
+        if not scan_dir.exists():
+            return
+        for skill_file in scan_dir.rglob("SKILL.md"):
+            if not _skill_is_platform_compatible(skill_file):
+                continue
+            rel_path = skill_file.relative_to(scan_dir)
+            parts = rel_path.parts
+            if len(parts) >= 2:
+                skill_name = parts[-2]
+                category = "/".join(parts[:-2]) if len(parts) > 2 else parts[0]
+            else:
+                category = "general"
+                skill_name = skill_file.parent.name
+            desc = _read_skill_description(skill_file)
+            skills_by_category.setdefault(category, []).append((skill_name, desc))
+
+    # Agent skills first (so they appear first / take priority)
+    if agent_skills_dir is not None:
+        _scan_skills_dir(agent_skills_dir)
+
+    # Then global skills
+    _scan_skills_dir(skills_dir)
 
     if not skills_by_category:
         return ""
@@ -284,11 +289,11 @@ def _truncate_content(content: str, filename: str, max_chars: int = CONTEXT_FILE
     return head + marker + tail
 
 
-def build_context_files_prompt(cwd: Optional[str] = None) -> str:
+def build_context_files_prompt(cwd: Optional[str] = None, agent_workspace: Optional[Path] = None) -> str:
     """Discover and load context files for the system prompt.
 
     Discovery: AGENTS.md (recursive), .cursorrules / .cursor/rules/*.mdc,
-    SOUL.md (cwd then ~/.hermes/ fallback). Each capped at 20,000 chars.
+    SOUL.md (agent_workspace then cwd then ~/.hermes/ fallback). Each capped at 20,000 chars.
     """
     if cwd is None:
         cwd = os.getcwd()
@@ -356,13 +361,20 @@ def build_context_files_prompt(cwd: Optional[str] = None) -> str:
         cursorrules_content = _truncate_content(cursorrules_content, ".cursorrules")
         sections.append(cursorrules_content)
 
-    # SOUL.md (cwd first, then ~/.hermes/ fallback)
+    # SOUL.md (agent_workspace first, then cwd, then ~/.hermes/ fallback)
     soul_path = None
-    for name in ["SOUL.md", "soul.md"]:
-        candidate = cwd_path / name
-        if candidate.exists():
-            soul_path = candidate
-            break
+    if agent_workspace is not None:
+        for name in ["SOUL.md", "soul.md"]:
+            candidate = agent_workspace / name
+            if candidate.exists():
+                soul_path = candidate
+                break
+    if not soul_path:
+        for name in ["SOUL.md", "soul.md"]:
+            candidate = cwd_path / name
+            if candidate.exists():
+                soul_path = candidate
+                break
     if not soul_path:
         global_soul = Path.home() / ".hermes" / "SOUL.md"
         if global_soul.exists():

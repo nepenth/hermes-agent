@@ -126,6 +126,14 @@ DEFAULT_CONFIG = {
         # "model": "google/gemini-3-flash-preview",
     },
 
+    # Named agent profiles — reusable bundles of model + toolsets + prompt.
+    # Define profiles here and activate them with `hermes chat --agent <name>`.
+    "agents": {},
+
+    # Bindings — map trigger patterns or platforms to named agent profiles.
+    # Example: [{"pattern": "review *", "agent": "code-reviewer"}]
+    "bindings": [],
+
     "display": {
         "compact": False,
         "personality": "kawaii",
@@ -189,7 +197,7 @@ DEFAULT_CONFIG = {
     "command_allowlist": [],
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 6,
+    "_config_version": 7,
 }
 
 # =============================================================================
@@ -653,6 +661,23 @@ def migrate_config(interactive: bool = True, quiet: bool = False) -> Dict[str, A
             if not quiet:
                 tz_display = config["timezone"] or "(server-local)"
                 print(f"  ✓ Added timezone to config.yaml: {tz_display}")
+
+    # ── Version 6 → 7: add agents and bindings keys ──
+    if current_ver < 7:
+        config = load_config()
+        changed = False
+        if "agents" not in config:
+            config["agents"] = {}
+            results["config_added"].append("agents={}")
+            changed = True
+        if "bindings" not in config:
+            config["bindings"] = []
+            results["config_added"].append("bindings=[]")
+            changed = True
+        if changed:
+            save_config(config)
+            if not quiet:
+                print("  ✓ Added agents and bindings to config.yaml")
 
     if current_ver < latest_ver and not quiet:
         print(f"Config version: {current_ver} → {latest_ver}")

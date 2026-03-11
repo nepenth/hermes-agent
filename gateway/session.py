@@ -295,18 +295,26 @@ class SessionEntry:
         )
 
 
-def build_session_key(source: SessionSource) -> str:
+def build_session_key(source: SessionSource, agent_id: str = 'main', dm_scope: str = 'main') -> str:
     """Build a deterministic session key from a message source.
 
     This is the single source of truth for session key construction.
     WhatsApp DMs include chat_id (multi-user), other DMs do not (single owner).
+
+    Args:
+        source: The session source describing the message origin.
+        agent_id: Agent identifier for multi-agent setups (default 'main').
+        dm_scope: DM scoping strategy. 'per_peer' creates separate sessions
+                  per user_id; 'main' (default) uses a single DM session.
     """
     platform = source.platform.value
     if source.chat_type == "dm":
         if platform == "whatsapp" and source.chat_id:
-            return f"agent:main:{platform}:dm:{source.chat_id}"
-        return f"agent:main:{platform}:dm"
-    return f"agent:main:{platform}:{source.chat_type}:{source.chat_id}"
+            return f"agent:{agent_id}:{platform}:dm:{source.chat_id}"
+        if dm_scope == "per_peer" and source.user_id:
+            return f"agent:{agent_id}:{platform}:dm:{source.user_id}"
+        return f"agent:{agent_id}:{platform}:dm"
+    return f"agent:{agent_id}:{platform}:{source.chat_type}:{source.chat_id}"
 
 
 class SessionStore:

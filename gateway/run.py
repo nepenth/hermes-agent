@@ -161,6 +161,8 @@ from gateway.session import (
 )
 from gateway.delivery import DeliveryRouter, DeliveryTarget
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
+from gateway.agent_registry import AgentRegistry, AgentConfig
+from gateway.router import BindingRouter
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +208,24 @@ class GatewayRunner:
         self._reasoning_config = self._load_reasoning_config()
         self._provider_routing = self._load_provider_routing()
         self._fallback_model = self._load_fallback_model()
+
+        # Load raw config dict for multi-agent support
+        self._raw_config: dict = {}
+        try:
+            import yaml as _y
+            _cfg_path = _hermes_home / 'config.yaml'
+            if _cfg_path.exists():
+                with open(_cfg_path, encoding='utf-8') as _f:
+                    self._raw_config = _y.safe_load(_f) or {}
+        except Exception:
+            pass
+
+        # Multi-agent registry and router
+        self._agent_registry = AgentRegistry(self._raw_config, global_config=self._raw_config)
+        self._router = BindingRouter(
+            self._raw_config.get('bindings', []),
+            self._agent_registry.get_default().id,
+        )
 
         # Wire process registry into session store for reset protection
         from tools.process_registry import process_registry
@@ -785,10 +805,19 @@ class GatewayRunner:
                         )
             return None
         
+        # Resolve which agent handles this message
+        agent_id = self._router.resolve(
+            platform=event.source.platform.value if hasattr(event.source, 'platform') else 'cli',
+            chat_id=getattr(event.source, 'chat_id', None),
+            chat_type=getattr(event.source, 'chat_type', None),
+            user_id=getattr(event.source, 'user_id', None),
+        )
+        agent_config = self._agent_registry.get(agent_id)
+        
         # PRIORITY: If an agent is already running for this session, interrupt it
         # immediately. This is before command parsing to minimize latency -- the
         # user's "stop" message reaches the agent as fast as possible.
-        _quick_key = build_session_key(source)
+        _quick_key = build_session_key(source, agent_id=agent_id)
         if _quick_key in self._running_agents:
             running_agent = self._running_agents[_quick_key]
             logger.debug("PRIORITY interrupt for session %s", _quick_key[:20])
@@ -806,7 +835,8 @@ class GatewayRunner:
         _known_commands = {"new", "reset", "help", "status", "stop", "model",
                           "personality", "retry", "undo", "sethome", "set-home",
                           "compress", "usage", "insights", "reload-mcp", "reload_mcp",
-                          "update", "title", "resume", "provider", "rollback"}
+                          "update", "title", "resume", "provider", "rollback",
+                          "agents"}
         if command and command in _known_commands:
             await self.hooks.emit(f"command:{command}", {
                 "platform": source.platform.value if source.platform else "",
@@ -868,6 +898,18 @@ class GatewayRunner:
 
         if command == "rollback":
             return await self._handle_rollback_command(event)
+
+        if command == "agents":
+            agent_lines = []
+            for ac in self._agent_registry.list_agents():
+                marker = ' *' if ac.default else ''
+                model = ac.model or '(inherited)'
+                agent_lines.append(f'  {ac.id}{marker}  {model}  {ac.description}')
+            response = f"📋 Agents:\n" + '\n'.join(agent_lines) + f"\n\n🤖 This chat → {agent_id}"
+            adapter = self.adapters.get(source.platform)
+            if adapter:
+                await adapter.send(source.chat_id, response)
+            return response
         
         # Skill slash commands: /skill-name loads the skill and sends to agent
         if command:
@@ -885,7 +927,7 @@ class GatewayRunner:
                 logger.debug("Skill command check failed (non-fatal): %s", e)
         
         # Check for pending exec approval responses
-        session_key_preview = build_session_key(source)
+        session_key_preview = build_session_key(source, agent_id=agent_id)
         if session_key_preview in self._pending_approvals:
             user_text = event.text.strip().lower()
             if user_text in ("yes", "y", "approve", "ok", "go", "do it"):
@@ -1269,7 +1311,8 @@ class GatewayRunner:
                 history=history,
                 source=source,
                 session_id=session_entry.session_id,
-                session_key=session_key
+                session_key=session_key,
+                agent_config=agent_config,
             )
             
             response = agent_result.get("final_response", "")
@@ -2525,7 +2568,8 @@ class GatewayRunner:
         history: List[Dict[str, Any]],
         source: SessionSource,
         session_id: str,
-        session_key: str = None
+        session_key: str = None,
+        agent_config: AgentConfig = None,
     ) -> Dict[str, Any]:
         """
         Run the agent with the given message and context.
@@ -2796,6 +2840,9 @@ class GatewayRunner:
             combined_ephemeral = context_prompt or ""
             if self._ephemeral_system_prompt:
                 combined_ephemeral = (combined_ephemeral + "\n\n" + self._ephemeral_system_prompt).strip()
+            # Prepend agent personality if available
+            if agent_config and agent_config.personality:
+                combined_ephemeral = (agent_config.personality + "\n\n" + combined_ephemeral).strip()
 
             # Re-read .env and config for fresh credentials (gateway is long-lived,
             # keys may change without restart).
@@ -2821,6 +2868,10 @@ class GatewayRunner:
                         model = _model_cfg.get("default", model)
             except Exception:
                 pass
+
+            # Agent-specific model override
+            if agent_config and agent_config.model:
+                model = agent_config.model
 
             try:
                 runtime_kwargs = _resolve_runtime_agent_kwargs()
@@ -2856,6 +2907,8 @@ class GatewayRunner:
                 honcho_session_key=session_key,
                 session_db=self._session_db,
                 fallback_model=self._fallback_model,
+                agent_tool_policy=agent_config.tool_policy if agent_config else None,
+                agent_workspace=str(agent_config.workspace_dir) if agent_config else None,
             )
             
             # Store agent reference for interrupt support
@@ -3061,7 +3114,8 @@ class GatewayRunner:
                     history=updated_history,
                     source=source,
                     session_id=session_id,
-                    session_key=session_key
+                    session_key=session_key,
+                    agent_config=agent_config,
                 )
         finally:
             # Stop progress sender and interrupt monitor

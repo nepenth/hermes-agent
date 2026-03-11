@@ -1090,6 +1090,7 @@ class HermesCLI:
         compact: bool = False,
         resume: str = None,
         checkpoints: bool = False,
+        agent: str = None,
     ):
         """
         Initialize the Hermes CLI.
@@ -1207,6 +1208,31 @@ class HermesCLI:
         # Fallback model config — tried when primary provider fails after retries
         fb = CLI_CONFIG.get("fallback_model") or {}
         self._fallback_model = fb if fb.get("provider") and fb.get("model") else None
+
+        # Multi-agent: resolve agent config from config.yaml
+        self._agent_id = agent or 'main'
+        self._agent_config = None
+        self._agent_tool_policy = None
+        self._agent_workspace = None
+        agents_config = CLI_CONFIG.get('agents', {})
+        if agents_config and self._agent_id in agents_config:
+            from gateway.agent_registry import AgentRegistry
+            registry = AgentRegistry({'agents': agents_config})
+            self._agent_config = registry.get(self._agent_id)
+            if self._agent_config:
+                # Override model/provider/personality from agent config
+                if self._agent_config.model:
+                    self.model = self._agent_config.model
+                if self._agent_config.provider:
+                    self.provider = self._agent_config.provider
+                if self._agent_config.personality:
+                    self._ephemeral_system_prompt = self._agent_config.personality
+                if self._agent_config.max_turns:
+                    self.max_turns = self._agent_config.max_turns
+                if self._agent_config.toolsets:
+                    self._toolsets = self._agent_config.toolsets
+                self._agent_tool_policy = self._agent_config.tool_policy
+                self._agent_workspace = str(self._agent_config.workspace_dir)
 
         # Agent will be initialized on first use
         self.agent: Optional[AIAgent] = None
@@ -1489,6 +1515,8 @@ class HermesCLI:
                 thinking_callback=self._on_thinking,
                 checkpoints_enabled=self.checkpoints_enabled,
                 checkpoint_max_snapshots=self.checkpoint_max_snapshots,
+                agent_tool_policy=self._agent_tool_policy,
+                agent_workspace=self._agent_workspace,
             )
             # Apply any pending title now that the session exists in the DB
             if self._pending_title and self._session_db:
@@ -2545,6 +2573,19 @@ class HermesCLI:
             self.show_tools()
         elif cmd_lower == "/toolsets":
             self.show_toolsets()
+        elif cmd_lower == "/agents":
+            agents_config = CLI_CONFIG.get('agents', {})
+            if not agents_config:
+                print('No agents configured. Add agents to config.yaml.')
+            else:
+                print('\n📋 Configured Agents:\n')
+                for name, cfg in agents_config.items():
+                    marker = ' (active)' if name == self._agent_id else ''
+                    model = cfg.get('model', '(inherited)')
+                    desc = cfg.get('description', '')
+                    print(f'  {name}{marker}  {model}  {desc}')
+                print()
+            return True
         elif cmd_lower == "/config":
             self.show_config()
         elif cmd_lower == "/clear":
@@ -4365,6 +4406,7 @@ def main(
     worktree: bool = False,
     w: bool = False,
     checkpoints: bool = False,
+    agent: str = None,
 ):
     """
     Hermes Agent CLI - Interactive AI Assistant
@@ -4470,6 +4512,7 @@ def main(
         compact=compact,
         resume=resume,
         checkpoints=checkpoints,
+        agent=agent,
     )
 
     # Inject worktree context into agent's system prompt

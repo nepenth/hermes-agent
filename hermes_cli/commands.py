@@ -29,6 +29,7 @@ COMMANDS = {
     "/undo": "Remove the last user/assistant exchange",
     "/save": "Save the current conversation",
     "/config": "Show current configuration",
+    "/agents": "List configured agents and active bindings",
     "/cron": "Manage scheduled tasks (list, add, remove)",
     "/skills": "Search, install, inspect, or manage skills from online registries",
     "/platforms": "Show gateway/messaging platform status",

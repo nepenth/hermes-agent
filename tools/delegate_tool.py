@@ -213,6 +213,9 @@ def _run_single_child(
         subagent_cfg = _get_subagent_config()
         effective_model = model or subagent_cfg.get("model") or parent_agent.model
 
+        # Inherit tool policy from parent if available
+        parent_tool_policy = getattr(parent_agent, '_agent_tool_policy', None)
+
         child = AIAgent(
             base_url=parent_agent.base_url,
             api_key=parent_api_key,
@@ -224,6 +227,7 @@ def _run_single_child(
             reasoning_config=getattr(parent_agent, "reasoning_config", None),
             prefill_messages=getattr(parent_agent, "prefill_messages", None),
             enabled_toolsets=child_toolsets,
+            agent_tool_policy=parent_tool_policy,
             quiet_mode=True,
             ephemeral_system_prompt=child_prompt,
             log_prefix=f"[subagent-{task_index}]",
@@ -326,12 +330,14 @@ def delegate_task(
     if parent_agent is None:
         return json.dumps({"error": "delegate_task requires a parent agent context."})
 
-    # Depth limit
+    # Depth limit -- configurable per-agent via _max_spawn_depth
+    _raw_max = getattr(parent_agent, '_max_spawn_depth', None)
+    max_depth = _raw_max if isinstance(_raw_max, int) else MAX_DEPTH
     depth = getattr(parent_agent, '_delegate_depth', 0)
-    if depth >= MAX_DEPTH:
+    if depth >= max_depth:
         return json.dumps({
             "error": (
-                f"Delegation depth limit reached ({MAX_DEPTH}). "
+                f"Delegation depth limit reached ({max_depth}). "
                 "Subagents cannot spawn further subagents."
             )
         })

@@ -495,6 +495,7 @@ def cmd_chat(args):
         "resume": getattr(args, "resume", None),
         "worktree": getattr(args, "worktree", False),
         "checkpoints": getattr(args, "checkpoints", False),
+        "agent": getattr(args, "agent", None),
     }
     # Filter out None values
     kwargs = {k: v for k, v in kwargs.items() if v is not None}
@@ -1965,6 +1966,12 @@ For more help on a command:
         action="store_true",
         default=False,
         help="Bypass all dangerous command approval prompts (use at your own risk)"
+    )
+    chat_parser.add_argument(
+        "--agent",
+        type=str,
+        default=None,
+        help="Named agent profile to use from config.yaml"
     )
     chat_parser.set_defaults(func=cmd_chat)
 

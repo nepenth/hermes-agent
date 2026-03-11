@@ -165,6 +165,7 @@ def get_tool_definitions(
     enabled_toolsets: List[str] = None,
     disabled_toolsets: List[str] = None,
     quiet_mode: bool = False,
+    agent_tool_policy=None,
 ) -> List[Dict[str, Any]]:
     """
     Get tool definitions for model API calls with toolset-based filtering.
@@ -221,6 +222,10 @@ def get_tool_definitions(
         from toolsets import get_all_toolsets
         for ts_name in get_all_toolsets():
             tools_to_include.update(resolve_toolset(ts_name))
+
+    # Apply agent-level tool policy filtering (if provided)
+    if agent_tool_policy is not None:
+        tools_to_include = agent_tool_policy.apply(tools_to_include)
 
     # Ask the registry for schemas (only returns tools whose check_fn passes)
     filtered_tools = registry.get_definitions(tools_to_include, quiet=quiet_mode)
@@ -293,6 +298,10 @@ def handle_function_call(
             notify_other_tool_call(task_id or "default")
         except Exception:
             pass  # file_tools may not be loaded yet
+
+    # Early check: reject tools not in the enabled set for this agent
+    if enabled_tools is not None and function_name not in enabled_tools:
+        return json.dumps({"error": f"Tool '{function_name}' is not available for this agent"})
 
     try:
         if function_name in _AGENT_LOOP_TOOLS:

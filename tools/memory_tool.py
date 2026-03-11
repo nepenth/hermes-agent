@@ -95,20 +95,22 @@ class MemoryStore:
         Tool responses always reflect this live state.
     """
 
-    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375):
+    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375, memory_dir: Path = None):
         self.memory_entries: List[str] = []
         self.user_entries: List[str] = []
         self.memory_char_limit = memory_char_limit
         self.user_char_limit = user_char_limit
+        self._memory_dir = memory_dir or MEMORY_DIR
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
         # Frozen snapshot for system prompt -- set once at load_from_disk()
         self._system_prompt_snapshot: Dict[str, str] = {"memory": "", "user": ""}
 
     def load_from_disk(self):
         """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
 
-        self.memory_entries = self._read_file(MEMORY_DIR / "MEMORY.md")
-        self.user_entries = self._read_file(MEMORY_DIR / "USER.md")
+        self.memory_entries = self._read_file(self._memory_dir / "MEMORY.md")
+        self.user_entries = self._read_file(self._memory_dir / "USER.md")
 
         # Deduplicate entries (preserves order, keeps first occurrence)
         self.memory_entries = list(dict.fromkeys(self.memory_entries))
@@ -122,12 +124,12 @@ class MemoryStore:
 
     def save_to_disk(self, target: str):
         """Persist entries to the appropriate file. Called after every mutation."""
-        MEMORY_DIR.mkdir(parents=True, exist_ok=True)
+        self._memory_dir.mkdir(parents=True, exist_ok=True)
 
         if target == "memory":
-            self._write_file(MEMORY_DIR / "MEMORY.md", self.memory_entries)
+            self._write_file(self._memory_dir / "MEMORY.md", self.memory_entries)
         elif target == "user":
-            self._write_file(MEMORY_DIR / "USER.md", self.user_entries)
+            self._write_file(self._memory_dir / "USER.md", self.user_entries)
 
     def _entries_for(self, target: str) -> List[str]:
         if target == "user":
