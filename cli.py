@@ -2148,15 +2148,53 @@ class HermesCLI:
         flush_tool_summary()
         print()
     
-    def reset_conversation(self):
-        """Reset the conversation history."""
+    def new_session(self, silent=False):
+        """Start a new session with a fresh session ID.
+
+        Ends the current session in the DB, generates a new session_id,
+        clears conversation history, and updates the agent.  Both /new
+        and /reset use this — there is no "keep the same session" reset.
+
+        Args:
+            silent: If True, suppress the confirmation print (used by /clear
+                    which does its own screen clear + banner redraw).
+        """
+        # Flush memories from current conversation before switching
         if self.agent and self.conversation_history:
             try:
                 self.agent.flush_memories(self.conversation_history)
             except Exception:
                 pass
+
+        # End current session in DB
+        if self._session_db and self.session_id:
+            try:
+                self._session_db.end_session(self.session_id, "new_session")
+            except Exception:
+                pass
+
+        # Generate fresh session ID
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        short_uuid = uuid.uuid4().hex[:6]
+        self.session_id = f"{timestamp_str}_{short_uuid}"
+
+        # Reset state
         self.conversation_history = []
-        print("(^_^)b Conversation reset!")
+        self._pending_title = None
+        self._resumed = False
+
+        # Update agent's session ID and invalidate cached system prompt
+        if self.agent:
+            self.agent.session_id = self.session_id
+            if hasattr(self.agent, '_invalidate_system_prompt'):
+                self.agent._invalidate_system_prompt()
+
+        if not silent:
+            print(f"(^_^)v New session started!")
+
+    def reset_conversation(self):
+        """Reset the conversation by starting a new session."""
+        self.new_session()
     
     def save_conversation(self):
         """Save the current conversation to a file."""
@@ -2548,12 +2586,8 @@ class HermesCLI:
         elif cmd_lower == "/config":
             self.show_config()
         elif cmd_lower == "/clear":
-            # Flush memories before clearing
-            if self.agent and self.conversation_history:
-                try:
-                    self.agent.flush_memories(self.conversation_history)
-                except Exception:
-                    pass
+            # Start a new session (flush memories, end old session, new ID)
+            self.new_session(silent=True)
             # Clear terminal screen.  Inside the TUI, Rich's console.clear()
             # goes through patch_stdout's StdoutProxy which swallows the
             # screen-clear escape sequences.  Use prompt_toolkit's output
@@ -2565,8 +2599,6 @@ class HermesCLI:
                 out.flush()
             else:
                 self.console.clear()
-            # Reset conversation
-            self.conversation_history = []
             # Show fresh banner.  Inside the TUI we must route Rich output
             # through ChatConsole (which uses prompt_toolkit's native ANSI
             # renderer) instead of self.console (which writes raw to stdout
@@ -2647,7 +2679,7 @@ class HermesCLI:
                 else:
                     _cprint("  Session database not available.")
         elif cmd_lower in ("/reset", "/new"):
-            self.reset_conversation()
+            self.new_session()
         elif cmd_lower.startswith("/model"):
             # Use original case so model names like "Anthropic/Claude-Opus-4" are preserved
             parts = cmd_original.split(maxsplit=1)
