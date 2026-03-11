@@ -249,6 +249,76 @@ class TestCronTimezone:
         due = get_due_jobs()
         assert len(due) == 1
 
+    def test_ensure_aware_naive_preserves_absolute_time(self, monkeypatch):
+        """_ensure_aware should interpret naive datetimes as system-local time,
+        not blindly stamp them with the Hermes timezone."""
+        import cron.jobs as jobs_module
+
+        hermes_tz = ZoneInfo("America/New_York")
+
+        # Mock _hermes_now so its .tzinfo returns the Hermes timezone
+        mock_now = datetime(2026, 3, 11, 12, 0, 0, tzinfo=hermes_tz)
+        monkeypatch.setattr(jobs_module, "_hermes_now", lambda: mock_now)
+
+        # A naive datetime — represents system-local wall time
+        naive_dt = datetime(2026, 3, 11, 17, 25, 0)
+
+        result = jobs_module._ensure_aware(naive_dt)
+
+        # Result must be in Hermes timezone
+        assert result.tzinfo is not None
+
+        # The absolute time should match interpreting naive_dt as system-local
+        system_local_tz = datetime.now().astimezone().tzinfo
+        expected = naive_dt.replace(tzinfo=system_local_tz).astimezone(hermes_tz)
+        assert result == expected
+
+    def test_ensure_aware_normalizes_aware_to_hermes_tz(self, monkeypatch):
+        """Already-aware datetimes should be normalized to Hermes timezone."""
+        import cron.jobs as jobs_module
+
+        hermes_tz = ZoneInfo("America/New_York")
+        mock_now = datetime(2026, 3, 11, 12, 0, 0, tzinfo=hermes_tz)
+        monkeypatch.setattr(jobs_module, "_hermes_now", lambda: mock_now)
+
+        # An aware datetime in a different timezone
+        utc_dt = datetime(2026, 3, 11, 17, 0, 0, tzinfo=ZoneInfo("UTC"))
+        result = jobs_module._ensure_aware(utc_dt)
+
+        # Should be the same absolute time, but in Hermes tz
+        assert result.tzinfo is not None
+        assert result == utc_dt.astimezone(hermes_tz)
+        # Verify the wall-clock time shifted (UTC-4 during DST)
+        assert result.hour == 13  # 17:00 UTC = 13:00 EDT
+
+    def test_get_due_jobs_naive_cross_timezone(self, tmp_path, monkeypatch):
+        """Naive past timestamps must be detected as due even when Hermes tz
+        is behind system local tz — the scenario that triggered #806."""
+        import cron.jobs as jobs_module
+        monkeypatch.setattr(jobs_module, "CRON_DIR", tmp_path / "cron")
+        monkeypatch.setattr(jobs_module, "JOBS_FILE", tmp_path / "cron" / "jobs.json")
+        monkeypatch.setattr(jobs_module, "OUTPUT_DIR", tmp_path / "cron" / "output")
+
+        # Use a Hermes timezone far behind UTC so that the numeric wall time
+        # of the naive timestamp exceeds _hermes_now's wall time — this would
+        # have caused a false "not due" with the old replace(tzinfo=...) approach.
+        os.environ["HERMES_TIMEZONE"] = "Pacific/Midway"  # UTC-11
+        hermes_time.reset_cache()
+
+        from cron.jobs import create_job, load_jobs, save_jobs, get_due_jobs
+        create_job(prompt="Cross-tz job", schedule="every 1h")
+        jobs = load_jobs()
+
+        # Force a naive past timestamp (system-local wall time, 10 min ago)
+        naive_past = (datetime.now() - timedelta(minutes=10)).isoformat()
+        jobs[0]["next_run_at"] = naive_past
+        save_jobs(jobs)
+
+        due = get_due_jobs()
+        assert len(due) == 1, (
+            "Naive past timestamp should be due regardless of Hermes timezone"
+        )
+
     def test_create_job_stores_tz_aware_timestamps(self, tmp_path, monkeypatch):
         """New jobs store timezone-aware created_at and next_run_at."""
         import cron.jobs as jobs_module
