@@ -268,11 +268,6 @@ class APIServerAdapter(BasePlatformAdapter):
             )
 
         stream = body.get("stream", False)
-        if stream:
-            return web.json_response(
-                {"error": {"message": "Streaming is not yet supported. Set stream=false.", "type": "invalid_request_error"}},
-                status=501,
-            )
 
         # Extract system message (becomes ephemeral system prompt layered ON TOP of core)
         system_prompt = None
@@ -324,11 +319,22 @@ class APIServerAdapter(BasePlatformAdapter):
             final_response = result.get("error", "(No response generated)")
 
         completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
+        model_name = body.get("model", "hermes-agent")
+        created = int(time.time())
+
+        if stream:
+            # Pseudo-streaming: return the full response as SSE chunks.
+            # Not true token-by-token streaming, but compatible with clients
+            # (like Open WebUI) that expect SSE format.
+            return await self._write_sse_chat_completion(
+                request, completion_id, model_name, created, final_response, usage
+            )
+
         response_data = {
             "id": completion_id,
             "object": "chat.completion",
-            "created": int(time.time()),
-            "model": body.get("model", "hermes-agent"),
+            "created": created,
+            "model": model_name,
             "choices": [
                 {
                     "index": 0,
@@ -347,6 +353,54 @@ class APIServerAdapter(BasePlatformAdapter):
         }
 
         return web.json_response(response_data)
+
+    async def _write_sse_chat_completion(
+        self, request: "web.Request", completion_id: str, model: str,
+        created: int, content: str, usage: Dict[str, int],
+    ) -> "web.StreamResponse":
+        """Write a chat completion as SSE chunks (pseudo-streaming).
+
+        Returns the full response as three SSE events (role, content, finish)
+        followed by [DONE]. Not true token-by-token streaming, but compatible
+        with clients like Open WebUI that require SSE format.
+        """
+        response = web.StreamResponse(
+            status=200,
+            headers={"Content-Type": "text/event-stream", "Cache-Control": "no-cache"},
+        )
+        await response.prepare(request)
+
+        # Role chunk
+        role_chunk = {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+        }
+        await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
+
+        # Content chunk (full response in one chunk for now)
+        content_chunk = {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}],
+        }
+        await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
+
+        # Finish chunk
+        finish_chunk = {
+            "id": completion_id, "object": "chat.completion.chunk",
+            "created": created, "model": model,
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+            "usage": {
+                "prompt_tokens": usage.get("input_tokens", 0),
+                "completion_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+        }
+        await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
+        await response.write(b"data: [DONE]\n\n")
+
+        return response
 
     async def _handle_responses(self, request: "web.Request") -> "web.Response":
         """POST /v1/responses — OpenAI Responses API format."""
