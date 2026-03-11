@@ -82,10 +82,10 @@ def _check_disk_usage_warning():
         for path in glob.glob(str(scratch_dir / "hermes-*")):
             for f in Path(path).rglob('*'):
                 if f.is_file():
-                    try:
-                        total_bytes += f.stat().st_size
-                    except OSError:
-                        pass
+                   try:
+                       total_bytes += f.stat().st_size
+                    except OSError as e:
+                        logger.debug("Could not stat file %s: %s", f, e)
         
         total_gb = total_bytes / (1024 ** 3)
         
@@ -228,16 +228,16 @@ def _prompt_for_sudo_password(timeout_seconds: int = 45) -> str:
             result["password"] = ""
         finally:
             if tty_fd is not None and old_attrs is not None:
-                try:
-                    import termios as _termios
-                    _termios.tcsetattr(tty_fd, _termios.TCSAFLUSH, old_attrs)
-                except Exception:
-                    pass
-            if tty_fd is not None:
-                try:
-                    os.close(tty_fd)
-                except Exception:
-                    pass
+               try:
+                   import termios as _termios
+                   _termios.tcsetattr(tty_fd, _termios.TCSAFLUSH, old_attrs)
+                except Exception as e:
+                    logger.debug("Failed to restore terminal attributes: %s", e)
+           if tty_fd is not None:
+               try:
+                   os.close(tty_fd)
+                except Exception as e:
+                    logger.debug("Failed to close tty fd: %s", e)
             result["done"] = True
     
     try:
@@ -669,10 +669,10 @@ def get_active_environments_info() -> Dict[str, Any]:
         import glob
         for path in glob.glob(str(scratch_dir / pattern)):
             try:
-                size = sum(f.stat().st_size for f in Path(path).rglob('*') if f.is_file())
-                total_size += size
-            except OSError:
-                pass
+               size = sum(f.stat().st_size for f in Path(path).rglob('*') if f.is_file())
+               total_size += size
+            except OSError as e:
+                logger.debug("Could not stat path %s: %s", path, e)
     
     info["total_disk_usage_mb"] = round(total_size / (1024 * 1024), 2)
     return info
@@ -697,10 +697,10 @@ def cleanup_all_environments():
     import glob
     for path in glob.glob(str(scratch_dir / "hermes-*")):
         try:
-            shutil.rmtree(path, ignore_errors=True)
-            logger.info("Removed orphaned: %s", path)
-        except OSError:
-            pass
+           shutil.rmtree(path, ignore_errors=True)
+           logger.info("Removed orphaned: %s", path)
+        except OSError as e:
+            logger.debug("Failed to remove orphaned path %s: %s", path, e)
     
     if cleaned > 0:
         logger.info("Cleaned %d environments", cleaned)
