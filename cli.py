@@ -177,6 +177,7 @@ def load_cli_config() -> Dict[str, Any]:
             "enabled": True,      # Auto-compress when approaching context limit
             "threshold": 0.85,    # Compress at 85% of model's context limit
             "summary_model": "google/gemini-3-flash-preview",  # Fast/cheap model for summaries
+            "prompt": "",         # Custom compaction prompt (empty = use default)
         },
         "agent": {
             "max_turns": 90,  # Default max tool-calling iterations (shared with subagents)
@@ -350,6 +351,7 @@ def load_cli_config() -> Dict[str, Any]:
         "enabled": "CONTEXT_COMPRESSION_ENABLED",
         "threshold": "CONTEXT_COMPRESSION_THRESHOLD",
         "summary_model": "CONTEXT_COMPRESSION_MODEL",
+        "prompt": "CONTEXT_COMPRESSION_PROMPT",
         "summary_provider": "CONTEXT_COMPRESSION_PROVIDER",
     }
     

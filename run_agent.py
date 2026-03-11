@@ -604,14 +604,16 @@ class AIAgent:
         compression_threshold = float(os.getenv("CONTEXT_COMPRESSION_THRESHOLD", "0.85"))
         compression_enabled = os.getenv("CONTEXT_COMPRESSION_ENABLED", "true").lower() in ("true", "1", "yes")
         compression_summary_model = os.getenv("CONTEXT_COMPRESSION_MODEL") or None
+        compression_prompt = os.getenv("CONTEXT_COMPRESSION_PROMPT") or None
         
         self.context_compressor = ContextCompressor(
             model=self.model,
             threshold_percent=compression_threshold,
             protect_first_n=3,
             protect_last_n=4,
-            summary_target_tokens=500,
+            summary_target_tokens=2500,
             summary_model_override=compression_summary_model,
+            compaction_prompt_override=compression_prompt,
             quiet_mode=self.quiet_mode,
             base_url=self.base_url,
         )

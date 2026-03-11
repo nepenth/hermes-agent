@@ -122,6 +122,7 @@ DEFAULT_CONFIG = {
         "enabled": True,
         "threshold": 0.85,
         "summary_model": "google/gemini-3-flash-preview",
+        "prompt": "",
         "summary_provider": "auto",
     },
     
@@ -1069,6 +1070,11 @@ def show_config():
     if enabled:
         print(f"  Threshold:    {compression.get('threshold', 0.85) * 100:.0f}%")
         print(f"  Model:        {compression.get('summary_model', 'google/gemini-3-flash-preview')}")
+        custom_prompt = compression.get("prompt", "")
+        if custom_prompt:
+            # Show first 60 chars of custom prompt
+            display_prompt = custom_prompt[:60] + ("..." if len(custom_prompt) > 60 else "")
+            print(f"  Prompt:       {display_prompt}")
         comp_provider = compression.get('summary_provider', 'auto')
         if comp_provider != 'auto':
             print(f"  Provider:     {comp_provider}")

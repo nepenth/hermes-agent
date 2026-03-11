@@ -34,6 +34,7 @@ class ContextCompressor:
         summary_target_tokens: int = 2500,
         quiet_mode: bool = False,
         summary_model_override: str = None,
+        compaction_prompt_override: str = None,
         base_url: str = "",
     ):
         self.model = model
@@ -55,6 +56,11 @@ class ContextCompressor:
 
         self.client, default_model = get_text_auxiliary_client("compression")
         self.summary_model = summary_model_override or default_model
+        self.compaction_prompt = (
+            compaction_prompt_override.strip()
+            if compaction_prompt_override and compaction_prompt_override.strip()
+            else None
+        )
 
     def update_from_response(self, usage: Dict[str, Any]):
         """Update tracked token usage from API response."""
@@ -103,22 +109,25 @@ class ContextCompressor:
             parts.append(f"[{role.upper()}]: {content}")
 
         content_to_summarize = "\n\n".join(parts)
-        prompt = f"""Summarize these conversation turns concisely. This summary will replace these turns in the conversation history.
-
-Write from a neutral perspective describing:
-1. What actions were taken (tool calls, searches, file operations)
-2. Key information or results obtained
-3. Important decisions or findings
-4. Relevant data, file names, or outputs
-
-Keep factual and informative. Target ~{self.summary_target_tokens} tokens.
-
----
-TURNS TO SUMMARIZE:
-{content_to_summarize}
----
-
-Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix."""
+        default_instructions = (
+            "Summarize these conversation turns concisely. This summary will "
+            "replace these turns in the conversation history.\n\n"
+            "Write from a neutral perspective describing:\n"
+            "1. What actions were taken (tool calls, searches, file operations)\n"
+            "2. Key information or results obtained\n"
+            "3. Important decisions or findings\n"
+            "4. Relevant data, file names, or outputs\n\n"
+            "Keep factual and informative."
+        )
+        instructions = self.compaction_prompt or default_instructions
+        prompt = (
+            f"{instructions}\n\n"
+            f"Target ~{self.summary_target_tokens} tokens.\n\n"
+            "---\n"
+            f"TURNS TO SUMMARIZE:\n{content_to_summarize}\n"
+            "---\n\n"
+            'Write only the summary, starting with "[CONTEXT SUMMARY]:" prefix.'
+        )
 
         # 1. Try the auxiliary model (cheap/fast)
         if self.client:
