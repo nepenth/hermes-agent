@@ -21,6 +21,7 @@ Usage:
     hermes version             # Show version
     hermes update              # Update to latest version
     hermes uninstall           # Uninstall Hermes Agent
+    hermes acp                 # Run as ACP server (editor integration)
     hermes sessions browse     # Interactive session picker with search
 """
 
@@ -2600,6 +2601,27 @@ For more help on a command:
         help="Skip confirmation prompts"
     )
     uninstall_parser.set_defaults(func=cmd_uninstall)
+
+    # =========================================================================
+    # acp command
+    # =========================================================================
+    acp_parser = subparsers.add_parser(
+        "acp",
+        help="Run Hermes Agent as an ACP (Agent Client Protocol) server",
+        description="Start Hermes Agent in ACP mode for editor integration (VS Code, Zed, JetBrains)"
+    )
+
+    def cmd_acp(args):
+        """Launch Hermes Agent as an ACP server."""
+        try:
+            from acp_adapter.entry import main as acp_main
+            acp_main()
+        except ImportError:
+            print("ACP dependencies not installed.")
+            print("Install them with:  pip install -e '.[acp]'")
+            sys.exit(1)
+
+    acp_parser.set_defaults(func=cmd_acp)
     
     # =========================================================================
     # Parse and execute
