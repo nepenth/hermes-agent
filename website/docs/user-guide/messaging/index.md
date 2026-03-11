@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: "Messaging Gateway"
-description: "Chat with Hermes from Telegram, Discord, Slack, WhatsApp, or Signal — architecture and setup overview"
+description: "Chat with Hermes from Telegram, Discord, Slack, WhatsApp, Signal, or any OpenAI-compatible frontend — architecture and setup overview"
 ---
 
 # Messaging Gateway
 
-Chat with Hermes from Telegram, Discord, Slack, WhatsApp, or Signal. The gateway is a single background process that connects to all your configured platforms, handles sessions, runs cron jobs, and delivers voice messages.
+Chat with Hermes from Telegram, Discord, Slack, WhatsApp, Signal, or any OpenAI-compatible frontend (Open WebUI, LobeChat, etc.). The gateway is a single background process that connects to all your configured platforms, handles sessions, runs cron jobs, and delivers voice messages.
 
 ## Architecture
 
@@ -15,10 +15,10 @@ Chat with Hermes from Telegram, Discord, Slack, WhatsApp, or Signal. The gateway
 │                      Hermes Gateway                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │
-│  │ Telegram │ │ Discord  │ │ WhatsApp │ │  Slack   │ │ Signal │ │
-│  │ Adapter  │ │ Adapter  │ │ Adapter  │ │ Adapter  │ │ Adapter│ │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └───┬────┘ │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐ │
+│  │ Telegram │ │ Discord  │ │ WhatsApp │ │  Slack   │ │ Signal │ │API Server│ │
+│  │ Adapter  │ │ Adapter  │ │ Adapter  │ │ Adapter  │ │ Adapter│ │ (OpenAI) │ │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘ └───┬────┘ └────┬─────┘ │
 │       │             │            │             │           │      │
 │       └─────────────┼────────────┼─────────────┼───────────┘      │
 │                           │                                     │
