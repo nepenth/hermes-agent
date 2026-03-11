@@ -139,6 +139,7 @@ strong {
     backdrop-filter: blur(20px);
     -webkit-backdrop-filter: blur(20px);
     border-bottom: 1px solid var(--border);
+    transition: border-bottom-color 0.3s var(--ease-out-quad);
 }
 
 .nav-inner {
@@ -270,7 +271,7 @@ strong {
     border-radius: 50%;
     background: var(--primary);
     display: inline-block;
-    animation: pulse-dot 2s ease-in-out infinite;
+    animation: pulse-dot 2s var(--ease-in-out-quad) infinite;
 }
 
 @keyframes pulse-dot {
@@ -472,6 +473,9 @@ strong {
     color: var(--primary-light);
     background: rgba(48, 80, 255, 0.1);
 }
+.copy-btn:active {
+    transform: scale(0.95);
+}
 
 .install-note {
     font-size: 13px;
@@ -496,6 +500,7 @@ strong {
     font-weight: 550;
     transition: background 0.25s var(--ease-out-quint), border-color 0.25s var(--ease-out-quad), color 0.2s var(--ease-out-quad), transform 0.25s var(--ease-out-quint);
     border: 1px solid transparent;
+    will-change: transform;
 }
 
 .btn-primary {
@@ -507,7 +512,15 @@ strong {
     background: rgba(48, 80, 255, 0.22);
     border-color: rgba(48, 80, 255, 0.4);
     color: #fff;
-    transform: translateY(-1px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .btn-primary:hover {
+        transform: translateY(-1px);
+    }
+}
+.btn:active {
+    transform: scale(0.97);
 }
 
 /* --- Sections --- */
@@ -554,12 +567,18 @@ strong {
     border-radius: var(--radius);
     padding: 20px;
     transition: border-color 0.3s var(--ease-out-quad), background 0.3s var(--ease-out-quad), transform 0.3s var(--ease-out-quint);
+    will-change: transform;
 }
 
 .feature-card:hover {
     border-color: var(--border-hover);
     background: var(--bg-card-hover);
-    transform: translateY(-2px);
+}
+
+@media (hover: hover) and (pointer: fine) {
+    .feature-card:hover {
+        transform: translateY(-2px);
+    }
 }
 
 .feature-header {
@@ -690,6 +709,9 @@ strong {
 .more-toggle:hover {
     color: var(--primary-light);
     border-color: var(--primary-light);
+}
+.more-toggle:active {
+    transform: scale(0.97);
 }
 
 .more-chevron {
@@ -895,6 +917,7 @@ strong {
     opacity: 0;
     transform: translateY(20px);
     transition: opacity 0.6s var(--ease-out-quart), transform 0.6s var(--ease-out-quart);
+    will-change: transform, opacity;
 }
 
 .fade-in.visible {
@@ -1092,6 +1115,24 @@ strong {
         padding: 32px 0 24px;
     }
 
+}
+
+/* --- Reduced Motion --- */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+
+    .fade-in {
+        opacity: 1;
+        transform: none;
+    }
+
+    .hero-ascii {
+        opacity: 0.85;
+    }
 }
 
 /* --- Selection --- */
