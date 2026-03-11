@@ -113,9 +113,13 @@ class SessionManager:
     def _make_agent(self, model: str | None = None):
         if self._agent_factory is not None:
             return self._agent_factory()
-        # Default: import and construct AIAgent with ACP platform
+        # Default: import and construct AIAgent with ACP platform + toolset
         from run_agent import AIAgent
-        kwargs = {"platform": "acp"}
+        kwargs = {
+            "platform": "acp",
+            "enabled_toolsets": ["hermes-acp"],
+            "quiet_mode": True,
+        }
         if model:
             kwargs["model"] = model
         return AIAgent(**kwargs)
