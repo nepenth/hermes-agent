@@ -5,6 +5,7 @@ Uses Gemini Flash (cheap/fast) to summarize middle turns while
 protecting head and tail context.
 """
 
+import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -82,6 +83,41 @@ class ContextCompressor:
             "compression_count": self.compression_count,
         }
 
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        """Convert message content to plain text for summarization.
+
+        Handles:
+        - str → returned as-is
+        - None → empty string
+        - list (multimodal) → text parts joined, images replaced with [image]
+        - other → JSON serialization or str() fallback
+        """
+        if isinstance(content, str):
+            return content
+        if content is None:
+            return ""
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    item_type = item.get("type")
+                    if item_type == "text":
+                        parts.append(item.get("text", ""))
+                    elif item_type == "image_url":
+                        parts.append("[image]")
+                    elif item_type:
+                        parts.append(f"[{item_type}]")
+                    else:
+                        parts.append(str(item))
+                else:
+                    parts.append(str(item))
+            return "\n".join(part for part in parts if part)
+        try:
+            return json.dumps(content, ensure_ascii=False, sort_keys=True)
+        except TypeError:
+            return str(content)
+
     def _generate_summary(self, turns_to_summarize: List[Dict[str, Any]]) -> Optional[str]:
         """Generate a concise summary of conversation turns.
 
@@ -93,7 +129,7 @@ class ContextCompressor:
         parts = []
         for msg in turns_to_summarize:
             role = msg.get("role", "unknown")
-            content = msg.get("content") or ""
+            content = self._content_to_text(msg.get("content"))
             if len(content) > 2000:
                 content = content[:1000] + "\n...[truncated]...\n" + content[-500:]
             tool_calls = msg.get("tool_calls", [])

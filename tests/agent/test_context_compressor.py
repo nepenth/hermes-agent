@@ -115,6 +115,70 @@ class TestCompress:
         assert result[-2]["content"] == msgs[-2]["content"]
 
 
+class TestContentToText:
+    """Test _content_to_text handles all content types without crashing."""
+
+    def test_string_passthrough(self, compressor):
+        assert compressor._content_to_text("hello") == "hello"
+
+    def test_none_returns_empty(self, compressor):
+        assert compressor._content_to_text(None) == ""
+
+    def test_multimodal_text_parts(self, compressor):
+        content = [
+            {"type": "text", "text": "describe this image"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ]
+        result = compressor._content_to_text(content)
+        assert "describe this image" in result
+        assert "[image]" in result
+
+    def test_multimodal_mixed_types(self, compressor):
+        content = [
+            {"type": "text", "text": "first part"},
+            {"type": "audio", "audio": {"data": "..."}},
+            {"type": "text", "text": "second part"},
+        ]
+        result = compressor._content_to_text(content)
+        assert "first part" in result
+        assert "[audio]" in result
+        assert "second part" in result
+
+    def test_dict_content_json_serialized(self, compressor):
+        content = {"key": "value"}
+        result = compressor._content_to_text(content)
+        assert "key" in result
+        assert "value" in result
+
+    def test_multimodal_in_generate_summary(self):
+        """Multimodal user messages should not crash _generate_summary."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock()]
+        mock_response.choices[0].message.content = "[CONTEXT SUMMARY]: image was discussed"
+        mock_client.chat.completions.create.return_value = mock_response
+
+        with patch("agent.context_compressor.get_model_context_length", return_value=100000), \
+             patch("agent.context_compressor.get_text_auxiliary_client", return_value=(mock_client, "test-model")):
+            c = ContextCompressor(model="test", quiet_mode=True)
+
+        messages = [
+            {"role": "user", "content": [
+                {"type": "text", "text": "What is in this image?"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+            ]},
+            {"role": "assistant", "content": "I see a cat."},
+            {"role": "user", "content": "thanks"},
+        ]
+
+        summary = c._generate_summary(messages)
+        assert isinstance(summary, str)
+        # The prompt sent to the model should contain the text, not raw list
+        prompt = mock_client.chat.completions.create.call_args.kwargs["messages"][0]["content"]
+        assert "What is in this image?" in prompt
+        assert "[image]" in prompt
+
+
 class TestGenerateSummaryNoneContent:
     """Regression: content=None (from tool-call-only assistant messages) must not crash."""
 
