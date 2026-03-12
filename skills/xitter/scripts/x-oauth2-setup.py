@@ -35,7 +35,6 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-# Endpoints — from x-mcp oauth2.ts (confirmed working)
 AUTH_URL = "https://twitter.com/i/oauth2/authorize"
 TOKEN_URL = "https://api.twitter.com/2/oauth2/token"
 REDIRECT_URI = "http://127.0.0.1:3219/callback"
@@ -84,7 +83,6 @@ def _append_to_hermes_env(key: str, value: str) -> None:
                 HERMES_ENV.write_text("\n".join(new_lines) + "\n")
                 return
 
-    # Not present — append
     with open(HERMES_ENV, "a") as f:
         f.write(f"{key}={value}\n")
 
