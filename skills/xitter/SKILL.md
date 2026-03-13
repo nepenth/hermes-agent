@@ -99,7 +99,17 @@ Test with: `x-cli me mentions` — should return recent mentions (or an empty li
 
 ### Step 6: OAuth2 PKCE Setup (for Bookmarks)
 
-Bookmarks use a separate OAuth 2.0 flow. This step requires a machine with a browser.
+Bookmarks use a separate OAuth 2.0 flow. This step requires a browser.
+
+**If running over SSH**: The setup script starts a local callback server on `127.0.0.1:3219`. For the browser redirect to reach the remote machine, the user must set up SSH port forwarding first:
+
+```bash
+ssh -L 3219:127.0.0.1:3219 <user>@<host>
+```
+
+Then they can open the printed URL in their local browser and the callback will tunnel through. If they're already in an SSH session, they can add the tunnel from another terminal.
+
+**If running natively on Mac/Linux**: The script will open the browser automatically. No extra steps needed.
 
 1. In the developer portal (**https://developer.x.com/en/portal/dashboard** → app → **Keys and tokens** tab), find **OAuth 2.0 Client ID and Client Secret**. Generate them if they don't exist yet.
 2. Run the setup script:
@@ -108,7 +118,7 @@ Bookmarks use a separate OAuth 2.0 flow. This step requires a machine with a bro
 uv run <SKILL_DIR>/scripts/x-oauth2-setup.py
 ```
 
-3. It will ask for Client ID and Client Secret, open the browser for authorization, then automatically:
+3. It will ask for Client ID and Client Secret, open the browser (or print the URL if no browser is available) for authorization, then automatically:
    - Save `X_OAUTH2_CLIENT_ID` and `X_OAUTH2_CLIENT_SECRET` to `~/.hermes/.env`
    - Save tokens to `~/.config/x-cli/.oauth2-tokens.json`
 
