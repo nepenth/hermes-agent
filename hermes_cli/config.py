@@ -129,6 +129,16 @@ DEFAULT_CONFIG = {
         "summary_provider": "auto",
     },
     
+    "context_editing": {
+        "enabled": False,
+        "trigger_tokens": None,
+        "keep_tool_uses": 5,
+        "keep_thinking_turns": 2,
+        "exclude_tools": ["memory", "skill_manage", "todo"],
+        "clear_tool_inputs": False,
+        "clear_at_least_tokens": None,
+    },
+    
     # Auxiliary model config — provider:model for each side task.
     # Format: provider is the provider name, model is the model slug.
     # "auto" for provider = auto-detect best available provider.

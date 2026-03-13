@@ -178,6 +178,15 @@ def load_cli_config() -> Dict[str, Any]:
             "threshold": 0.50,    # Compress at 50% of model's context limit
             "summary_model": "google/gemini-3-flash-preview",  # Fast/cheap model for summaries
         },
+        "context_editing": {
+            "enabled": False,
+            "trigger_tokens": None,       # None = auto (60% of context window)
+            "keep_tool_uses": 5,
+            "keep_thinking_turns": 2,
+            "exclude_tools": ["memory", "skill_manage", "todo"],
+            "clear_tool_inputs": False,
+            "clear_at_least_tokens": None, # None = auto (10% of context window)
+        },
         "agent": {
             "max_turns": 90,  # Default max tool-calling iterations (shared with subagents)
             "verbose": False,
@@ -1217,6 +1226,9 @@ class HermesCLI:
             CLI_CONFIG["agent"].get("reasoning_effort", "")
         )
         
+        # Context editing config (Anthropic server-side context management)
+        self.context_editing = CLI_CONFIG.get("context_editing") or {}
+        
         # OpenRouter provider routing preferences
         pr = CLI_CONFIG.get("provider_routing", {}) or {}
         self._provider_sort = pr.get("sort")
@@ -1503,6 +1515,7 @@ class HermesCLI:
                 ephemeral_system_prompt=self.system_prompt if self.system_prompt else None,
                 prefill_messages=self.prefill_messages or None,
                 reasoning_config=self.reasoning_config,
+                context_editing=self.context_editing,
                 providers_allowed=self._providers_only,
                 providers_ignored=self._providers_ignore,
                 providers_order=self._providers_order,

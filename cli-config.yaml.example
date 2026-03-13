@@ -26,6 +26,29 @@ model:
   base_url: "https://openrouter.ai/api/v1"
 
 # =============================================================================
+# Anthropic Context Editing (Claude-only, optional)
+# =============================================================================
+# Server-side context management for Claude models. Automatically clears old
+# tool call/result pairs and thinking blocks at the API level, AFTER prompt
+# cache lookup but BEFORE token counting. This preserves prompt cache prefixes
+# while freeing context space — something impossible with client-side stripping.
+#
+# Only works with direct Anthropic API (provider: anthropic). Disabled by default.
+# Anthropic reports ~29% performance improvement with context editing enabled.
+#
+# context_editing:
+#   enabled: true                 # Enable server-side context editing
+#   trigger_tokens: null          # Input token threshold to start clearing (null = auto: 60% of context window)
+#   keep_tool_uses: 5             # How many recent tool_use/result pairs to preserve
+#   keep_thinking_turns: 2        # How many recent thinking turns to preserve
+#   exclude_tools:                # Tool calls that are NEVER cleared
+#     - memory
+#     - skill_manage
+#     - todo
+#   clear_tool_inputs: false      # Also clear tool input params (default: false)
+#   clear_at_least_tokens: null   # Minimum tokens to clear per activation (null = auto: 10% of context window)
+
+# =============================================================================
 # OpenRouter Provider Routing (only applies when using OpenRouter)
 # =============================================================================
 # Control how requests are routed across providers on OpenRouter.

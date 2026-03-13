@@ -228,6 +228,7 @@ class GatewayRunner:
         self._prefill_messages = self._load_prefill_messages()
         self._ephemeral_system_prompt = self._load_ephemeral_system_prompt()
         self._reasoning_config = self._load_reasoning_config()
+        self._context_editing = self._load_context_editing()
         self._show_reasoning = self._load_show_reasoning()
         self._provider_routing = self._load_provider_routing()
         self._fallback_model = self._load_fallback_model()
@@ -488,6 +489,23 @@ class GatewayRunner:
             return {"enabled": True, "effort": effort}
         logger.warning("Unknown reasoning_effort '%s', using default (medium)", effort)
         return None
+
+    @staticmethod
+    def _load_context_editing() -> dict:
+        """Load context_editing config from config.yaml.
+
+        Returns the context_editing dict if present, or empty dict.
+        """
+        try:
+            import yaml as _y
+            cfg_path = _hermes_home / "config.yaml"
+            if cfg_path.exists():
+                with open(cfg_path, encoding="utf-8") as _f:
+                    cfg = _y.safe_load(_f) or {}
+                return cfg.get("context_editing") or {}
+        except Exception:
+            pass
+        return {}
 
     @staticmethod
     def _load_show_reasoning() -> bool:
@@ -2195,6 +2213,7 @@ class GatewayRunner:
                     verbose_logging=False,
                     enabled_toolsets=enabled_toolsets,
                     reasoning_config=self._reasoning_config,
+                    context_editing=getattr(self, "_context_editing", {}),
                     providers_allowed=pr.get("only"),
                     providers_ignored=pr.get("ignore"),
                     providers_order=pr.get("order"),
@@ -3360,6 +3379,7 @@ class GatewayRunner:
                 ephemeral_system_prompt=combined_ephemeral or None,
                 prefill_messages=self._prefill_messages or None,
                 reasoning_config=self._reasoning_config,
+                context_editing=getattr(self, "_context_editing", {}),
                 providers_allowed=pr.get("only"),
                 providers_ignored=pr.get("ignore"),
                 providers_order=pr.get("order"),
