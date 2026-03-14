@@ -23,22 +23,22 @@ def _make_dummy_env(**kwargs):
 
 
 def test_ensure_docker_available_logs_and_raises_when_not_found(monkeypatch, caplog):
-    """When docker is missing from PATH, we should raise a clear error and log it."""
+    """When docker cannot be found, raise a clear error before mini-swe setup."""
 
-    def _raise_not_found(*args, **kwargs):
-        raise FileNotFoundError("docker not found")
-
-    monkeypatch.setattr(docker_env, "subprocess", docker_env.subprocess)
-    monkeypatch.setattr(docker_env.subprocess, "run", _raise_not_found)
+    monkeypatch.setattr(docker_env, "find_docker", lambda: None)
+    monkeypatch.setattr(
+        docker_env.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("subprocess.run should not be called when docker is missing"),
+    )
 
     with caplog.at_level(logging.ERROR):
         with pytest.raises(RuntimeError) as excinfo:
             _make_dummy_env()
 
-    # Error message should mention that docker is not in PATH
-    assert "Docker executable not found in PATH" in str(excinfo.value)
+    assert "Docker executable not found in PATH or known install locations" in str(excinfo.value)
     assert any(
-        "Docker backend selected but 'docker' executable was not found in PATH"
+        "no docker executable was found in PATH or known install locations"
         in record.getMessage()
         for record in caplog.records
     )
@@ -48,8 +48,9 @@ def test_ensure_docker_available_logs_and_raises_on_timeout(monkeypatch, caplog)
     """When docker version times out, surface a helpful error instead of hanging."""
 
     def _raise_timeout(*args, **kwargs):
-        raise subprocess.TimeoutExpired(cmd=["docker", "version"], timeout=5)
+        raise subprocess.TimeoutExpired(cmd=["/custom/docker", "version"], timeout=5)
 
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/custom/docker")
     monkeypatch.setattr(docker_env.subprocess, "run", _raise_timeout)
 
     with caplog.at_level(logging.ERROR):
@@ -58,7 +59,30 @@ def test_ensure_docker_available_logs_and_raises_on_timeout(monkeypatch, caplog)
 
     assert "Docker daemon is not responding" in str(excinfo.value)
     assert any(
-        "docker version' timed out" in record.getMessage()
+        "/custom/docker version' timed out" in record.getMessage()
         for record in caplog.records
     )
+
+
+def test_ensure_docker_available_uses_resolved_executable(monkeypatch):
+    """When docker is found outside PATH, preflight should use that resolved path."""
+
+    calls = []
+
+    def _run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return subprocess.CompletedProcess(cmd, 0, stdout="Docker version", stderr="")
+
+    monkeypatch.setattr(docker_env, "find_docker", lambda: "/opt/homebrew/bin/docker")
+    monkeypatch.setattr(docker_env.subprocess, "run", _run)
+
+    docker_env._ensure_docker_available()
+
+    assert calls == [
+        (["/opt/homebrew/bin/docker", "version"], {
+            "capture_output": True,
+            "text": True,
+            "timeout": 5,
+        })
+    ]
 

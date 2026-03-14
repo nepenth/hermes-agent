@@ -85,31 +85,43 @@ _storage_opt_ok: Optional[bool] = None  # cached result across instances
 def _ensure_docker_available() -> None:
     """Best-effort check that the docker CLI is available before use.
 
-    This mirrors the gateway's behaviour of surfacing a clear, actionable
-    error when Docker is not installed or not in PATH, instead of failing
-    later with a low-level FileNotFoundError.
+    Reuses ``find_docker()`` so this preflight stays consistent with the rest of
+    the Docker backend, including known non-PATH Docker Desktop locations.
     """
+    docker_exe = find_docker()
+    if not docker_exe:
+        logger.error(
+            "Docker backend selected but no docker executable was found in PATH "
+            "or known install locations. Install Docker Desktop and ensure the "
+            "CLI is available."
+        )
+        raise RuntimeError(
+            "Docker executable not found in PATH or known install locations. "
+            "Install Docker and ensure the 'docker' command is available."
+        )
+
     try:
         result = subprocess.run(
-            ["docker", "version"],
+            [docker_exe, "version"],
             capture_output=True,
             text=True,
             timeout=5,
         )
     except FileNotFoundError:
         logger.error(
-            "Docker backend selected but 'docker' executable was not found in PATH. "
-            "Install Docker Desktop and ensure 'docker' is available on the command line.",
+            "Docker backend selected but the resolved docker executable '%s' could "
+            "not be executed.",
+            docker_exe,
             exc_info=True,
         )
         raise RuntimeError(
-            "Docker executable not found in PATH. Install Docker and ensure "
-            "the 'docker' command is available."
+            "Docker executable could not be executed. Check your Docker installation."
         )
     except subprocess.TimeoutExpired:
         logger.error(
-            "Docker backend selected but 'docker version' timed out. "
+            "Docker backend selected but '%s version' timed out. "
             "The Docker daemon may not be running.",
+            docker_exe,
             exc_info=True,
         )
         raise RuntimeError(
@@ -124,8 +136,9 @@ def _ensure_docker_available() -> None:
     else:
         if result.returncode != 0:
             logger.error(
-                "Docker backend selected but 'docker version' failed "
+                "Docker backend selected but '%s version' failed "
                 "(exit code %d, stderr=%s)",
+                docker_exe,
                 result.returncode,
                 result.stderr.strip(),
             )
