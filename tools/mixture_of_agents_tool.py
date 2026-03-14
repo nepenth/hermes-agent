@@ -25,8 +25,8 @@ Architecture:
 3. Multiple layers can be used for iterative refinement (future enhancement)
 
 Models Used (via OpenRouter):
-- Reference Models: claude-opus-4, gemini-2.5-pro, gpt-4.1, deepseek-r1
-- Aggregator Model: claude-opus-4 (highest capability for synthesis)
+- Reference Models: claude-opus-4.6, gemini-3-pro-preview, gpt-5.4-pro, deepseek-v3.2
+- Aggregator Model: claude-opus-4.6 (highest capability for synthesis)
 
 Configuration:
     To customize the MoA setup, modify the configuration constants at the top of this file:
@@ -57,16 +57,18 @@ from tools.debug_helpers import DebugSession
 logger = logging.getLogger(__name__)
 
 # Configuration for MoA processing
-# Reference models - these generate diverse initial responses in parallel (OpenRouter slugs)
+# Reference models - these generate diverse initial responses in parallel.
+# Keep this list aligned with current top-tier OpenRouter frontier options.
 REFERENCE_MODELS = [
-    "anthropic/claude-opus-4.5",
-    "google/gemini-3-pro-preview", 
-    "openai/gpt-5.2-pro",
-    "deepseek/deepseek-v3.2"
+    "anthropic/claude-opus-4.6",
+    "google/gemini-3-pro-preview",
+    "openai/gpt-5.4-pro",
+    "deepseek/deepseek-v3.2",
 ]
 
-# Aggregator model - synthesizes reference responses into final output
-AGGREGATOR_MODEL = "anthropic/claude-opus-4.5"  # Use highest capability model for aggregation
+# Aggregator model - synthesizes reference responses into final output.
+# Prefer the strongest synthesis model in the current OpenRouter lineup.
+AGGREGATOR_MODEL = "anthropic/claude-opus-4.6"
 
 # Temperature settings optimized for MoA performance
 REFERENCE_TEMPERATURE = 0.6  # Balanced creativity for diverse perspectives
@@ -147,14 +149,15 @@ async def _run_reference_model_safe(
             
         except Exception as e:
             error_str = str(e)
-            # Log more detailed error information for debugging
+            # Keep retry-path logging concise; full tracebacks are reserved for
+            # terminal failure paths so long-running MoA retries don't flood logs.
             if "invalid" in error_str.lower():
-                logger.warning("%s invalid request error (attempt %s): %s", model, attempt + 1, error_str, exc_info=True)
+                logger.warning("%s invalid request error (attempt %s): %s", model, attempt + 1, error_str)
             elif "rate" in error_str.lower() or "limit" in error_str.lower():
-                logger.warning("%s rate limit error (attempt %s): %s", model, attempt + 1, error_str, exc_info=True)
+                logger.warning("%s rate limit error (attempt %s): %s", model, attempt + 1, error_str)
             else:
-                logger.warning("%s unknown error (attempt %s): %s", model, attempt + 1, error_str, exc_info=True)
-                
+                logger.warning("%s unknown error (attempt %s): %s", model, attempt + 1, error_str)
+
             if attempt < max_retries - 1:
                 # Exponential backoff for rate limiting: 2s, 4s, 8s, 16s, 32s, 60s
                 sleep_time = min(2 ** (attempt + 1), 60)
@@ -183,42 +186,34 @@ async def _run_aggregator_model(
         
     Returns:
         str: Synthesized final response
-        
-    Raises:
-        Exception: If the aggregator model API call fails
     """
     logger.info("Running aggregator model: %s", AGGREGATOR_MODEL)
-    
-    try:
-        # Build parameters for the API call
-        api_params = {
-            "model": AGGREGATOR_MODEL,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "extra_body": {
-                "reasoning": {
-                    "enabled": True,
-                    "effort": "xhigh"
-                }
+
+    # Build parameters for the API call
+    api_params = {
+        "model": AGGREGATOR_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "extra_body": {
+            "reasoning": {
+                "enabled": True,
+                "effort": "xhigh"
             }
         }
-        
-        # GPT models (especially gpt-4o-mini) don't support custom temperature values
-        # Only include temperature for non-GPT models
-        if not AGGREGATOR_MODEL.lower().startswith('gpt-'):
-            api_params["temperature"] = temperature
-        
-        response = await _get_openrouter_client().chat.completions.create(**api_params)
-        
-        content = response.choices[0].message.content.strip()
-        logger.info("Aggregation complete (%s characters)", len(content))
-        return content
-    except Exception as e:
-        error_msg = f"Aggregator model {AGGREGATOR_MODEL} failed: {str(e)}"
-        logger.error("%s", error_msg, exc_info=True)
-        raise
+    }
+
+    # GPT models (especially gpt-4o-mini) don't support custom temperature values
+    # Only include temperature for non-GPT models
+    if not AGGREGATOR_MODEL.lower().startswith('gpt-'):
+        api_params["temperature"] = temperature
+
+    response = await _get_openrouter_client().chat.completions.create(**api_params)
+
+    content = response.choices[0].message.content.strip()
+    logger.info("Aggregation complete (%s characters)", len(content))
+    return content
 
 
 async def mixture_of_agents_tool(
