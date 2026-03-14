@@ -83,7 +83,7 @@ def ensure_hermes_home():
     home = get_hermes_home()
     home.mkdir(parents=True, exist_ok=True)
     _secure_dir(home)
-    for subdir in ("cron", "sessions", "logs", "memories"):
+    for subdir in ("cron", "sessions", "logs", "memories", "workspace", "knowledgebase"):
         d = home / subdir
         d.mkdir(parents=True, exist_ok=True)
         _secure_dir(d)
@@ -249,6 +249,52 @@ DEFAULT_CONFIG = {
     # injected at the start of every API call for few-shot priming.
     # Never saved to sessions, logs, or trajectories.
     "prefill_messages_file": "",
+
+    "workspace": {
+        "enabled": True,
+        "path": "",  # Empty = HERMES_HOME/workspace
+        "auto_create": True,
+        "persist_gateway_uploads": "ask",  # off | ask | always
+    },
+
+    "knowledgebase": {
+        "enabled": True,
+        "path": "",  # Empty = HERMES_HOME/knowledgebase
+        "roots": [],   # Empty = [workspace path]
+        "retrieval_mode": "off",  # off | gated | always
+        "auto_index": True,
+        "watch_for_changes": False,
+        "max_injected_chunks": 6,
+        "max_injected_tokens": 3200,
+        "dense_top_k": 40,
+        "sparse_top_k": 40,
+        "fused_top_k": 30,
+        "final_top_k": 8,
+        "min_fused_score": 0.0,
+        "injection_format": "sourced_note",
+        "chunking": {
+            "default_tokens": 512,
+            "overlap_tokens": 80,
+            "code_strategy": "structural",
+            "markdown_strategy": "headings",
+        },
+        "embeddings": {
+            "provider": "local",
+            "model": "embeddinggemma-300m",
+            "dimensions": 768,
+        },
+        "reranker": {
+            "enabled": False,
+            "provider": "local",
+            "model": "bge-reranker-v2-m3",
+        },
+        "indexing": {
+            "respect_gitignore": True,
+            "respect_hermesignore": True,
+            "include_hidden": False,
+            "max_file_mb": 10,
+        },
+    },
     
     # Honcho AI-native memory -- reads ~/.honcho/config.json as single source of truth.
     # This section is only needed for hermes-specific overrides; everything else
@@ -284,7 +330,7 @@ DEFAULT_CONFIG = {
     },
 
     # Config schema version - bump this when adding new required fields
-    "_config_version": 7,
+    "_config_version": 8,
 }
 
 # =============================================================================

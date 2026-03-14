@@ -2757,6 +2757,35 @@ For more help on a command:
     skills_parser.set_defaults(func=cmd_skills)
 
     # =========================================================================
+    # workspace command
+    # =========================================================================
+    workspace_parser = subparsers.add_parser(
+        "workspace",
+        help="Inspect and search the Hermes workspace",
+        description="Inspect workspace status, rebuild the manifest, list files, or search within the Hermes workspace.",
+    )
+    workspace_subparsers = workspace_parser.add_subparsers(dest="workspace_action")
+    workspace_subparsers.add_parser("status", help="Show workspace roots, manifest path, and file counts")
+    workspace_subparsers.add_parser("index", help="Rebuild the workspace manifest")
+    workspace_list = workspace_subparsers.add_parser("list", help="List files in the workspace")
+    workspace_list.add_argument("path", nargs="?", default="", help="Optional subpath within the workspace")
+    workspace_list.add_argument("--shallow", action="store_false", dest="recursive", default=True, help="Only list the immediate directory")
+    workspace_list.add_argument("--limit", type=int, default=20, help="Maximum files to show")
+    workspace_list.add_argument("--offset", type=int, default=0, help="Skip the first N files")
+    workspace_search = workspace_subparsers.add_parser("search", help="Search text content inside workspace files")
+    workspace_search.add_argument("query", help="Regex query to search for")
+    workspace_search.add_argument("--path", default="", help="Optional subpath within the workspace")
+    workspace_search.add_argument("--file-glob", default=None, help="Optional filename glob filter, e.g. '*.md'")
+    workspace_search.add_argument("--limit", type=int, default=10, help="Maximum matches to show")
+    workspace_search.add_argument("--offset", type=int, default=0, help="Skip the first N matches")
+
+    def cmd_workspace(args):
+        from hermes_cli.workspace import workspace_command
+        workspace_command(args)
+
+    workspace_parser.set_defaults(func=cmd_workspace)
+
+    # =========================================================================
     # honcho command
     # =========================================================================
     honcho_parser = subparsers.add_parser(
