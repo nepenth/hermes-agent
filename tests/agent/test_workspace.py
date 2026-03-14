@@ -126,3 +126,49 @@ class TestWorkspaceSearch:
         assert result["success"] is True
         assert result["count"] == 1
         assert result["matches"][0]["relative_path"] == "docs/a.md"
+
+
+class TestWorkspaceRetrieval:
+    def test_index_workspace_builds_chunk_db_and_retrieves_ranked_chunks(self, tmp_path):
+        from agent.workspace import index_workspace_knowledgebase, workspace_retrieve
+
+        cfg = _config(tmp_path)
+        workspace = Path(cfg["workspace"]["path"])
+        (workspace / "docs").mkdir(parents=True)
+        (workspace / "docs" / "arch.md").write_text(
+            "# Deployment\n\nThe deployment architecture uses blue green rollout and staged health checks.\n",
+            encoding="utf-8",
+        )
+        (workspace / "notes").mkdir(parents=True)
+        (workspace / "notes" / "random.txt").write_text("buy groceries\n", encoding="utf-8")
+
+        indexed = index_workspace_knowledgebase(cfg)
+        assert indexed["success"] is True
+        assert indexed["chunk_count"] >= 1
+        assert Path(indexed["index_path"]).exists()
+
+        retrieved = workspace_retrieve("deployment architecture", config=cfg, limit=3)
+        assert retrieved["success"] is True
+        assert retrieved["count"] >= 1
+        assert retrieved["results"][0]["relative_path"] == "docs/arch.md"
+        assert "blue green" in retrieved["results"][0]["content"].lower()
+
+    def test_workspace_context_for_turn_formats_sources_and_respects_gating(self, tmp_path):
+        from agent.workspace import index_workspace_knowledgebase, workspace_context_for_turn
+
+        cfg = _config(tmp_path)
+        cfg["knowledgebase"]["retrieval_mode"] = "always"
+        workspace = Path(cfg["workspace"]["path"])
+        (workspace / "docs").mkdir(parents=True)
+        (workspace / "docs" / "plan.md").write_text(
+            "Deployment plan includes canary analysis and rollback checkpoints.\n",
+            encoding="utf-8",
+        )
+
+        index_workspace_knowledgebase(cfg)
+        context = workspace_context_for_turn("summarize the deployment plan", config=cfg)
+        assert "workspace context was retrieved for this turn only" in context.lower()
+        assert "docs/plan.md" in context
+
+        cfg["knowledgebase"]["retrieval_mode"] = "gated"
+        assert workspace_context_for_turn("thanks", config=cfg) == ""

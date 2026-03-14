@@ -4,7 +4,7 @@ from typing import Optional
 
 from rich.console import Console
 
-from agent.workspace import build_workspace_manifest, workspace_list, workspace_search, workspace_status
+from agent.workspace import index_workspace_knowledgebase, workspace_list, workspace_retrieve, workspace_search, workspace_status
 from hermes_cli.config import load_config
 
 
@@ -20,7 +20,9 @@ def _print_status(console: Console) -> None:
     console.print(f"Workspace root: {data['workspace_root']}")
     console.print(f"Knowledgebase root: {data['knowledgebase_root']}")
     console.print(f"Manifest: {data['manifest_path']}")
+    console.print(f"Index DB: {data.get('index_path', '(not built)')}")
     console.print(f"Files: {data['file_count']}")
+    console.print(f"Chunks: {data.get('chunk_count', 0)}")
     counts = data.get("category_counts") or {}
     if counts:
         for key in sorted(counts):
@@ -28,12 +30,13 @@ def _print_status(console: Console) -> None:
 
 
 def _print_index(console: Console) -> None:
-    data = build_workspace_manifest(load_config())
+    data = index_workspace_knowledgebase(load_config())
     if not data.get("success"):
         console.print(f"[bold red]{data.get('error', 'Index failed')}[/]")
         return
-    console.print(f"Indexed {data['file_count']} files")
+    console.print(f"Indexed {data['file_count']} files into {data.get('chunk_count', 0)} chunks")
     console.print(f"Manifest: {data['manifest_path']}")
+    console.print(f"Index DB: {data['index_path']}")
 
 
 def _print_list(console: Console, path: str = "", recursive: bool = True, limit: int = 20, offset: int = 0) -> None:
@@ -66,6 +69,21 @@ def _print_search(console: Console, query: str, path: str = "", file_glob: str |
         console.print(f"[dim]Showing {len(matches)} of {data['total_count']} matches[/]")
 
 
+def _print_retrieve(console: Console, query: str, limit: int = 8) -> None:
+    data = workspace_retrieve(query, load_config(), limit=limit)
+    if not data.get("success"):
+        console.print(f"[bold red]{data.get('error', 'Retrieve failed')}[/]")
+        return
+    results = data.get("results") or []
+    if not results:
+        console.print("No retrieval results found.")
+        return
+    for result in results:
+        console.print(f"{result['relative_path']}  [score={result['rrf_score']:.4f} dense={result['dense_score']:.3f}]")
+        console.print(result["content"])
+        console.print()
+
+
 def workspace_command(args, console: Optional[Console] = None) -> None:
     console = _console(console)
     action = getattr(args, "workspace_action", None) or "status"
@@ -94,6 +112,12 @@ def workspace_command(args, console: Optional[Console] = None) -> None:
             limit=getattr(args, "limit", 10),
             offset=getattr(args, "offset", 0),
         )
+    elif action == "retrieve":
+        query = getattr(args, "query", "") or ""
+        if not query.strip():
+            console.print("Usage: hermes workspace retrieve <query>")
+            return
+        _print_retrieve(console, query=query, limit=getattr(args, "limit", 8))
     else:
         console.print(f"[bold red]Unknown workspace action: {action}[/]")
 
@@ -123,5 +147,12 @@ def handle_workspace_slash(cmd: str, console: Optional[Console] = None) -> None:
             return
         _print_search(console, query=query)
         return
+    if action == "retrieve":
+        query = " ".join(parts[1:]).strip()
+        if not query:
+            console.print("Usage: /workspace retrieve <query>")
+            return
+        _print_retrieve(console, query=query)
+        return
 
-    console.print("Usage: /workspace [status|index|list [path]|search <query>]")
+    console.print("Usage: /workspace [status|index|list [path]|search <query>|retrieve <query>]")

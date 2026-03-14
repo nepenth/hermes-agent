@@ -2778,6 +2778,9 @@ For more help on a command:
     workspace_search.add_argument("--file-glob", default=None, help="Optional filename glob filter, e.g. '*.md'")
     workspace_search.add_argument("--limit", type=int, default=10, help="Maximum matches to show")
     workspace_search.add_argument("--offset", type=int, default=0, help="Skip the first N matches")
+    workspace_retrieve = workspace_subparsers.add_parser("retrieve", help="Retrieve ranked workspace chunks for a query")
+    workspace_retrieve.add_argument("query", help="Query to retrieve context for")
+    workspace_retrieve.add_argument("--limit", type=int, default=8, help="Maximum chunks to show")
 
     def cmd_workspace(args):
         from hermes_cli.workspace import workspace_command

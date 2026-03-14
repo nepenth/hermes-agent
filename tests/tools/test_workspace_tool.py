@@ -57,23 +57,29 @@ class TestWorkspaceTool:
         assert result["workspace_root"].endswith("workspace")
         assert result["knowledgebase_root"].endswith("knowledgebase")
 
-    def test_index_and_search_round_trip(self, tmp_path, monkeypatch):
+    def test_index_search_and_retrieve_round_trip(self, tmp_path, monkeypatch):
         from tools.workspace_tool import workspace_tool
 
         cfg = _config(tmp_path)
         workspace = Path(cfg["workspace"]["path"])
         (workspace / "docs").mkdir(parents=True)
-        (workspace / "docs" / "deploy.md").write_text("deployment checklist\n", encoding="utf-8")
+        (workspace / "docs" / "deploy.md").write_text("deployment checklist and rollback plan\n", encoding="utf-8")
         monkeypatch.setattr("tools.workspace_tool.load_config", lambda: cfg)
 
         indexed = json.loads(workspace_tool(action="index"))
         assert indexed["success"] is True
         assert indexed["file_count"] == 1
+        assert indexed["chunk_count"] >= 1
 
         searched = json.loads(workspace_tool(action="search", query="deployment"))
         assert searched["success"] is True
         assert searched["count"] == 1
         assert searched["matches"][0]["relative_path"] == "docs/deploy.md"
+
+        retrieved = json.loads(workspace_tool(action="retrieve", query="rollback plan"))
+        assert retrieved["success"] is True
+        assert retrieved["count"] >= 1
+        assert retrieved["results"][0]["relative_path"] == "docs/deploy.md"
 
     def test_list_returns_relative_paths(self, tmp_path, monkeypatch):
         from tools.workspace_tool import workspace_tool

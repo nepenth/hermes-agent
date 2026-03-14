@@ -6,7 +6,13 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent.workspace import build_workspace_manifest, workspace_list, workspace_search, workspace_status
+from agent.workspace import (
+    index_workspace_knowledgebase,
+    workspace_list,
+    workspace_retrieve,
+    workspace_search,
+    workspace_status,
+)
 from hermes_cli.config import load_config
 from tools.registry import registry
 
@@ -19,8 +25,8 @@ WORKSPACE_SCHEMA = {
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["status", "index", "list", "search"],
-                "description": "What to do: status shows roots and counts, index rebuilds the manifest, list enumerates files, search searches text content.",
+                "enum": ["status", "index", "list", "search", "retrieve"],
+                "description": "What to do: status shows roots and counts, index rebuilds the manifest and chunk index, list enumerates files, search searches text lines, retrieve returns ranked chunk-level retrieval results.",
             },
             "query": {
                 "type": "string",
@@ -69,7 +75,7 @@ def workspace_tool(
         if action == "status":
             result: dict[str, Any] = workspace_status(config)
         elif action == "index":
-            result = build_workspace_manifest(config)
+            result = index_workspace_knowledgebase(config)
         elif action == "list":
             result = workspace_list(
                 config=config,
@@ -86,6 +92,12 @@ def workspace_tool(
                 file_glob=file_glob,
                 limit=limit,
                 offset=offset,
+            )
+        elif action == "retrieve":
+            result = workspace_retrieve(
+                query=query,
+                config=config,
+                limit=limit,
             )
         else:
             result = {"success": False, "error": f"Unknown action: {action}"}
