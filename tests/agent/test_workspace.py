@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 
 def _config(tmp_path: Path) -> dict:
@@ -35,7 +37,7 @@ def _config(tmp_path: Path) -> dict:
             },
             "embeddings": {
                 "provider": "local",
-                "model": "embeddinggemma-300m",
+                "model": "google/embeddinggemma-300m",
                 "dimensions": 768,
             },
             "reranker": {
@@ -126,6 +128,48 @@ class TestWorkspaceSearch:
         assert result["success"] is True
         assert result["count"] == 1
         assert result["matches"][0]["relative_path"] == "docs/a.md"
+
+
+class TestWorkspaceEmbedder:
+    def test_local_embeddinggemma_uses_sentence_transformers_when_available(self, tmp_path, monkeypatch):
+        from agent.workspace import WorkspaceEmbedder
+
+        calls = {}
+
+        class FakeVector(list):
+            def tolist(self):
+                return list(self)
+
+        class FakeModel:
+            def __init__(self, model_id, **kwargs):
+                calls["model_id"] = model_id
+                calls["kwargs"] = kwargs
+
+            def encode_query(self, text, **kwargs):
+                calls["query"] = (text, kwargs)
+                return FakeVector([0.1, 0.2, 0.3])
+
+            def encode_document(self, texts, **kwargs):
+                calls["documents"] = (list(texts), kwargs)
+                return [FakeVector([0.4, 0.5, 0.6]) for _ in texts]
+
+        fake_torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
+        )
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        monkeypatch.setitem(sys.modules, "sentence_transformers", SimpleNamespace(SentenceTransformer=FakeModel))
+
+        embedder = WorkspaceEmbedder(_config(tmp_path))
+        docs = embedder.embed_documents(["alpha doc"])
+        query = embedder.embed_query("alpha query")
+
+        assert embedder.backend == "sentence-transformers"
+        assert calls["model_id"] == "google/embeddinggemma-300m"
+        assert calls["documents"][0] == ["alpha doc"]
+        assert calls["query"][0] == "alpha query"
+        assert docs == [[0.4, 0.5, 0.6]]
+        assert query == [0.1, 0.2, 0.3]
 
 
 class TestWorkspaceRetrieval:

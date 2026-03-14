@@ -33,7 +33,7 @@ def _config(tmp_path: Path) -> dict:
                 "code_strategy": "structural",
                 "markdown_strategy": "headings",
             },
-            "embeddings": {"provider": "local", "model": "embeddinggemma-300m", "dimensions": 768},
+            "embeddings": {"provider": "local", "model": "google/embeddinggemma-300m", "dimensions": 768},
             "reranker": {"enabled": False, "provider": "local", "model": "bge-reranker-v2-m3"},
             "indexing": {
                 "respect_gitignore": True,

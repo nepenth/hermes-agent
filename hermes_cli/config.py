@@ -280,7 +280,7 @@ DEFAULT_CONFIG = {
         },
         "embeddings": {
             "provider": "local",
-            "model": "embeddinggemma-300m",
+            "model": "google/embeddinggemma-300m",
             "dimensions": 768,
         },
         "reranker": {

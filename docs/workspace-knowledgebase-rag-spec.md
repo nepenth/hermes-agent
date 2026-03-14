@@ -228,7 +228,7 @@ knowledgebase:
     markdown_strategy: headings
   embeddings:
     provider: local              # local | google | openai | voyage | custom
-    model: embeddinggemma-300m
+    model: google/embeddinggemma-300m
     dimensions: 768
   reranker:
     enabled: false

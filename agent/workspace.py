@@ -361,49 +361,162 @@ def workspace_search(
 class WorkspaceEmbedder:
     """Best-effort embedder for workspace retrieval.
 
-    Local mode uses a deterministic hashing fallback so retrieval works without
-    extra dependencies. Hosted providers can use real embedding APIs when
-    credentials are present; failures fall back to the local hash backend.
+    Local mode prefers SentenceTransformers with EmbeddingGemma when the
+    optional runtime is installed. Hosted providers can use real embedding APIs
+    when credentials are present. Any failure falls back to a deterministic hash
+    backend so retrieval continues to work.
     """
+
+    _MODEL_CACHE: dict[tuple[str, str], Any] = {}
+    _MODEL_CACHE_LOCK = None
 
     def __init__(self, config: dict[str, Any]):
         kb_cfg = config.get("knowledgebase", {}) or {}
         emb_cfg = kb_cfg.get("embeddings", {}) or {}
         self.provider = str(emb_cfg.get("provider", "local") or "local").strip().lower()
-        self.model = str(emb_cfg.get("model", "embeddinggemma-300m") or "embeddinggemma-300m")
+        self.model = str(emb_cfg.get("model", "google/embeddinggemma-300m") or "google/embeddinggemma-300m")
         self.dimensions = int(emb_cfg.get("dimensions", 768) or 768)
         self.backend = "hash-local-v1"
+        if WorkspaceEmbedder._MODEL_CACHE_LOCK is None:
+            import threading
+            WorkspaceEmbedder._MODEL_CACHE_LOCK = threading.Lock()
 
     @property
     def signature(self) -> str:
         return f"{self.provider}:{self.model}:{self.dimensions}:{self.backend}"
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        if self.provider == "openai":
-            embedded = self._try_openai(texts)
-            if embedded is not None:
+        return self.embed_documents(texts)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        vectors = None
+        if self.provider == "local":
+            vectors = self._try_local_documents(texts)
+            if vectors is not None:
+                self.backend = "sentence-transformers"
+                return vectors
+        elif self.provider == "openai":
+            vectors = self._try_openai(texts)
+            if vectors is not None:
                 self.backend = "openai"
-                return embedded
+                return vectors
         elif self.provider == "google":
-            embedded = self._try_google(texts)
-            if embedded is not None:
+            vectors = self._try_google(texts, task_type="RETRIEVAL_DOCUMENT")
+            if vectors is not None:
                 self.backend = "google"
-                return embedded
+                return vectors
         self.backend = "hash-local-v1"
         return [self._hash_embed(text) for text in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        vector = None
+        if self.provider == "local":
+            vector = self._try_local_query(text)
+            if vector is not None:
+                self.backend = "sentence-transformers"
+                return vector
+        elif self.provider == "openai":
+            vectors = self._try_openai([text])
+            if vectors is not None:
+                self.backend = "openai"
+                return vectors[0]
+        elif self.provider == "google":
+            vectors = self._try_google([text], task_type="RETRIEVAL_QUERY")
+            if vectors is not None:
+                self.backend = "google"
+                return vectors[0]
+        self.backend = "hash-local-v1"
+        return self._hash_embed(text)
+
+    def _sentence_transformer_model(self):
+        try:
+            import torch
+            from sentence_transformers import SentenceTransformer
+        except Exception:
+            return None
+
+        if torch.cuda.is_available():
+            device = "cuda"
+        elif getattr(getattr(torch, 'backends', None), 'mps', None) and torch.backends.mps.is_available():
+            device = "mps"
+        else:
+            device = "cpu"
+
+        cache_key = (self.model, device)
+        lock = WorkspaceEmbedder._MODEL_CACHE_LOCK
+        with lock:
+            cached = WorkspaceEmbedder._MODEL_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+            try:
+                model = SentenceTransformer(self.model, device=device)
+            except TypeError:
+                model = SentenceTransformer(self.model)
+                if hasattr(model, 'to'):
+                    model = model.to(device)
+            except Exception:
+                return None
+            WorkspaceEmbedder._MODEL_CACHE[cache_key] = model
+            return model
+
+    def _st_encode_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"normalize_embeddings": True}
+        if 0 < self.dimensions < 768:
+            kwargs["truncate_dim"] = self.dimensions
+        return kwargs
+
+    @staticmethod
+    def _vector_to_list(vector: Any) -> list[float]:
+        if hasattr(vector, 'tolist'):
+            vector = vector.tolist()
+        return [float(v) for v in vector]
+
+    def _vectors_to_lists(self, vectors: Any) -> list[list[float]]:
+        if hasattr(vectors, 'tolist'):
+            vectors = vectors.tolist()
+        if not vectors:
+            return []
+        first = vectors[0]
+        if isinstance(first, (int, float)):
+            return [self._vector_to_list(vectors)]
+        return [self._vector_to_list(vector) for vector in vectors]
+
+    def _try_local_documents(self, texts: list[str]) -> list[list[float]] | None:
+        model = self._sentence_transformer_model()
+        if model is None:
+            return None
+        kwargs = self._st_encode_kwargs()
+        try:
+            if hasattr(model, 'encode_document'):
+                return self._vectors_to_lists(model.encode_document(texts, **kwargs))
+            return self._vectors_to_lists(model.encode(texts, prompt_name='Retrieval-document', **kwargs))
+        except Exception:
+            return None
+
+    def _try_local_query(self, text: str) -> list[float] | None:
+        model = self._sentence_transformer_model()
+        if model is None:
+            return None
+        kwargs = self._st_encode_kwargs()
+        try:
+            if hasattr(model, 'encode_query'):
+                return self._vector_to_list(model.encode_query(text, **kwargs))
+            return self._vector_to_list(model.encode(text, prompt_name='Retrieval-query', **kwargs))
+        except Exception:
+            return None
 
     def _try_openai(self, texts: list[str]) -> list[list[float]] | None:
         try:
             from openai import OpenAI
         except Exception:
             return None
-        api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        api_key = os.getenv('OPENAI_API_KEY', '').strip()
         if not api_key:
             return None
-        kwargs: dict[str, Any] = {"api_key": api_key}
-        base_url = os.getenv("OPENAI_BASE_URL", "").strip()
+        kwargs: dict[str, Any] = {'api_key': api_key}
+        base_url = os.getenv('OPENAI_BASE_URL', '').strip()
         if base_url:
-            kwargs["base_url"] = base_url
+            kwargs['base_url'] = base_url
         try:
             client = OpenAI(**kwargs)
             resp = client.embeddings.create(model=self.model, input=texts)
@@ -411,8 +524,8 @@ class WorkspaceEmbedder:
         except Exception:
             return None
 
-    def _try_google(self, texts: list[str]) -> list[list[float]] | None:
-        api_key = os.getenv("GEMINI_API_KEY", "").strip() or os.getenv("GOOGLE_API_KEY", "").strip()
+    def _try_google(self, texts: list[str], task_type: str) -> list[list[float]] | None:
+        api_key = os.getenv('GEMINI_API_KEY', '').strip() or os.getenv('GOOGLE_API_KEY', '').strip()
         if not api_key:
             return None
         try:
@@ -423,17 +536,18 @@ class WorkspaceEmbedder:
         for text in texts:
             try:
                 response = requests.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent",
-                    params={"key": api_key},
+                    f'https://generativelanguage.googleapis.com/v1beta/models/{self.model}:embedContent',
+                    params={'key': api_key},
                     json={
-                        "content": {"parts": [{"text": text}]},
-                        "outputDimensionality": self.dimensions,
+                        'content': {'parts': [{'text': text}]},
+                        'taskType': task_type,
+                        'outputDimensionality': self.dimensions,
                     },
                     timeout=30,
                 )
                 response.raise_for_status()
                 payload = response.json()
-                values = payload.get("embedding", {}).get("values")
+                values = payload.get('embedding', {}).get('values')
                 if not values:
                     return None
                 results.append([float(v) for v in values])
@@ -448,13 +562,12 @@ class WorkspaceEmbedder:
         if not tokens:
             return vec
         for token in tokens:
-            digest = hashlib.sha256(token.encode("utf-8")).digest()
-            idx = int.from_bytes(digest[:4], "big") % dims
+            digest = hashlib.sha256(token.encode('utf-8')).digest()
+            idx = int.from_bytes(digest[:4], 'big') % dims
             sign = 1.0 if digest[4] % 2 == 0 else -1.0
             vec[idx] += sign
         norm = math.sqrt(sum(value * value for value in vec)) or 1.0
         return [value / norm for value in vec]
-
 
 def _index_db_path(paths: WorkspacePaths) -> Path:
     return paths.indexes_dir / "workspace.sqlite"
