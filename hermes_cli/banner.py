@@ -15,6 +15,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from hermes_cli.config import load_config
+
 from prompt_toolkit import print_formatted_text as _pt_print
 from prompt_toolkit.formatted_text import ANSI as _PT_ANSI
 
@@ -122,6 +124,48 @@ def get_available_skills() -> Dict[str, List[str]]:
         skills_by_category.setdefault(category, []).append(skill_name)
 
     return skills_by_category
+
+
+def _workspace_root_labels(config: Dict[str, Any]) -> list[str]:
+    workspace_cfg = config.get("workspace", {}) or {}
+    kb_cfg = config.get("knowledgebase", {}) or {}
+    if not workspace_cfg.get("enabled", True) or not kb_cfg.get("enabled", True):
+        return []
+
+    workspace_path = workspace_cfg.get("path") or str(Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "workspace")
+    workspace_root = Path(os.path.expandvars(os.path.expanduser(workspace_path))).resolve()
+    roots = kb_cfg.get("roots") or [str(workspace_root)]
+
+    labels: list[str] = []
+    seen: set[str] = set()
+    for raw_root in roots:
+        expanded = Path(os.path.expandvars(os.path.expanduser(str(raw_root)))).resolve()
+        if expanded == workspace_root:
+            label = "workspace"
+        else:
+            label = expanded.name or str(expanded)
+            if label == workspace_root.name:
+                label = str(expanded)
+        if label in seen:
+            continue
+        seen.add(label)
+        labels.append(label)
+    return labels
+
+
+def _get_workspace_banner_line() -> Optional[str]:
+    try:
+        config = load_config()
+    except Exception:
+        return None
+    labels = _workspace_root_labels(config)
+    if not labels:
+        return None
+    if len(labels) > 3:
+        display = ", ".join(labels[:3]) + f" +{len(labels) - 3} more"
+    else:
+        display = ", ".join(labels)
+    return f"Activated Workspace(s): {display}"
 
 
 # =========================================================================
@@ -351,6 +395,12 @@ def build_welcome_banner(console: Console, model: str, cwd: str,
             right_lines.append(f"[dim {dim}]{category}:[/] [{text}]{skills_str}[/]")
     else:
         right_lines.append(f"[dim {dim}]No skills installed[/]")
+
+    workspace_line = _get_workspace_banner_line()
+    if workspace_line:
+        right_lines.append("")
+        right_lines.append(f"[bold {accent}]Workspace[/]")
+        right_lines.append(f"[{text}]{workspace_line}[/]")
 
     right_lines.append("")
     mcp_connected = sum(1 for s in mcp_status if s["connected"]) if mcp_status else 0
