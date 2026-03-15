@@ -1,17 +1,79 @@
-"""Skill slash commands — scan installed skills and build invocation messages.
+"""Shared slash command helpers for skills and built-in prompt-style modes.
 
 Shared between CLI (cli.py) and gateway (gateway/run.py) so both surfaces
-can invoke skills via /skill-name commands.
+can invoke skills via /skill-name commands and prompt-only built-ins like
+/plan.
 """
 
 import json
 import logging
+import os
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
 _skill_commands: Dict[str, Dict[str, Any]] = {}
+_PLAN_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def build_plan_path(
+    user_instruction: str = "",
+    *,
+    now: datetime | None = None,
+) -> Path:
+    """Return the default markdown path for a /plan invocation."""
+    hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
+    slug_source = (user_instruction or "").strip().splitlines()[0] if user_instruction else ""
+    slug = _PLAN_SLUG_RE.sub("-", slug_source.lower()).strip("-")
+    if slug:
+        slug = "-".join(part for part in slug.split("-")[:8] if part)[:48].strip("-")
+    slug = slug or "conversation-plan"
+    timestamp = (now or datetime.now()).strftime("%Y-%m-%d_%H%M%S")
+    return hermes_home / "plans" / f"{timestamp}-{slug}.md"
+
+
+def build_plan_invocation_message(
+    user_instruction: str = "",
+    *,
+    plan_path: str | Path | None = None,
+) -> str:
+    """Build the injected user message for the built-in /plan command."""
+    resolved_path = Path(plan_path) if plan_path is not None else build_plan_path(user_instruction)
+
+    parts = [
+        '[SYSTEM: The user has invoked the "/plan" command. This means they want a markdown plan, not execution, for this turn.]',
+        "",
+        "You are in plan mode for this turn.",
+        "",
+        "Plan mode rules:",
+        "- Do not implement code, edit project files other than the plan document, run mutating terminal commands, commit, push, or take external actions.",
+        "- You may inspect the repo/context and use read-only tools or commands if needed.",
+        f"- Write the finished plan as markdown and save it with write_file to: {resolved_path}",
+        "- Make the plan concrete and actionable.",
+        "- Include: goal, context/assumptions, proposed approach, step-by-step plan, validation, and risks/open questions.",
+        "- If the task is code-related, include exact file paths, tests, and rollout or verification notes when possible.",
+        "- After saving the plan, reply with a short summary and the saved path.",
+    ]
+
+    if user_instruction:
+        parts.extend(
+            [
+                "",
+                f"The user wants a plan for: {user_instruction}",
+            ]
+        )
+    else:
+        parts.extend(
+            [
+                "",
+                "The user wants a plan based on the current conversation context. Infer the active task from the latest discussion, and only ask clarifying questions if the request is genuinely underspecified.",
+            ]
+        )
+
+    return "\n".join(parts)
 
 
 def scan_skill_commands() -> Dict[str, Dict[str, Any]]:

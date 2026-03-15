@@ -1043,7 +1043,13 @@ def build_welcome_banner(console: Console, model: str, cwd: str, tools: List[dic
 # Skill Slash Commands — dynamic commands generated from installed skills
 # ============================================================================
 
-from agent.skill_commands import scan_skill_commands, get_skill_commands, build_skill_invocation_message
+from agent.skill_commands import (
+    scan_skill_commands,
+    get_skill_commands,
+    build_skill_invocation_message,
+    build_plan_invocation_message,
+    build_plan_path,
+)
 
 _skill_commands = scan_skill_commands()
 
@@ -3013,6 +3019,8 @@ class HermesCLI:
         elif cmd_lower.startswith("/personality"):
             # Use original case (handler lowercases the personality name itself)
             self._handle_personality_command(cmd_original)
+        elif cmd_lower == "/plan" or cmd_lower.startswith("/plan "):
+            self._handle_plan_command(cmd_original)
         elif cmd_lower == "/retry":
             retry_msg = self.retry_last()
             if retry_msg and hasattr(self, '_pending_input'):
@@ -3123,6 +3131,21 @@ class HermesCLI:
                     self.console.print("[dim #B8860B]Type /help for available commands[/]")
         
         return True
+    
+    def _handle_plan_command(self, cmd: str):
+        """Handle /plan [request] — queue a markdown planning request."""
+        parts = cmd.strip().split(maxsplit=1)
+        user_instruction = parts[1].strip() if len(parts) > 1 else ""
+
+        plan_path = build_plan_path(user_instruction)
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        msg = build_plan_invocation_message(user_instruction, plan_path=plan_path)
+
+        _cprint(f"  📝 Plan mode queued. Markdown plan target: {plan_path}")
+        if hasattr(self, '_pending_input'):
+            self._pending_input.put(msg)
+        else:
+            self.console.print("[bold red]Plan mode unavailable: input queue not initialized[/]")
     
     def _handle_background_command(self, cmd: str):
         """Handle /background <prompt> — run a prompt in a separate background session.

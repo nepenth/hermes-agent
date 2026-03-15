@@ -1,10 +1,16 @@
 """Tests for agent/skill_commands.py — skill slash command scanning and platform filtering."""
 
 import os
+from datetime import datetime
 from unittest.mock import patch
 
 import tools.skills_tool as skills_tool_module
-from agent.skill_commands import scan_skill_commands, build_skill_invocation_message
+from agent.skill_commands import (
+    build_plan_invocation_message,
+    build_plan_path,
+    build_skill_invocation_message,
+    scan_skill_commands,
+)
 
 
 def _make_skill(
@@ -241,3 +247,35 @@ Generate some audio.
 
         assert msg is not None
         assert 'file_path="<path>"' in msg
+
+
+class TestBuildPlanInvocationMessage:
+    def test_build_plan_path_uses_hermes_home_and_slugifies_request(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+        path = build_plan_path(
+            "Implement OAuth login + refresh tokens!",
+            now=datetime(2026, 3, 15, 9, 30, 45),
+        )
+
+        assert path == tmp_path / "plans" / "2026-03-15_093045-implement-oauth-login-refresh-tokens.md"
+
+    def test_build_plan_invocation_message_includes_rules_and_target_path(self, tmp_path):
+        plan_path = tmp_path / "plans" / "my-plan.md"
+
+        msg = build_plan_invocation_message(
+            "Add a /plan command",
+            plan_path=plan_path,
+        )
+
+        assert '"/plan" command' in msg
+        assert str(plan_path) in msg
+        assert "Do not implement code" in msg
+        assert "Add a /plan command" in msg
+        assert "write_file" in msg
+
+    def test_build_plan_invocation_message_without_instruction_uses_conversation_context(self, tmp_path):
+        msg = build_plan_invocation_message(plan_path=tmp_path / "plans" / "conversation.md")
+
+        assert "current conversation context" in msg
+        assert "genuinely underspecified" in msg

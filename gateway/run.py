@@ -1098,7 +1098,7 @@ class GatewayRunner:
         
         # Emit command:* hook for any recognized slash command
         _known_commands = {"new", "reset", "help", "status", "stop", "model", "reasoning",
-                          "personality", "retry", "undo", "sethome", "set-home",
+                          "personality", "plan", "retry", "undo", "sethome", "set-home",
                           "compress", "usage", "insights", "reload-mcp", "reload_mcp",
                           "update", "title", "resume", "provider", "rollback",
                           "background", "reasoning", "voice"}
@@ -1133,6 +1133,22 @@ class GatewayRunner:
         
         if command == "personality":
             return await self._handle_personality_command(event)
+
+        if command == "plan":
+            try:
+                from agent.skill_commands import build_plan_invocation_message, build_plan_path
+
+                user_instruction = event.get_command_args().strip()
+                plan_path = build_plan_path(user_instruction)
+                plan_path.parent.mkdir(parents=True, exist_ok=True)
+                event.text = build_plan_invocation_message(
+                    user_instruction,
+                    plan_path=plan_path,
+                )
+                command = None
+            except Exception as e:
+                logger.exception("Failed to prepare /plan command")
+                return f"Failed to enter plan mode: {e}"
         
         if command == "retry":
             return await self._handle_retry_command(event)
@@ -1854,6 +1870,7 @@ class GatewayRunner:
             "`/model [provider:model]` — Show/change model (or switch provider)",
             "`/provider` — Show available providers and auth status",
             "`/personality [name]` — Set a personality",
+            "`/plan [request]` — Write/save a markdown plan instead of taking action",
             "`/retry` — Retry your last message",
             "`/undo` — Remove the last exchange",
             "`/sethome` — Set this chat as the home channel",

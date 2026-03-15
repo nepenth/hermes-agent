@@ -21,6 +21,7 @@ COMMANDS_BY_CATEGORY = {
         "/clear": "Clear screen and start a new session",
         "/history": "Show conversation history",
         "/save": "Save the current conversation",
+        "/plan": "Write/save a markdown plan instead of taking action (usage: /plan [request])",
         "/retry": "Retry the last message (resend to agent)",
         "/undo": "Remove the last user/assistant exchange",
         "/title": "Set a title for the current session (usage: /title My Session Name)",
