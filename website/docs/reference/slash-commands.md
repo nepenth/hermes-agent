@@ -46,6 +46,7 @@ Type `/` in the CLI to open the autocomplete menu. Built-in commands are case-in
 | `/verbose` | Cycle tool progress display: off → new → all → verbose |
 | `/reasoning` | Manage reasoning effort and display (usage: /reasoning [level\|show\|hide]) |
 | `/skin` | Show or change the display skin/theme |
+| `/voice [on\|off\|tts\|status]` | Toggle CLI voice mode and spoken playback. Recording uses `voice.record_key` (default: `Ctrl+B`). |
 
 ### Tools & Skills
 
@@ -54,7 +55,7 @@ Type `/` in the CLI to open the autocomplete menu. Built-in commands are case-in
 | `/tools` | List available tools |
 | `/toolsets` | List available toolsets |
 | `/skills` | Search, install, inspect, or manage skills from online registries |
-| `/cron` | Manage scheduled tasks (list, add, remove) |
+| `/cron` | Manage scheduled tasks (list, add/create, edit, pause, resume, run, remove) |
 | `/reload-mcp` | Reload MCP servers from config.yaml |
 
 ### Info
@@ -106,6 +107,7 @@ The messaging gateway supports the following built-in commands inside Telegram, 
 | `/usage` | Show token usage for the current session. |
 | `/insights [days]` | Show usage analytics. |
 | `/reasoning [level\|show\|hide]` | Change reasoning effort or toggle reasoning display. |
+| `/voice [on\|off\|tts\|join\|channel\|leave\|status]` | Control spoken replies in chat. `join`/`channel`/`leave` manage Discord voice-channel mode. |
 | `/rollback [number]` | List or restore filesystem checkpoints. |
 | `/background &lt;prompt&gt;` | Run a prompt in a separate background session. |
 | `/plan [request]` | Load the bundled `plan` skill to write a markdown plan instead of executing the work. Plans are saved under `~/.hermes/plans/`. |
@@ -118,4 +120,5 @@ The messaging gateway supports the following built-in commands inside Telegram, 
 
 - `/skin`, `/tools`, `/toolsets`, `/config`, `/prompt`, `/cron`, `/skills`, `/platforms`, `/paste`, and `/verbose` are **CLI-only** commands.
 - `/status`, `/stop`, `/sethome`, `/resume`, `/background`, and `/update` are **messaging-only** commands.
-- `/reload-mcp` and `/rollback` work in **both** the CLI and the messaging gateway.
+- `/voice`, `/reload-mcp`, and `/rollback` work in **both** the CLI and the messaging gateway.
+- `/voice join`, `/voice channel`, and `/voice leave` are only meaningful on Discord.
