@@ -1047,7 +1047,6 @@ from agent.skill_commands import (
     scan_skill_commands,
     get_skill_commands,
     build_skill_invocation_message,
-    build_plan_invocation_message,
     build_plan_path,
 )
 
@@ -3133,15 +3132,25 @@ class HermesCLI:
         return True
     
     def _handle_plan_command(self, cmd: str):
-        """Handle /plan [request] — queue a markdown planning request."""
+        """Handle /plan [request] — load the bundled plan skill."""
         parts = cmd.strip().split(maxsplit=1)
         user_instruction = parts[1].strip() if len(parts) > 1 else ""
 
         plan_path = build_plan_path(user_instruction)
-        plan_path.parent.mkdir(parents=True, exist_ok=True)
-        msg = build_plan_invocation_message(user_instruction, plan_path=plan_path)
+        msg = build_skill_invocation_message(
+            "/plan",
+            user_instruction,
+            task_id=self.session_id,
+            runtime_note=(
+                f"Save the markdown plan with write_file to this exact path: {plan_path}"
+            ),
+        )
 
-        _cprint(f"  📝 Plan mode queued. Markdown plan target: {plan_path}")
+        if not msg:
+            self.console.print("[bold red]Failed to load the bundled /plan skill[/]")
+            return
+
+        _cprint(f"  📝 Plan mode queued via skill. Markdown plan target: {plan_path}")
         if hasattr(self, '_pending_input'):
             self._pending_input.put(msg)
         else:

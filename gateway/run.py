@@ -1136,15 +1136,20 @@ class GatewayRunner:
 
         if command == "plan":
             try:
-                from agent.skill_commands import build_plan_invocation_message, build_plan_path
+                from agent.skill_commands import build_plan_path, build_skill_invocation_message
 
                 user_instruction = event.get_command_args().strip()
                 plan_path = build_plan_path(user_instruction)
-                plan_path.parent.mkdir(parents=True, exist_ok=True)
-                event.text = build_plan_invocation_message(
+                event.text = build_skill_invocation_message(
+                    "/plan",
                     user_instruction,
-                    plan_path=plan_path,
+                    task_id=_quick_key,
+                    runtime_note=(
+                        f"Save the markdown plan with write_file to this exact path: {plan_path}"
+                    ),
                 )
+                if not event.text:
+                    return "Failed to load the bundled /plan skill."
                 command = None
             except Exception as e:
                 logger.exception("Failed to prepare /plan command")
@@ -1870,7 +1875,6 @@ class GatewayRunner:
             "`/model [provider:model]` — Show/change model (or switch provider)",
             "`/provider` — Show available providers and auth status",
             "`/personality [name]` — Set a personality",
-            "`/plan [request]` — Write/save a markdown plan instead of taking action",
             "`/retry` — Retry your last message",
             "`/undo` — Remove the last exchange",
             "`/sethome` — Set this chat as the home channel",

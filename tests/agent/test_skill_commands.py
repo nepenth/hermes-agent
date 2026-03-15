@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 import tools.skills_tool as skills_tool_module
 from agent.skill_commands import (
-    build_plan_invocation_message,
     build_plan_path,
     build_skill_invocation_message,
     scan_skill_commands,
@@ -249,7 +248,7 @@ Generate some audio.
         assert 'file_path="<path>"' in msg
 
 
-class TestBuildPlanInvocationMessage:
+class TestPlanSkillHelpers:
     def test_build_plan_path_uses_hermes_home_and_slugifies_request(self, tmp_path, monkeypatch):
         monkeypatch.setenv("HERMES_HOME", str(tmp_path))
 
@@ -260,22 +259,22 @@ class TestBuildPlanInvocationMessage:
 
         assert path == tmp_path / "plans" / "2026-03-15_093045-implement-oauth-login-refresh-tokens.md"
 
-    def test_build_plan_invocation_message_includes_rules_and_target_path(self, tmp_path):
-        plan_path = tmp_path / "plans" / "my-plan.md"
+    def test_plan_skill_message_can_include_runtime_save_path_note(self, tmp_path):
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_skill(
+                tmp_path,
+                "plan",
+                body="Save plans under $HERMES_HOME/plans and do not execute the work.",
+            )
+            scan_skill_commands()
+            msg = build_skill_invocation_message(
+                "/plan",
+                "Add a /plan command",
+                runtime_note="Save the markdown plan with write_file to /tmp/plans/plan.md",
+            )
 
-        msg = build_plan_invocation_message(
-            "Add a /plan command",
-            plan_path=plan_path,
-        )
-
-        assert '"/plan" command' in msg
-        assert str(plan_path) in msg
-        assert "Do not implement code" in msg
+        assert msg is not None
+        assert "Save plans under $HERMES_HOME/plans" in msg
         assert "Add a /plan command" in msg
-        assert "write_file" in msg
-
-    def test_build_plan_invocation_message_without_instruction_uses_conversation_context(self, tmp_path):
-        msg = build_plan_invocation_message(plan_path=tmp_path / "plans" / "conversation.md")
-
-        assert "current conversation context" in msg
-        assert "genuinely underspecified" in msg
+        assert "/tmp/plans/plan.md" in msg
+        assert "Runtime note:" in msg

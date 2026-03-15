@@ -35,47 +35,6 @@ def build_plan_path(
     return hermes_home / "plans" / f"{timestamp}-{slug}.md"
 
 
-def build_plan_invocation_message(
-    user_instruction: str = "",
-    *,
-    plan_path: str | Path | None = None,
-) -> str:
-    """Build the injected user message for the built-in /plan command."""
-    resolved_path = Path(plan_path) if plan_path is not None else build_plan_path(user_instruction)
-
-    parts = [
-        '[SYSTEM: The user has invoked the "/plan" command. This means they want a markdown plan, not execution, for this turn.]',
-        "",
-        "You are in plan mode for this turn.",
-        "",
-        "Plan mode rules:",
-        "- Do not implement code, edit project files other than the plan document, run mutating terminal commands, commit, push, or take external actions.",
-        "- You may inspect the repo/context and use read-only tools or commands if needed.",
-        f"- Write the finished plan as markdown and save it with write_file to: {resolved_path}",
-        "- Make the plan concrete and actionable.",
-        "- Include: goal, context/assumptions, proposed approach, step-by-step plan, validation, and risks/open questions.",
-        "- If the task is code-related, include exact file paths, tests, and rollout or verification notes when possible.",
-        "- After saving the plan, reply with a short summary and the saved path.",
-    ]
-
-    if user_instruction:
-        parts.extend(
-            [
-                "",
-                f"The user wants a plan for: {user_instruction}",
-            ]
-        )
-    else:
-        parts.extend(
-            [
-                "",
-                "The user wants a plan based on the current conversation context. Infer the active task from the latest discussion, and only ask clarifying questions if the request is genuinely underspecified.",
-            ]
-        )
-
-    return "\n".join(parts)
-
-
 def scan_skill_commands() -> Dict[str, Dict[str, Any]]:
     """Scan ~/.hermes/skills/ and return a mapping of /command -> skill info.
 
@@ -130,6 +89,7 @@ def build_skill_invocation_message(
     cmd_key: str,
     user_instruction: str = "",
     task_id: str | None = None,
+    runtime_note: str = "",
 ) -> Optional[str]:
     """Build the user message content for a skill slash command invocation.
 
@@ -217,5 +177,9 @@ def build_skill_invocation_message(
     if user_instruction:
         parts.append("")
         parts.append(f"The user has provided the following instruction alongside the skill invocation: {user_instruction}")
+
+    if runtime_note:
+        parts.append("")
+        parts.append(f"[Runtime note: {runtime_note}]")
 
     return "\n".join(parts)

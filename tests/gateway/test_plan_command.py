@@ -2,10 +2,11 @@
 
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from agent.skill_commands import scan_skill_commands
 from gateway.config import GatewayConfig, Platform, PlatformConfig
 from gateway.platforms.base import MessageEvent
 from gateway.session import SessionEntry, SessionSource
@@ -70,9 +71,26 @@ def _make_event(text="/plan"):
     )
 
 
+def _make_plan_skill(skills_dir):
+    skill_dir = skills_dir / "plan"
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    (skill_dir / "SKILL.md").write_text(
+        """---
+name: plan
+description: Plan mode skill.
+---
+
+# Plan
+
+Use the current conversation context when no explicit instruction is provided.
+Save plans under $HERMES_HOME/plans.
+"""
+    )
+
+
 class TestGatewayPlanCommand:
     @pytest.mark.asyncio
-    async def test_plan_command_rewrites_message_and_runs_agent(self, monkeypatch, tmp_path):
+    async def test_plan_command_loads_skill_and_runs_agent(self, monkeypatch, tmp_path):
         import gateway.run as gateway_run
 
         runner = _make_runner()
@@ -85,19 +103,26 @@ class TestGatewayPlanCommand:
             lambda *_args, **_kwargs: 100_000,
         )
 
-        result = await runner._handle_message(event)
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_plan_skill(tmp_path)
+            scan_skill_commands()
+            result = await runner._handle_message(event)
 
         assert result == "planned"
         forwarded = runner._run_agent.call_args.kwargs["message"]
-        assert '"/plan" command' in forwarded
+        assert "Plan mode skill" in forwarded
         assert "Add OAuth login" in forwarded
         assert str(tmp_path / "plans") in forwarded
+        assert "Runtime note:" in forwarded
 
     @pytest.mark.asyncio
-    async def test_plan_command_appears_in_help_output(self):
+    async def test_plan_command_appears_in_help_output_via_skill_listing(self, tmp_path):
         runner = _make_runner()
         event = _make_event("/help")
 
-        result = await runner._handle_help_command(event)
+        with patch("tools.skills_tool.SKILLS_DIR", tmp_path):
+            _make_plan_skill(tmp_path)
+            scan_skill_commands()
+            result = await runner._handle_help_command(event)
 
         assert "/plan" in result
