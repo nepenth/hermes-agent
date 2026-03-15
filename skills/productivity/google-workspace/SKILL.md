@@ -55,8 +55,15 @@ Calendar/Drive/Sheets/Docs?"**
   Passwords) and takes 2 minutes to set up. No Google Cloud project needed.
   Load the himalaya skill and follow its setup instructions.
 
-- **Calendar, Drive, Sheets, Docs (or email + these)** → Continue with this
-  skill's OAuth setup below.
+- **Email + Calendar** → Continue with this skill, but use
+  `--services email,calendar` during auth so the consent screen only asks for
+  the scopes they actually need.
+
+- **Calendar/Drive/Sheets/Docs only** → Continue with this skill and use a
+  narrower `--services` set like `calendar,drive,sheets,docs`.
+
+- **Full Workspace access** → Continue with this skill and use the default
+  `all` service set.
 
 **Question 2: "Does your Google account use Advanced Protection (hardware
 security keys required to sign in)? If you're not sure, you probably don't
@@ -96,18 +103,29 @@ Once they provide the path:
 $GSETUP --client-secret /path/to/client_secret.json
 ```
 
+If they paste the raw client ID / client secret values instead of a file path,
+write a valid Desktop OAuth JSON file for them yourself, save it somewhere
+explicit (for example `~/Downloads/hermes-google-client-secret.json`), then run
+`--client-secret` against that file.
+
 ### Step 3: Get authorization URL
 
+Use the service set chosen in Step 1. Examples:
+
 ```bash
-$GSETUP --auth-url
+$GSETUP --auth-url --services email,calendar --format json
+$GSETUP --auth-url --services calendar,drive,sheets,docs --format json
+$GSETUP --auth-url --services all --format json
 ```
 
-This prints a URL. **Send the URL to the user** and tell them:
+This returns JSON with an `auth_url` field and also saves the exact URL to
+`~/.hermes/google_oauth_last_url.txt`.
 
-> Open this link in your browser, sign in with your Google account, and
-> authorize access. After authorizing, you'll be redirected to a page that
-> may show an error — that's expected. Copy the ENTIRE URL from your
-> browser's address bar and paste it back to me.
+Agent rules for this step:
+- Extract the `auth_url` field and send that exact URL to the user as a single line.
+- Tell the user that the browser will likely fail on `http://localhost:1` after approval, and that this is expected.
+- Tell them to copy the ENTIRE redirected URL from the browser address bar.
+- If the user gets `Error 403: access_denied`, send them directly to `https://console.cloud.google.com/auth/audience` to add themselves as a test user.
 
 ### Step 4: Exchange the code
 
@@ -117,8 +135,13 @@ pending OAuth session locally so `--auth-code` can complete the PKCE exchange
 later, even on headless systems:
 
 ```bash
-$GSETUP --auth-code "THE_URL_OR_CODE_THE_USER_PASTED"
+$GSETUP --auth-code "THE_URL_OR_CODE_THE_USER_PASTED" --format json
 ```
+
+If `--auth-code` fails because the code expired, was already used, or came from
+an older browser tab, it now returns a fresh `fresh_auth_url`. In that case,
+immediately send the new URL to the user and have them retry with the newest
+browser redirect only.
 
 ### Step 5: Verify
 

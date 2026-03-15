@@ -54,6 +54,17 @@ def _ensure_authenticated():
         sys.exit(1)
 
 
+def _stored_token_scopes() -> list[str]:
+    try:
+        data = json.loads(TOKEN_PATH.read_text())
+    except Exception:
+        return list(SCOPES)
+    scopes = data.get("scopes")
+    if isinstance(scopes, list) and scopes:
+        return scopes
+    return list(SCOPES)
+
+
 def _gws_binary() -> str | None:
     override = os.getenv("HERMES_GWS_BIN")
     if override:
@@ -156,7 +167,7 @@ def get_credentials():
     from google.oauth2.credentials import Credentials
     from google.auth.transport.requests import Request
 
-    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), _stored_token_scopes())
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
         TOKEN_PATH.write_text(creds.to_json())
