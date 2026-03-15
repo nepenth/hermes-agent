@@ -2781,6 +2781,14 @@ For more help on a command:
     workspace_retrieve = workspace_subparsers.add_parser("retrieve", help="Retrieve ranked workspace chunks for a query")
     workspace_retrieve.add_argument("query", help="Query to retrieve context for")
     workspace_retrieve.add_argument("--limit", type=int, default=8, help="Maximum chunks to show")
+    workspace_roots = workspace_subparsers.add_parser("roots", help="Manage additional indexed workspace roots")
+    workspace_roots_subparsers = workspace_roots.add_subparsers(dest="root_action")
+    workspace_roots_subparsers.add_parser("list", help="List active workspace roots")
+    workspace_roots_add = workspace_roots_subparsers.add_parser("add", help="Add an additional root to index")
+    workspace_roots_add.add_argument("root_path", help="Directory to index")
+    workspace_roots_add.add_argument("--recursive", action="store_true", default=False, help="Recurse through subdirectories when indexing this root")
+    workspace_roots_remove = workspace_roots_subparsers.add_parser("remove", help="Remove an indexed workspace root")
+    workspace_roots_remove.add_argument("identifier", help="Root path or label to remove")
 
     def cmd_workspace(args):
         from hermes_cli.workspace import workspace_command

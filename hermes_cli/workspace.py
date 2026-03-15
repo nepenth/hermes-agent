@@ -4,8 +4,17 @@ from typing import Optional
 
 from rich.console import Console
 
-from agent.workspace import index_workspace_knowledgebase, workspace_list, workspace_retrieve, workspace_search, workspace_status
-from hermes_cli.config import load_config
+from agent.workspace import (
+    add_workspace_root_to_config,
+    index_workspace_knowledgebase,
+    list_workspace_roots,
+    remove_workspace_root_from_config,
+    workspace_list,
+    workspace_retrieve,
+    workspace_search,
+    workspace_status,
+)
+from hermes_cli.config import load_config, save_config
 
 
 def _console(console: Optional[Console]) -> Console:
@@ -27,6 +36,13 @@ def _print_status(console: Console) -> None:
         console.print(f"Embedding backend: {data['embedding_backend']}")
     if data.get('dense_backend'):
         console.print(f"Dense backend: {data['dense_backend']}")
+    roots = data.get("active_roots") or []
+    if roots:
+        console.print("Active roots:")
+        for root in roots:
+            mode = "recursive" if root.get("recursive") else "shallow"
+            workspace_tag = " (canonical)" if root.get("is_workspace") else ""
+            console.print(f"  - {root['label']}: {root['path']} [{mode}]{workspace_tag}")
     counts = data.get("category_counts") or {}
     if counts:
         for key in sorted(counts):
@@ -45,6 +61,34 @@ def _print_index(console: Console) -> None:
         console.print(f"Embedding backend: {data['embedding_backend']}")
     if data.get('dense_backend'):
         console.print(f"Dense backend: {data['dense_backend']}")
+
+
+def _print_roots(console: Console) -> None:
+    data = list_workspace_roots(load_config())
+    roots = data.get("roots") or []
+    if not roots:
+        console.print("No active workspace roots.")
+        return
+    for root in roots:
+        mode = "recursive" if root.get("recursive") else "shallow"
+        workspace_tag = " (canonical)" if root.get("is_workspace") else ""
+        console.print(f"{root['label']}: {root['path']} ({mode}){workspace_tag}")
+
+
+def add_workspace_root(root_path: str, recursive: bool = False) -> dict:
+    config = load_config()
+    result = add_workspace_root_to_config(config, root_path, recursive=recursive)
+    if result.get("success"):
+        save_config(config)
+    return result
+
+
+def remove_workspace_root(identifier: str) -> dict:
+    config = load_config()
+    result = remove_workspace_root_from_config(config, identifier)
+    if result.get("success"):
+        save_config(config)
+    return result
 
 
 def _print_list(console: Console, path: str = "", recursive: bool = True, limit: int = 20, offset: int = 0) -> None:
@@ -130,6 +174,34 @@ def workspace_command(args, console: Optional[Console] = None) -> None:
             console.print("Usage: hermes workspace retrieve <query>")
             return
         _print_retrieve(console, query=query, limit=getattr(args, "limit", 8))
+    elif action == "roots":
+        root_action = getattr(args, "root_action", "list") or "list"
+        if root_action == "list":
+            _print_roots(console)
+        elif root_action == "add":
+            root_path = getattr(args, "root_path", "") or ""
+            if not root_path:
+                console.print("Usage: hermes workspace roots add <path> [--recursive]")
+                return
+            result = add_workspace_root(root_path, recursive=bool(getattr(args, "recursive", False)))
+            if result.get("success"):
+                root = result["root"]
+                mode = "recursive" if root.get("recursive") else "shallow"
+                console.print(f"Added workspace root: {root['path']} ({mode})")
+            else:
+                console.print(f"[bold red]{result.get('error', 'Failed to add root')}[/]")
+        elif root_action == "remove":
+            identifier = getattr(args, "identifier", "") or ""
+            if not identifier:
+                console.print("Usage: hermes workspace roots remove <path-or-label>")
+                return
+            result = remove_workspace_root(identifier)
+            if result.get("success"):
+                console.print(f"Removed workspace root: {result['removed']['path']}")
+            else:
+                console.print(f"[bold red]{result.get('error', 'Failed to remove root')}[/]")
+        else:
+            console.print("Usage: hermes workspace roots [list|add|remove]")
     else:
         console.print(f"[bold red]Unknown workspace action: {action}[/]")
 
@@ -166,5 +238,36 @@ def handle_workspace_slash(cmd: str, console: Optional[Console] = None) -> None:
             return
         _print_retrieve(console, query=query)
         return
+    if action == "roots":
+        if len(parts) == 1 or parts[1].lower() == "list":
+            _print_roots(console)
+            return
+        sub = parts[1].lower()
+        if sub == "add":
+            if len(parts) < 3:
+                console.print("Usage: /workspace roots add <path> [--recursive]")
+                return
+            recursive = "--recursive" in parts[3:] or "--recursive" in parts[2:]
+            root_path = parts[2]
+            result = add_workspace_root(root_path, recursive=recursive)
+            if result.get("success"):
+                root = result["root"]
+                mode = "recursive" if root.get("recursive") else "shallow"
+                console.print(f"Added workspace root: {root['path']} ({mode})")
+            else:
+                console.print(f"[bold red]{result.get('error', 'Failed to add root')}[/]")
+            return
+        if sub == "remove":
+            if len(parts) < 3:
+                console.print("Usage: /workspace roots remove <path-or-label>")
+                return
+            result = remove_workspace_root(parts[2])
+            if result.get("success"):
+                console.print(f"Removed workspace root: {result['removed']['path']}")
+            else:
+                console.print(f"[bold red]{result.get('error', 'Failed to remove root')}[/]")
+            return
+        console.print("Usage: /workspace roots [list|add|remove]")
+        return
 
-    console.print("Usage: /workspace [status|index|list [path]|search <query>|retrieve <query>]")
+    console.print("Usage: /workspace [status|index|list [path]|search <query>|retrieve <query>|roots ...]")

@@ -45,6 +45,14 @@ class WorkspaceEntry:
     mime_type: str
 
 
+@dataclass
+class WorkspaceRootSpec:
+    label: str
+    root_path: Path
+    recursive: bool
+    is_workspace: bool = False
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -95,6 +103,78 @@ def _workspace_enabled(config: dict[str, Any]) -> bool:
     return bool((config.get("workspace", {}) or {}).get("enabled", True))
 
 
+def _configured_extra_roots(config: dict[str, Any]) -> list[Any]:
+    kb_cfg = config.get("knowledgebase", {}) or {}
+    roots = kb_cfg.get("roots") or []
+    return roots if isinstance(roots, list) else []
+
+
+def get_workspace_root_specs(config: dict[str, Any] | None = None) -> list[WorkspaceRootSpec]:
+    cfg = _ensure_config(config)
+    paths = get_workspace_paths(cfg, ensure=True)
+    workspace_root = paths.workspace_root.resolve()
+    specs = [WorkspaceRootSpec(label="workspace", root_path=workspace_root, recursive=True, is_workspace=True)]
+    seen_paths = {str(workspace_root)}
+    used_labels = {"workspace"}
+
+    for entry in _configured_extra_roots(cfg):
+        if isinstance(entry, str):
+            raw_path = entry
+            recursive = True
+        elif isinstance(entry, dict):
+            raw_path = entry.get("path", "")
+            recursive = bool(entry.get("recursive", False))
+        else:
+            continue
+        if not raw_path:
+            continue
+        resolved = Path(os.path.expandvars(os.path.expanduser(str(raw_path)))).resolve()
+        if str(resolved) in seen_paths:
+            continue
+        seen_paths.add(str(resolved))
+        base_label = resolved.name or str(resolved)
+        label = base_label
+        counter = 2
+        while label in used_labels:
+            label = f"{base_label}-{counter}"
+            counter += 1
+        used_labels.add(label)
+        specs.append(WorkspaceRootSpec(label=label, root_path=resolved, recursive=recursive, is_workspace=False))
+    return specs
+
+
+def _workspace_display_path(spec: WorkspaceRootSpec, file_path: Path) -> str:
+    rel = file_path.relative_to(spec.root_path).as_posix()
+    return rel if spec.is_workspace else f"{spec.label}/{rel}"
+
+
+def _resolve_scope_roots(config: dict[str, Any], relative_path: str = "") -> list[tuple[WorkspaceRootSpec, Path]]:
+    specs = get_workspace_root_specs(config)
+    if not relative_path:
+        return [(spec, spec.root_path) for spec in specs if spec.root_path.exists()]
+
+    for spec in specs:
+        label = spec.label
+        if relative_path == label:
+            return [(spec, spec.root_path)]
+        if not spec.is_workspace and relative_path.startswith(label + "/"):
+            subpath = relative_path[len(label) + 1:]
+            candidate = (spec.root_path / subpath).resolve()
+            try:
+                candidate.relative_to(spec.root_path)
+            except ValueError:
+                return []
+            return [(spec, candidate)] if candidate.exists() else []
+
+    workspace_spec = specs[0]
+    candidate = (workspace_spec.root_path / relative_path).resolve()
+    try:
+        candidate.relative_to(workspace_spec.root_path)
+    except ValueError:
+        return []
+    return [(workspace_spec, candidate)] if candidate.exists() else []
+
+
 def _load_ignore_patterns(workspace_root: Path, include_hidden: bool = False) -> list[str]:
     patterns: list[str] = []
     ignore_file = workspace_root / ".hermesignore"
@@ -123,17 +203,18 @@ def _matches_ignore(rel_posix: str, patterns: Iterable[str]) -> bool:
     return False
 
 
-def _iter_workspace_files(paths: WorkspacePaths, config: dict[str, Any], include_hidden: bool = False) -> Iterable[Path]:
+def _iter_root_files(root: WorkspaceRootSpec, config: dict[str, Any], include_hidden: bool = False) -> Iterable[Path]:
     kb_cfg = config.get("knowledgebase", {}) or {}
     indexing_cfg = kb_cfg.get("indexing", {}) or {}
     max_file_mb = int(indexing_cfg.get("max_file_mb", 10) or 10)
     max_file_bytes = max_file_mb * 1024 * 1024
-    patterns = _load_ignore_patterns(paths.workspace_root, include_hidden=include_hidden)
+    patterns = _load_ignore_patterns(root.root_path, include_hidden=include_hidden)
+    iterator = root.root_path.rglob("*") if root.recursive else root.root_path.iterdir()
 
-    for file_path in sorted(paths.workspace_root.rglob("*")):
+    for file_path in sorted(iterator):
         if not file_path.is_file():
             continue
-        rel_path = file_path.relative_to(paths.workspace_root)
+        rel_path = file_path.relative_to(root.root_path)
         if rel_path.as_posix() == ".hermesignore":
             continue
         if not include_hidden and _is_hidden_rel(rel_path):
@@ -148,6 +229,14 @@ def _iter_workspace_files(paths: WorkspacePaths, config: dict[str, Any], include
         yield file_path
 
 
+def _iter_active_workspace_files(config: dict[str, Any], include_hidden: bool = False) -> Iterable[tuple[WorkspaceRootSpec, Path]]:
+    for root in get_workspace_root_specs(config):
+        if not root.root_path.exists():
+            continue
+        for file_path in _iter_root_files(root, config, include_hidden=include_hidden):
+            yield root, file_path
+
+
 def _mime_for(path: Path) -> str:
     ext = path.suffix.lower()
     if ext == ".md":
@@ -157,10 +246,10 @@ def _mime_for(path: Path) -> str:
     return "application/octet-stream"
 
 
-def _entry_for(path: Path, root: Path) -> WorkspaceEntry:
+def _entry_for(path: Path, root: Path, display_path: str | None = None) -> WorkspaceEntry:
     stat_result = path.stat()
     return WorkspaceEntry(
-        relative_path=path.relative_to(root).as_posix(),
+        relative_path=display_path or path.relative_to(root).as_posix(),
         size_bytes=stat_result.st_size,
         modified_at=datetime.fromtimestamp(stat_result.st_mtime, tz=timezone.utc).isoformat(),
         mime_type=_mime_for(path),
@@ -173,7 +262,10 @@ def build_workspace_manifest(config: dict[str, Any] | None = None) -> dict[str, 
         return {"success": False, "error": "Workspace is disabled in config."}
 
     paths = get_workspace_paths(cfg, ensure=True)
-    entries = [_entry_for(path, paths.workspace_root) for path in _iter_workspace_files(paths, cfg)]
+    entries = [
+        _entry_for(file_path, root.root_path, display_path=_workspace_display_path(root, file_path))
+        for root, file_path in _iter_active_workspace_files(cfg)
+    ]
 
     payload = {
         "success": True,
@@ -194,7 +286,10 @@ def workspace_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"success": False, "error": "Workspace is disabled in config."}
 
     paths = get_workspace_paths(cfg, ensure=True)
-    entries = [_entry_for(path, paths.workspace_root) for path in _iter_workspace_files(paths, cfg)]
+    entries = [
+        _entry_for(file_path, root.root_path, display_path=_workspace_display_path(root, file_path))
+        for root, file_path in _iter_active_workspace_files(cfg)
+    ]
     category_counts: dict[str, int] = {}
     for entry in entries:
         top = entry.relative_path.split("/", 1)[0]
@@ -232,6 +327,15 @@ def workspace_status(config: dict[str, Any] | None = None) -> dict[str, Any]:
         "embedding_backend": index_info.get("embedding_backend", ""),
         "dense_backend": index_info.get("dense_backend", ""),
         "default_subdirs": list(DEFAULT_WORKSPACE_SUBDIRS),
+        "active_roots": [
+            {
+                "label": root.label,
+                "path": str(root.root_path),
+                "recursive": root.recursive,
+                "is_workspace": root.is_workspace,
+            }
+            for root in get_workspace_root_specs(cfg)
+        ],
     }
 
 
@@ -248,35 +352,33 @@ def workspace_list(
         return {"success": False, "error": "Workspace is disabled in config."}
 
     paths = get_workspace_paths(cfg, ensure=True)
-    base = paths.workspace_root
-    if relative_path:
-        candidate = (base / relative_path).resolve()
-        try:
-            candidate.relative_to(base)
-        except ValueError:
-            return {"success": False, "error": "Requested path escapes workspace root."}
-        base = candidate
-        if not base.exists():
-            return {"success": False, "error": f"Workspace path not found: {relative_path}"}
+    scoped_roots = _resolve_scope_roots(cfg, relative_path)
+    if not scoped_roots:
+        return {"success": False, "error": f"Workspace path not found: {relative_path}"}
 
     entries: list[dict[str, Any]] = []
-    patterns = _load_ignore_patterns(paths.workspace_root, include_hidden=include_hidden)
-    iterator = base.rglob("*") if recursive else base.iterdir()
-    for path in sorted(iterator):
-        if not path.is_file():
+    for root, base in scoped_roots:
+        if base.is_file():
+            display_path = _workspace_display_path(root, base)
+            entries.append(asdict(_entry_for(base, root.root_path, display_path=display_path)))
             continue
-        rel = path.relative_to(paths.workspace_root)
-        if not include_hidden and _is_hidden_rel(rel):
-            continue
-        if _matches_ignore(rel.as_posix(), patterns):
-            continue
-        entries.append(asdict(_entry_for(path, paths.workspace_root)))
+        patterns = _load_ignore_patterns(root.root_path, include_hidden=include_hidden)
+        iterator = base.rglob("*") if recursive else base.iterdir()
+        for path in sorted(iterator):
+            if not path.is_file():
+                continue
+            rel = path.relative_to(root.root_path)
+            if not include_hidden and _is_hidden_rel(rel):
+                continue
+            if _matches_ignore(rel.as_posix(), patterns):
+                continue
+            entries.append(asdict(_entry_for(path, root.root_path, display_path=_workspace_display_path(root, path))))
 
     sliced = entries[offset:offset + limit]
     return {
         "success": True,
         "workspace_root": str(paths.workspace_root),
-        "base_path": str(base),
+        "base_path": relative_path or str(paths.workspace_root),
         "count": len(sliced),
         "total_count": len(entries),
         "entries": sliced,
@@ -309,50 +411,49 @@ def workspace_search(
         return {"success": False, "error": "Query cannot be empty."}
 
     paths = get_workspace_paths(cfg, ensure=True)
-    base = paths.workspace_root
-    if relative_path:
-        candidate = (base / relative_path).resolve()
-        try:
-            candidate.relative_to(base)
-        except ValueError:
-            return {"success": False, "error": "Requested path escapes workspace root."}
-        base = candidate
-        if not base.exists():
-            return {"success": False, "error": f"Workspace path not found: {relative_path}"}
+    scoped_roots = _resolve_scope_roots(cfg, relative_path)
+    if not scoped_roots:
+        return {"success": False, "error": f"Workspace path not found: {relative_path}"}
 
     try:
         regex = re.compile(query)
     except re.error as e:
         return {"success": False, "error": f"Invalid regex: {e}"}
-    patterns = _load_ignore_patterns(paths.workspace_root, include_hidden=include_hidden)
     matches: list[dict[str, Any]] = []
 
-    for file_path in sorted(base.rglob("*")):
-        if not file_path.is_file():
-            continue
-        rel = file_path.relative_to(paths.workspace_root)
-        if not include_hidden and _is_hidden_rel(rel):
-            continue
-        if _matches_ignore(rel.as_posix(), patterns):
-            continue
-        if file_glob and not fnmatch.fnmatch(file_path.name, file_glob):
-            continue
-        if _is_probably_binary(file_path):
-            continue
-        try:
-            text = file_path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            if regex.search(line):
-                matches.append(
-                    {
-                        "relative_path": rel.as_posix(),
-                        "path": str(file_path),
-                        "line": line_number,
-                        "content": line,
-                    }
-                )
+    for root, base in scoped_roots:
+        if base.is_file():
+            candidate_files = [base]
+        else:
+            candidate_files = sorted(base.rglob("*")) if root.recursive else sorted(base.iterdir())
+        patterns = _load_ignore_patterns(root.root_path, include_hidden=include_hidden)
+        for file_path in candidate_files:
+            if not file_path.is_file():
+                continue
+            rel = file_path.relative_to(root.root_path)
+            if not include_hidden and _is_hidden_rel(rel):
+                continue
+            if _matches_ignore(rel.as_posix(), patterns):
+                continue
+            if file_glob and not fnmatch.fnmatch(file_path.name, file_glob):
+                continue
+            if _is_probably_binary(file_path):
+                continue
+            try:
+                text = file_path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            display_path = _workspace_display_path(root, file_path)
+            for line_number, line in enumerate(text.splitlines(), start=1):
+                if regex.search(line):
+                    matches.append(
+                        {
+                            "relative_path": display_path,
+                            "path": str(file_path),
+                            "line": line_number,
+                            "content": line,
+                        }
+                    )
 
     sliced = matches[offset:offset + limit]
     return {
@@ -988,8 +1089,8 @@ def index_workspace_knowledgebase(config: dict[str, Any] | None = None) -> dict[
     skipped_files = 0
 
     try:
-        for file_path in _iter_workspace_files(paths, cfg):
-            rel_path = file_path.relative_to(paths.workspace_root).as_posix()
+        for root, file_path in _iter_active_workspace_files(cfg):
+            rel_path = _workspace_display_path(root, file_path)
             current_files.add(rel_path)
             text = _read_indexable_text(file_path)
             if not text:
@@ -1210,6 +1311,81 @@ def workspace_retrieve(
         }
     finally:
         conn.close()
+
+
+def list_workspace_roots(config: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = _ensure_config(config)
+    roots = [
+        {
+            "label": root.label,
+            "path": str(root.root_path),
+            "recursive": root.recursive,
+            "is_workspace": root.is_workspace,
+        }
+        for root in get_workspace_root_specs(cfg)
+    ]
+    return {"success": True, "count": len(roots), "roots": roots}
+
+
+def add_workspace_root_to_config(config: dict[str, Any], root_path: str, recursive: bool = False) -> dict[str, Any]:
+    cfg = config
+    paths = get_workspace_paths(cfg, ensure=True)
+    workspace_root = paths.workspace_root.resolve()
+    resolved = Path(os.path.expandvars(os.path.expanduser(root_path))).resolve()
+    if resolved == workspace_root:
+        return {"success": False, "error": "The canonical Hermes workspace is already active and does not need to be added."}
+    current = _configured_extra_roots(cfg)
+    normalized_current: list[dict[str, Any]] = []
+    for entry in current:
+        if isinstance(entry, str):
+            normalized_current.append({"path": entry, "recursive": True})
+        elif isinstance(entry, dict) and entry.get("path"):
+            normalized_current.append({"path": entry["path"], "recursive": bool(entry.get("recursive", False))})
+    for entry in normalized_current:
+        existing = Path(os.path.expandvars(os.path.expanduser(entry["path"]))).resolve()
+        if existing == resolved:
+            return {"success": False, "error": f"Root already active: {resolved}"}
+    normalized_current.append({"path": str(resolved), "recursive": bool(recursive)})
+    cfg.setdefault("knowledgebase", {})["roots"] = normalized_current
+    return {
+        "success": True,
+        "root": {"label": resolved.name or str(resolved), "path": str(resolved), "recursive": bool(recursive), "is_workspace": False},
+        "roots": normalized_current,
+    }
+
+
+def remove_workspace_root_from_config(config: dict[str, Any], identifier: str) -> dict[str, Any]:
+    cfg = config
+    paths = get_workspace_paths(cfg, ensure=True)
+    workspace_root = paths.workspace_root.resolve()
+    current = _configured_extra_roots(cfg)
+    normalized_current: list[dict[str, Any]] = []
+    removed: dict[str, Any] | None = None
+    target_resolved = None
+    try:
+        target_resolved = Path(os.path.expandvars(os.path.expanduser(identifier))).resolve()
+    except Exception:
+        target_resolved = None
+    for entry in current:
+        if isinstance(entry, str):
+            entry_dict = {"path": entry, "recursive": True}
+        elif isinstance(entry, dict) and entry.get("path"):
+            entry_dict = {"path": entry["path"], "recursive": bool(entry.get("recursive", False))}
+        else:
+            continue
+        resolved = Path(os.path.expandvars(os.path.expanduser(entry_dict["path"]))).resolve()
+        label = resolved.name or str(resolved)
+        if resolved == workspace_root:
+            normalized_current.append(entry_dict)
+            continue
+        if removed is None and ((target_resolved is not None and resolved == target_resolved) or identifier == label or identifier == str(resolved)):
+            removed = {"label": label, "path": str(resolved), "recursive": entry_dict["recursive"], "is_workspace": False}
+            continue
+        normalized_current.append(entry_dict)
+    if removed is None:
+        return {"success": False, "error": f"Workspace root not found: {identifier}"}
+    cfg.setdefault("knowledgebase", {})["roots"] = normalized_current
+    return {"success": True, "removed": removed, "roots": normalized_current}
 
 
 def _should_attempt_workspace_retrieval(user_message: str) -> bool:

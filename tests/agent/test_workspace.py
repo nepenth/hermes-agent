@@ -238,6 +238,25 @@ class TestWorkspaceReranker:
         assert ranked[0]["content"] == "rollback plan details"
 
 
+class TestWorkspaceRoots:
+    def test_index_respects_non_recursive_additional_root_by_default(self, tmp_path):
+        from agent.workspace import index_workspace_knowledgebase, workspace_search
+
+        cfg = _config(tmp_path)
+        extra = tmp_path / "notes"
+        (extra / "nested").mkdir(parents=True)
+        (extra / "top.txt").write_text("release notes\n", encoding="utf-8")
+        (extra / "nested" / "deep.txt").write_text("hidden release notes\n", encoding="utf-8")
+        cfg["knowledgebase"]["roots"] = [{"path": str(extra), "recursive": False}]
+
+        index_workspace_knowledgebase(cfg)
+        result = workspace_search("release", config=cfg)
+
+        paths = {match["relative_path"] for match in result["matches"]}
+        assert "notes/top.txt" in paths
+        assert "notes/nested/deep.txt" not in paths
+
+
 class TestWorkspaceRetrieval:
     def test_index_workspace_builds_chunk_db_and_retrieves_ranked_chunks(self, tmp_path):
         from agent.workspace import index_workspace_knowledgebase, workspace_retrieve

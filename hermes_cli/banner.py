@@ -131,26 +131,11 @@ def _workspace_root_labels(config: Dict[str, Any]) -> list[str]:
     kb_cfg = config.get("knowledgebase", {}) or {}
     if not workspace_cfg.get("enabled", True) or not kb_cfg.get("enabled", True):
         return []
-
-    workspace_path = workspace_cfg.get("path") or str(Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "workspace")
-    workspace_root = Path(os.path.expandvars(os.path.expanduser(workspace_path))).resolve()
-    roots = kb_cfg.get("roots") or [str(workspace_root)]
-
-    labels: list[str] = []
-    seen: set[str] = set()
-    for raw_root in roots:
-        expanded = Path(os.path.expandvars(os.path.expanduser(str(raw_root)))).resolve()
-        if expanded == workspace_root:
-            label = "workspace"
-        else:
-            label = expanded.name or str(expanded)
-            if label == workspace_root.name:
-                label = str(expanded)
-        if label in seen:
-            continue
-        seen.add(label)
-        labels.append(label)
-    return labels
+    try:
+        from agent.workspace import get_workspace_root_specs
+        return [root.label for root in get_workspace_root_specs(config)]
+    except Exception:
+        return []
 
 
 def _get_workspace_banner_line() -> Optional[str]:
