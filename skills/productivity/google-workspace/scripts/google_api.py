@@ -74,7 +74,8 @@ def _gws_binary() -> str | None:
 
 def _gws_env() -> dict[str, str]:
     env = os.environ.copy()
-    env["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] = str(TOKEN_PATH)
+    creds = get_credentials()
+    env["GOOGLE_WORKSPACE_CLI_TOKEN"] = creds.token
     return env
 
 

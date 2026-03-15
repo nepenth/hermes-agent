@@ -48,6 +48,7 @@ def google_api_module(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(module, "TOKEN_PATH", token_path)
     monkeypatch.setattr(module, "_gws_binary", lambda: "/usr/bin/gws", raising=False)
+    monkeypatch.setattr(module, "get_credentials", lambda: SimpleNamespace(token="access-token"))
     monkeypatch.setattr(
         module,
         "build_service",
@@ -106,7 +107,7 @@ def test_gmail_search_uses_gws_and_normalizes_results(google_api_module, monkeyp
             "labels": ["UNREAD"],
         }
     ]
-    assert calls[0]["env"]["GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"] == str(google_api_module.TOKEN_PATH)
+    assert calls[0]["env"]["GOOGLE_WORKSPACE_CLI_TOKEN"] == "access-token"
 
 
 def test_calendar_create_uses_gws_insert_and_normalizes_result(google_api_module, monkeypatch, capsys):
