@@ -173,6 +173,21 @@ All variables go in `~/.hermes/.env`. You can also set them with `hermes config 
 | `CONTEXT_COMPRESSION_THRESHOLD` | Trigger at this % of limit (default: 0.50) |
 | `CONTEXT_COMPRESSION_MODEL` | Model for summaries |
 
+## Auxiliary Task Overrides
+
+| Variable | Description |
+|----------|-------------|
+| `AUXILIARY_VISION_PROVIDER` | Override provider for vision tasks |
+| `AUXILIARY_VISION_MODEL` | Override model for vision tasks |
+| `AUXILIARY_VISION_BASE_URL` | Direct OpenAI-compatible endpoint for vision tasks |
+| `AUXILIARY_VISION_API_KEY` | API key paired with `AUXILIARY_VISION_BASE_URL` |
+| `AUXILIARY_WEB_EXTRACT_PROVIDER` | Override provider for web extraction/summarization |
+| `AUXILIARY_WEB_EXTRACT_MODEL` | Override model for web extraction/summarization |
+| `AUXILIARY_WEB_EXTRACT_BASE_URL` | Direct OpenAI-compatible endpoint for web extraction/summarization |
+| `AUXILIARY_WEB_EXTRACT_API_KEY` | API key paired with `AUXILIARY_WEB_EXTRACT_BASE_URL` |
+| `CONTEXT_COMPRESSION_PROVIDER` | Override provider for context compression summaries |
+| `CONTEXT_COMPRESSION_MODEL` | Override model for context compression summaries |
+
 ## Provider Routing (config.yaml only)
 
 These go in `~/.hermes/config.yaml` under the `provider_routing` section:
