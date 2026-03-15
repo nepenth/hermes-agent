@@ -23,6 +23,10 @@ def _print_status(console: Console) -> None:
     console.print(f"Index DB: {data.get('index_path', '(not built)')}")
     console.print(f"Files: {data['file_count']}")
     console.print(f"Chunks: {data.get('chunk_count', 0)}")
+    if data.get('embedding_backend'):
+        console.print(f"Embedding backend: {data['embedding_backend']}")
+    if data.get('dense_backend'):
+        console.print(f"Dense backend: {data['dense_backend']}")
     counts = data.get("category_counts") or {}
     if counts:
         for key in sorted(counts):
@@ -37,6 +41,10 @@ def _print_index(console: Console) -> None:
     console.print(f"Indexed {data['file_count']} files into {data.get('chunk_count', 0)} chunks")
     console.print(f"Manifest: {data['manifest_path']}")
     console.print(f"Index DB: {data['index_path']}")
+    if data.get('embedding_backend'):
+        console.print(f"Embedding backend: {data['embedding_backend']}")
+    if data.get('dense_backend'):
+        console.print(f"Dense backend: {data['dense_backend']}")
 
 
 def _print_list(console: Console, path: str = "", recursive: bool = True, limit: int = 20, offset: int = 0) -> None:
@@ -78,8 +86,12 @@ def _print_retrieve(console: Console, query: str, limit: int = 8) -> None:
     if not results:
         console.print("No retrieval results found.")
         return
+    if data.get('dense_backend') or data.get('rerank_backend'):
+        console.print(f"Dense backend: {data.get('dense_backend', '')}  Rerank backend: {data.get('rerank_backend', '')}")
     for result in results:
-        console.print(f"{result['relative_path']}  [score={result['rrf_score']:.4f} dense={result['dense_score']:.3f}]")
+        rerank_score = result.get('rerank_score')
+        rerank_text = f" rerank={rerank_score:.3f}" if isinstance(rerank_score, (int, float)) else ""
+        console.print(f"{result['relative_path']}  [rrf={result['rrf_score']:.4f} dense={result['dense_score']:.3f}{rerank_text}]")
         console.print(result["content"])
         console.print()
 

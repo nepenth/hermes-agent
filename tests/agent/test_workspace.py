@@ -172,6 +172,72 @@ class TestWorkspaceEmbedder:
         assert query == [0.1, 0.2, 0.3]
 
 
+class TestWorkspaceChunking:
+    def test_markdown_chunking_prefers_headings(self, tmp_path):
+        from agent.workspace import _chunk_text
+
+        cfg = _config(tmp_path)
+        text = "# Intro\n\nAlpha overview.\n\n## Deploy\n\nBlue green rollout plan.\n\n## Rollback\n\nRollback steps.\n"
+        chunks = _chunk_text(text, Path("docs/plan.md"), cfg)
+
+        assert len(chunks) >= 3
+        assert any("deploy" in chunk["content"].lower() for chunk in chunks)
+        assert any("rollback" in chunk["content"].lower() for chunk in chunks)
+
+    def test_code_chunking_prefers_symbol_boundaries(self, tmp_path):
+        from agent.workspace import _chunk_text
+
+        cfg = _config(tmp_path)
+        text = "def alpha():\n    return 'a'\n\n\ndef beta():\n    return 'b'\n"
+        chunks = _chunk_text(text, Path("code/example.py"), cfg)
+
+        assert len(chunks) >= 2
+        assert any("def alpha" in chunk["content"] for chunk in chunks)
+        assert any("def beta" in chunk["content"] for chunk in chunks)
+
+
+class TestWorkspaceReranker:
+    def test_local_cross_encoder_reranker_reorders_candidates(self, tmp_path, monkeypatch):
+        from agent.workspace import WorkspaceReranker
+
+        calls = {}
+
+        class FakeCrossEncoder:
+            def __init__(self, model_name, **kwargs):
+                calls["model_name"] = model_name
+                calls["kwargs"] = kwargs
+
+            def predict(self, pairs, **kwargs):
+                calls["pairs"] = pairs
+                calls["predict_kwargs"] = kwargs
+                return [0.1, 0.9]
+
+        fake_torch = SimpleNamespace(
+            cuda=SimpleNamespace(is_available=lambda: False),
+            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: False)),
+        )
+        monkeypatch.setitem(sys.modules, "torch", fake_torch)
+        monkeypatch.setitem(sys.modules, "sentence_transformers", SimpleNamespace(CrossEncoder=FakeCrossEncoder))
+
+        cfg = _config(tmp_path)
+        cfg["knowledgebase"]["reranker"]["enabled"] = True
+        cfg["knowledgebase"]["reranker"]["provider"] = "local"
+        cfg["knowledgebase"]["reranker"]["model"] = "cross-encoder/ms-marco-MiniLM-L6-v2"
+
+        reranker = WorkspaceReranker(cfg)
+        ranked = reranker.rerank(
+            "rollback plan",
+            [
+                {"content": "deployment overview", "rrf_score": 0.9, "dense_score": 0.9},
+                {"content": "rollback plan details", "rrf_score": 0.3, "dense_score": 0.2},
+            ],
+        )
+
+        assert reranker.backend == "cross-encoder"
+        assert calls["model_name"] == "cross-encoder/ms-marco-MiniLM-L6-v2"
+        assert ranked[0]["content"] == "rollback plan details"
+
+
 class TestWorkspaceRetrieval:
     def test_index_workspace_builds_chunk_db_and_retrieves_ranked_chunks(self, tmp_path):
         from agent.workspace import index_workspace_knowledgebase, workspace_retrieve
@@ -196,6 +262,20 @@ class TestWorkspaceRetrieval:
         assert retrieved["count"] >= 1
         assert retrieved["results"][0]["relative_path"] == "docs/arch.md"
         assert "blue green" in retrieved["results"][0]["content"].lower()
+
+    def test_workspace_retrieve_reports_backend_metadata(self, tmp_path):
+        from agent.workspace import index_workspace_knowledgebase, workspace_retrieve
+
+        cfg = _config(tmp_path)
+        workspace = Path(cfg["workspace"]["path"])
+        (workspace / "docs").mkdir(parents=True)
+        (workspace / "docs" / "plan.md").write_text("blue green rollout plan\n", encoding="utf-8")
+
+        index_workspace_knowledgebase(cfg)
+        retrieved = workspace_retrieve("blue green rollout", config=cfg, limit=2)
+
+        assert "dense_backend" in retrieved
+        assert "rerank_backend" in retrieved
 
     def test_workspace_context_for_turn_formats_sources_and_respects_gating(self, tmp_path):
         from agent.workspace import index_workspace_knowledgebase, workspace_context_for_turn
