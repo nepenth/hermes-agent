@@ -760,6 +760,7 @@ def cmd_model(args):
         active = "custom"
 
     provider_labels = {
+        "ai-gateway": "AI Gateway",
         "openrouter": "OpenRouter",
         "nous": "Nous Portal",
         "openai-codex": "OpenAI Codex",
@@ -779,6 +780,7 @@ def cmd_model(args):
 
     # Step 1: Provider selection — put active provider first with marker
     providers = [
+        ("ai-gateway", "AI Gateway (Vercel — 200+ models, pay-per-use)"),
         ("openrouter", "OpenRouter (100+ models, pay-per-use)"),
         ("nous", "Nous Portal (Nous Research subscription)"),
         ("openai-codex", "OpenAI Codex"),
@@ -855,7 +857,7 @@ def cmd_model(args):
         _model_flow_anthropic(config, current_model)
     elif selected_provider == "kimi-coding":
         _model_flow_kimi(config, current_model)
-    elif selected_provider in ("zai", "minimax", "minimax-cn"):
+    elif selected_provider in ("zai", "minimax", "minimax-cn", "ai-gateway"):
         _model_flow_api_key_provider(config, selected_provider, current_model)
 
 
