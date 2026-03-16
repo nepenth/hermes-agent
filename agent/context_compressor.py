@@ -65,11 +65,40 @@ class ContextCompressor:
 
         self.summary_model = summary_model_override or ""
 
+        # Context usage warning thresholds (fire once each per session)
+        self._warned_80 = False
+        self._warned_95 = False
+
     def update_from_response(self, usage: Dict[str, Any]):
         """Update tracked token usage from API response."""
         self.last_prompt_tokens = usage.get("prompt_tokens", 0)
         self.last_completion_tokens = usage.get("completion_tokens", 0)
         self.last_total_tokens = usage.get("total_tokens", 0)
+
+    def check_context_warning(self) -> str | None:
+        """Return a warning string if context usage crossed a threshold, else None.
+
+        Each threshold fires at most once per session to avoid spam.
+        """
+        if not self.context_length or not self.last_prompt_tokens:
+            return None
+        pct = self.last_prompt_tokens / self.context_length
+        if pct >= 0.95 and not self._warned_95:
+            self._warned_95 = True
+            used = f"{self.last_prompt_tokens:,}"
+            total = f"{self.context_length:,}"
+            return (
+                f"⚠ Context nearly exhausted ({used}/{total} tokens, {pct:.0%}). "
+                f"Risk of errors or truncation. Use /new to start fresh."
+            )
+        if pct >= 0.80 and not self._warned_80:
+            self._warned_80 = True
+            used = f"{self.last_prompt_tokens:,}"
+            total = f"{self.context_length:,}"
+            return (
+                f"⚠ Context window {pct:.0%} full ({used}/{total} tokens). "
+                f"Consider /compress or /new if responses degrade."
+            )
 
     def should_compress(self, prompt_tokens: int = None) -> bool:
         """Check if context exceeds the compression threshold."""

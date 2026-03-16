@@ -5102,6 +5102,10 @@ class AIAgent:
                     if hasattr(response, 'usage') and response.usage:
                         if self.api_mode in ("codex_responses", "anthropic_messages"):
                             prompt_tokens = getattr(response.usage, 'input_tokens', 0) or 0
+                            # Include cached input tokens for accurate context tracking
+                            # (Anthropic reports non-cached, cache-read, and cache-creation separately)
+                            prompt_tokens += getattr(response.usage, 'cache_read_input_tokens', 0) or 0
+                            prompt_tokens += getattr(response.usage, 'cache_creation_input_tokens', 0) or 0
                             completion_tokens = getattr(response.usage, 'output_tokens', 0) or 0
                             total_tokens = (
                                 getattr(response.usage, 'total_tokens', None)
@@ -5117,6 +5121,15 @@ class AIAgent:
                             "total_tokens": total_tokens,
                         }
                         self.context_compressor.update_from_response(usage_dict)
+
+                        # Emit one-time warnings when context crosses 80% or 95%.
+                        # Always show these (even in quiet_mode) — they're critical
+                        # user-facing alerts, not debug noise.  Only suppress for
+                        # subagents (delegate_depth > 0) where the user can't act.
+                        if getattr(self, '_delegate_depth', 0) == 0:
+                            _ctx_warning = self.context_compressor.check_context_warning()
+                            if _ctx_warning:
+                                print(f"\n{_ctx_warning}\n")
 
                         # Cache discovered context length after successful call
                         if self.context_compressor._context_probed:
