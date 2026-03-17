@@ -769,6 +769,38 @@ OPTIONAL_ENV_VARS = {
         "advanced": True,
     },
 
+    # ── HTTP Server ──
+    "HTTP_SERVER_ENABLED": {
+        "description": "Enable the OpenAI-compatible HTTP server in the gateway (true/false)",
+        "prompt": "Enable HTTP server (true/false)",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+    },
+    "HTTP_SERVER_KEY": {
+        "description": "Bearer token for HTTP server authentication. Leave empty for local-only use.",
+        "prompt": "HTTP server auth key",
+        "url": None,
+        "password": True,
+        "category": "messaging",
+    },
+    "HTTP_SERVER_PORT": {
+        "description": "HTTP server port (default: 8642)",
+        "prompt": "HTTP server port",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
+    "HTTP_SERVER_HOST": {
+        "description": "HTTP server bind address (default: 127.0.0.1). Use 0.0.0.0 for network access.",
+        "prompt": "HTTP server host",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
+
     # ── Agent settings ──
     "MESSAGING_CWD": {
         "description": "Working directory for terminal commands via messaging",

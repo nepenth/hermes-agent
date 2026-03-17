@@ -45,6 +45,7 @@ class Platform(Enum):
     HOMEASSISTANT = "homeassistant"
     EMAIL = "email"
     SMS = "sms"
+    HTTP_SERVER = "http_server"
     DINGTALK = "dingtalk"
 
 
@@ -237,6 +238,9 @@ class GatewayConfig:
                 connected.append(platform)
             # SMS uses api_key (Twilio auth token) — SID checked via env
             elif platform == Platform.SMS and os.getenv("TWILIO_ACCOUNT_SID"):
+                connected.append(platform)
+            # HTTP Server uses enabled flag only (no token needed)
+            elif platform == Platform.HTTP_SERVER:
                 connected.append(platform)
         return connected
     
@@ -633,6 +637,25 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
                 chat_id=sms_home,
                 name=os.getenv("SMS_HOME_CHANNEL_NAME", "Home"),
             )
+
+    # HTTP Server
+    http_server_enabled = os.getenv("HTTP_SERVER_ENABLED", "").lower() in ("true", "1", "yes")
+    http_server_key = os.getenv("HTTP_SERVER_KEY", "")
+    http_server_port = os.getenv("HTTP_SERVER_PORT")
+    http_server_host = os.getenv("HTTP_SERVER_HOST")
+    if http_server_enabled or http_server_key:
+        if Platform.HTTP_SERVER not in config.platforms:
+            config.platforms[Platform.HTTP_SERVER] = PlatformConfig()
+        config.platforms[Platform.HTTP_SERVER].enabled = True
+        if http_server_key:
+            config.platforms[Platform.HTTP_SERVER].extra["key"] = http_server_key
+        if http_server_port:
+            try:
+                config.platforms[Platform.HTTP_SERVER].extra["port"] = int(http_server_port)
+            except ValueError:
+                pass
+        if http_server_host:
+            config.platforms[Platform.HTTP_SERVER].extra["host"] = http_server_host
 
     # Session settings
     idle_minutes = os.getenv("SESSION_IDLE_MINUTES")
