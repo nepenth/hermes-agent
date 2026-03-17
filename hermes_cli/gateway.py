@@ -1570,6 +1570,22 @@ def gateway_command(args):
                 pass
         
         if not service_available:
+            # systemd/launchd restart failed — check if linger is the issue
+            if is_linux():
+                linger_ok, _detail = get_systemd_linger_status()
+                if linger_ok is not True:
+                    import getpass
+                    _username = getpass.getuser()
+                    print()
+                    print("⚠ Cannot restart gateway as a service — linger is not enabled.")
+                    print("  The gateway user service requires linger to function on headless servers.")
+                    print()
+                    print(f"  Run:  sudo loginctl enable-linger {_username}")
+                    print()
+                    print("  Then restart the gateway:")
+                    print("    hermes gateway restart")
+                    return
+
             # Manual restart: kill existing processes
             killed = kill_gateway_processes()
             if killed:
