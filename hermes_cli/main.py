@@ -760,7 +760,6 @@ def cmd_model(args):
         active = "custom"
 
     provider_labels = {
-        "ai-gateway": "AI Gateway",
         "openrouter": "OpenRouter",
         "nous": "Nous Portal",
         "openai-codex": "OpenAI Codex",
@@ -769,6 +768,7 @@ def cmd_model(args):
         "kimi-coding": "Kimi / Moonshot",
         "minimax": "MiniMax",
         "minimax-cn": "MiniMax (China)",
+        "ai-gateway": "AI Gateway",
         "custom": "Custom endpoint",
     }
     active_label = provider_labels.get(active, active)
@@ -780,7 +780,6 @@ def cmd_model(args):
 
     # Step 1: Provider selection — put active provider first with marker
     providers = [
-        ("ai-gateway", "AI Gateway (Vercel — 200+ models, pay-per-use)"),
         ("openrouter", "OpenRouter (100+ models, pay-per-use)"),
         ("nous", "Nous Portal (Nous Research subscription)"),
         ("openai-codex", "OpenAI Codex"),
@@ -789,6 +788,7 @@ def cmd_model(args):
         ("kimi-coding", "Kimi / Moonshot (Moonshot AI direct API)"),
         ("minimax", "MiniMax (global direct API)"),
         ("minimax-cn", "MiniMax China (domestic direct API)"),
+        ("ai-gateway", "AI Gateway (Vercel — 200+ models, pay-per-use)"),
     ]
 
     # Add user-defined custom providers from config.yaml
