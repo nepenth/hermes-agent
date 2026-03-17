@@ -171,6 +171,14 @@ TOOL_CATEGORIES = {
                 ],
             },
             {
+                "name": "Tavily",
+                "tag": "AI-native search, extract, and crawl",
+                "web_backend": "tavily",
+                "env_vars": [
+                    {"key": "TAVILY_API_KEY", "prompt": "Tavily API key", "url": "https://app.tavily.com/home"},
+                ],
+            },
+            {
                 "name": "Firecrawl Self-Hosted",
                 "tag": "Free - run your own instance",
                 "web_backend": "firecrawl",
