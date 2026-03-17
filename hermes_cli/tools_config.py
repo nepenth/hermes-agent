@@ -859,6 +859,11 @@ def _reconfigure_provider(provider: dict, config: dict):
             config.get("browser", {}).pop("cloud_provider", None)
             _print_success(f"  Browser set to local mode")
 
+    # Set web search backend in config if applicable
+    if provider.get("web_backend"):
+        config.setdefault("web", {})["backend"] = provider["web_backend"]
+        _print_success(f"  Web backend set to: {provider['web_backend']}")
+
     if not env_vars:
         _print_success(f"  {provider['name']} - no configuration needed!")
         return
