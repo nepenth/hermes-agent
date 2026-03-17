@@ -233,6 +233,7 @@ DEFAULT_CONFIG = {
         "streaming": False,
         "show_cost": False,       # Show $ cost in the status bar (off by default)
         "skin": "default",
+        "theme_mode": "auto",
     },
 
     # Privacy settings
@@ -491,6 +492,21 @@ OPTIONAL_ENV_VARS = {
         "url": "",
         "password": False,
         "category": "provider",
+    },
+    "DASHSCOPE_API_KEY": {
+        "description": "Alibaba Cloud DashScope API key for Qwen models",
+        "prompt": "DashScope API Key",
+        "url": "https://modelstudio.console.alibabacloud.com/",
+        "password": True,
+        "category": "provider",
+    },
+    "DASHSCOPE_BASE_URL": {
+        "description": "Custom DashScope base URL (default: international endpoint)",
+        "prompt": "DashScope Base URL",
+        "url": "",
+        "password": False,
+        "category": "provider",
+        "advanced": True,
     },
     "OPENCODE_ZEN_API_KEY": {
         "description": "OpenCode Zen API key (pay-as-you-go access to curated models)",
