@@ -768,6 +768,38 @@ OPTIONAL_ENV_VARS = {
         "category": "messaging",
         "advanced": True,
     },
+    "API_SERVER_ENABLED": {
+        "description": "Enable the OpenAI-compatible API server (true/false). Allows frontends like Open WebUI, LobeChat, etc. to connect.",
+        "prompt": "Enable API server (true/false)",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
+    "API_SERVER_KEY": {
+        "description": "Bearer token for API server authentication. If empty, all requests are allowed (local use only).",
+        "prompt": "API server auth key (optional)",
+        "url": None,
+        "password": True,
+        "category": "messaging",
+        "advanced": True,
+    },
+    "API_SERVER_PORT": {
+        "description": "Port for the API server (default: 8642).",
+        "prompt": "API server port",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
+    "API_SERVER_HOST": {
+        "description": "Host/bind address for the API server (default: 127.0.0.1). Use 0.0.0.0 for network access — requires API_SERVER_KEY for security.",
+        "prompt": "API server host",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
 
     # ── Agent settings ──
     "MESSAGING_CWD": {

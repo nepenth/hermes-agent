@@ -46,6 +46,7 @@ class Platform(Enum):
     EMAIL = "email"
     SMS = "sms"
     DINGTALK = "dingtalk"
+    API_SERVER = "api_server"
 
 
 @dataclass
@@ -237,6 +238,9 @@ class GatewayConfig:
                 connected.append(platform)
             # SMS uses api_key (Twilio auth token) — SID checked via env
             elif platform == Platform.SMS and os.getenv("TWILIO_ACCOUNT_SID"):
+                connected.append(platform)
+            # API Server uses enabled flag only (no token needed)
+            elif platform == Platform.API_SERVER:
                 connected.append(platform)
         return connected
     
@@ -633,6 +637,25 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
                 chat_id=sms_home,
                 name=os.getenv("SMS_HOME_CHANNEL_NAME", "Home"),
             )
+
+    # API Server
+    api_server_enabled = os.getenv("API_SERVER_ENABLED", "").lower() in ("true", "1", "yes")
+    api_server_key = os.getenv("API_SERVER_KEY", "")
+    api_server_port = os.getenv("API_SERVER_PORT")
+    api_server_host = os.getenv("API_SERVER_HOST")
+    if api_server_enabled or api_server_key:
+        if Platform.API_SERVER not in config.platforms:
+            config.platforms[Platform.API_SERVER] = PlatformConfig()
+        config.platforms[Platform.API_SERVER].enabled = True
+        if api_server_key:
+            config.platforms[Platform.API_SERVER].extra["key"] = api_server_key
+        if api_server_port:
+            try:
+                config.platforms[Platform.API_SERVER].extra["port"] = int(api_server_port)
+            except ValueError:
+                pass
+        if api_server_host:
+            config.platforms[Platform.API_SERVER].extra["host"] = api_server_host
 
     # Session settings
     idle_minutes = os.getenv("SESSION_IDLE_MINUTES")
