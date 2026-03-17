@@ -37,6 +37,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from cron.jobs import get_due_jobs, mark_job_run, save_job_output
 
+# Sentinel: when a job has notify="changes_only", the cron agent can start
+# its response with this marker to suppress delivery.  Output is still saved
+# locally for audit.
+SILENT_MARKER = "[SILENT]"
+
 # Resolve Hermes home directory (respects HERMES_HOME override)
 _hermes_home = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes"))
 
@@ -179,10 +184,23 @@ def _deliver_result(job: dict, content: str) -> None:
 def _build_job_prompt(job: dict) -> str:
     """Build the effective prompt for a cron job, optionally loading one or more skills first."""
     prompt = job.get("prompt", "")
+    notify = job.get("notify", "always")
     skills = job.get("skills")
     if skills is None:
         legacy = job.get("skill")
         skills = [legacy] if legacy else []
+
+    # When notify=changes_only, prepend guidance so the cron agent knows
+    # it can suppress delivery by starting its response with [SILENT].
+    if notify == "changes_only":
+        silent_hint = (
+            "[SYSTEM: This job uses notify=changes_only. If you have nothing new "
+            "or noteworthy to report, respond with exactly \"[SILENT]\" (optionally "
+            "followed by a brief internal note). This suppresses delivery to the "
+            "user while still saving output locally. Only use [SILENT] when there "
+            "are genuinely no changes worth reporting.]\n\n"
+        )
+        prompt = silent_hint + prompt
 
     skill_names = [str(name).strip() for name in skills if str(name).strip()]
     if not skill_names:
@@ -481,8 +499,20 @@ def tick(verbose: bool = True) -> int:
                     logger.info("Output saved to: %s", output_file)
 
                 # Deliver the final response to the origin/target chat
+                notify_mode = job.get("notify", "always")
                 deliver_content = final_response if success else f"⚠️ Cron job '{job.get('name', job['id'])}' failed:\n{error}"
-                if deliver_content:
+
+                # Determine whether to suppress delivery based on notify mode
+                should_deliver = bool(deliver_content)
+                if should_deliver and success and notify_mode == "never":
+                    logger.info("Job '%s': notify=never — skipping delivery", job["id"])
+                    should_deliver = False
+                elif should_deliver and success and notify_mode == "changes_only":
+                    if deliver_content.strip().upper().startswith(SILENT_MARKER):
+                        logger.info("Job '%s': agent returned %s — skipping delivery", job["id"], SILENT_MARKER)
+                        should_deliver = False
+
+                if should_deliver:
                     try:
                         _deliver_result(job, deliver_content)
                     except Exception as de:

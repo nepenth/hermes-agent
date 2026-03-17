@@ -128,6 +128,7 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "schedule": job.get("schedule_display"),
         "repeat": _repeat_display(job),
         "deliver": job.get("deliver", "local"),
+        "notify": job.get("notify", "always"),
         "next_run_at": job.get("next_run_at"),
         "last_run_at": job.get("last_run_at"),
         "last_status": job.get("last_status"),
@@ -146,6 +147,7 @@ def cronjob(
     name: Optional[str] = None,
     repeat: Optional[int] = None,
     deliver: Optional[str] = None,
+    notify: Optional[str] = None,
     include_disabled: bool = False,
     skill: Optional[str] = None,
     skills: Optional[List[str]] = None,
@@ -178,6 +180,7 @@ def cronjob(
                 name=name,
                 repeat=repeat,
                 deliver=deliver,
+                notify=notify,
                 origin=_origin_from_env(),
                 skills=canonical_skills,
                 model=_normalize_optional_job_value(model),
@@ -255,6 +258,8 @@ def cronjob(
                 updates["name"] = name
             if deliver is not None:
                 updates["deliver"] = deliver
+            if notify is not None:
+                updates["notify"] = notify
             if skills is not None or skill is not None:
                 canonical_skills = _canonical_skills(skill, skills)
                 updates["skills"] = canonical_skills
@@ -374,6 +379,11 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
                 "type": "string",
                 "description": "Delivery target: origin, local, telegram, discord, signal, sms, or platform:chat_id"
             },
+            "notify": {
+                "type": "string",
+                "enum": ["always", "changes_only", "never"],
+                "description": "When to notify: 'always' (default) delivers every run, 'changes_only' lets the cron agent suppress delivery when nothing new to report, 'never' saves output locally only"
+            },
             "model": {
                 "type": "string",
                 "description": "Optional per-job model override used when the cron job runs"
@@ -444,6 +454,7 @@ registry.register(
         name=args.get("name"),
         repeat=args.get("repeat"),
         deliver=args.get("deliver"),
+        notify=args.get("notify"),
         include_disabled=args.get("include_disabled", False),
         skill=args.get("skill"),
         skills=args.get("skills"),

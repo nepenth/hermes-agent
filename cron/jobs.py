@@ -303,6 +303,7 @@ def create_job(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    notify: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -319,6 +320,9 @@ def create_job(
         model: Optional per-job model override
         provider: Optional per-job provider override
         base_url: Optional per-job base URL override
+        notify: Delivery notification mode: "always" (default), "changes_only",
+                or "never". "changes_only" lets the cron agent suppress delivery
+                by responding with [SILENT]. "never" skips delivery entirely.
 
     Returns:
         The created job dict
@@ -371,6 +375,7 @@ def create_job(
         "last_error": None,
         # Delivery configuration
         "deliver": deliver,
+        "notify": notify or "always",
         "origin": origin,  # Tracks where job was created for "origin" delivery
     }
 
