@@ -1,12 +1,15 @@
 """SDK for pwncollege dojo"""
 
 import asyncio
+import logging
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 def _extract_csrf_nonce(html: str) -> str | None:
@@ -228,7 +231,12 @@ class DojoRLSyncClient:
         self.close()
 
     def close(self):
-        self._run(self._async.close())
+        if not self._loop.is_running():
+            return
+        try:
+            self._run(self._async.close())
+        except Exception:
+            pass  # Best-effort: httpx client may already be closed
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
 
@@ -314,18 +322,31 @@ class EpisodePool:
         try:
             yield instance
         finally:
-            reset = await self.client.reset_instance(
-                instance.slot, challenge=self.challenge
-            )
-            full = await self.client.get_instance(reset.slot)
-            self._all_instances[reset.slot] = full
-            await self._available.put(full)
+            try:
+                reset = await self.client.reset_instance(
+                    instance.slot, challenge=self.challenge
+                )
+                full = await self.client.get_instance(reset.slot)
+                self._all_instances[reset.slot] = full
+                await self._available.put(full)
+            except Exception as e:
+                logger.error(
+                    "Failed to reset instance slot %d, returning stale instance: %s",
+                    instance.slot, e,
+                )
+                await self._available.put(instance)
 
     async def shutdown(self) -> None:
+        errors = []
         for slot in list(self._all_instances.keys()):
             try:
                 await self.client.destroy_instance(slot)
-            except Exception:
-                pass
+            except Exception as e:
+                errors.append((slot, e))
+                logger.warning("Failed to destroy instance slot %d: %s", slot, e)
         self._all_instances.clear()
         self._initialized = False
+        if errors:
+            logger.error(
+                "EpisodePool shutdown: %d instance(s) failed to destroy", len(errors)
+            )

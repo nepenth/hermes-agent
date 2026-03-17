@@ -54,8 +54,8 @@ def _submit_flag_handler(args: dict, **kw) -> str:
     try:
         correct = ctx["client"].check_flag(ctx["slot"], flag)
     except Exception as e:
-        logger.error("Flag check failed for task %s: %s", task_id, e)
-        return json.dumps({"success": False, "message": f"Flag check error: {e}"})
+        logger.error("Flag check failed for task %s: %s", task_id, e, exc_info=True)
+        return json.dumps({"success": False, "message": f"Flag check error: {type(e).__name__}"})
 
     if correct:
         return json.dumps({"success": True, "message": "Flag accepted! Challenge solved."})

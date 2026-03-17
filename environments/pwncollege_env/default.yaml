@@ -15,11 +15,11 @@ env:
   agent_temperature: 0.7
   terminal_backend: "ssh"
 
-  # Dojo connection (Tailscale)
+  # Dojo connection
   base_url: "http://100.120.55.25:8080"
   ssh_host: "100.120.55.25"
   ssh_port: 2222
-  ssh_key: ""  # Set to path of RL agent private key
+  ssh_key: "" # Set to path of RL agent private key
 
   # Challenge selection
   challenge: "hello/hello"

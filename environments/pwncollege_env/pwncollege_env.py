@@ -199,6 +199,13 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
                 }
             )
 
+        if not self.train:
+            raise RuntimeError(
+                f"No challenges matched filters (dojo_filter={self.config.dojo_filter}, "
+                f"module_filter={self.config.module_filter}, challenge={self.config.challenge}). "
+                f"Total available: {len(challenges)}"
+            )
+
         logger.info("Training on %d challenges", len(self.train))
 
     async def get_next_item(self) -> Item:
@@ -207,11 +214,16 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         self.iter += 1
         return item
 
+    def _get_challenge_key(self, item: Item) -> str:
+        """Extract the challenge key from a dataset item."""
+        return item.get(
+            "challenge_key",
+            f"{item.get('module_id', '')}/{item.get('id', '')}",
+        )
+
     def format_prompt(self, item: Item) -> str:
         """Build user prompt from challenge metadata."""
-        challenge_key = item.get(
-            "challenge_key", f"{item.get('module_id', '')}/{item.get('id', '')}"
-        )
+        challenge_key = self._get_challenge_key(item)
         return USER_PROMPT_TEMPLATE.format(
             module_name=item.get("module_id", "unknown"),
             challenge_name=item.get("name", item.get("id", "unknown")),
@@ -223,21 +235,17 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
     async def collect_trajectory(
         self, item: Item
     ) -> Tuple[Optional[Union[ScoredDataItem, Any]], List[Item]]:
-        """Run a single rollout with dojo instance lifecycle management.
+        """Run a single rollout with dojo instance lifecycle.
 
-        Overrides the base class to wrap the agent loop with:
+        Wraps the agent loop with:
         1. Dojo instance creation (SSH-accessible challenge container)
         2. SSH override registration (routes terminal tool to the instance)
         3. Flag context registration (enables submit_flag tool)
         4. Cleanup on completion
         """
         task_id = str(uuid.uuid4())
-        challenge_key = item.get(
-            "challenge_key",
-            f"{item.get('module_id', '')}/{item.get('id', '')}",
-        )
+        challenge_key = self._get_challenge_key(item)
 
-        # Create dojo instance
         try:
             inst = await self.client.create_instance(challenge_key)
         except Exception as e:
@@ -245,38 +253,29 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
             return None, []
 
         slot = inst.slot
-        ssh_user = inst.ssh_user
-
-        # Register per-task SSH overrides
         register_task_env_overrides(
             task_id,
             {
-                "ssh_user": ssh_user,
+                "ssh_user": inst.ssh_user,
                 "ssh_host": self.config.ssh_host,
                 "ssh_port": self.config.ssh_port,
                 "ssh_key": self.config.ssh_key,
             },
         )
-
-        # Register flag context for submit_flag tool
         register_flag_context(task_id, self.sync_client, slot)
 
         try:
-            # Get group-level tools (includes submit_flag via "pwncollege" toolset)
+            # Resolve tools (includes submit_flag via "pwncollege" toolset)
             if self._current_group_tools is None:
                 tools, valid_names = self._resolve_tools_for_group()
             else:
                 tools, valid_names = self._current_group_tools
 
-            # Build initial messages
             messages: List[Dict[str, Any]] = []
             if self.config.system_prompt:
-                messages.append(
-                    {"role": "system", "content": self.config.system_prompt}
-                )
+                messages.append({"role": "system", "content": self.config.system_prompt})
             messages.append({"role": "user", "content": self.format_prompt(item)})
 
-            # Run the agent loop (Phase 1: OpenAI server)
             agent = HermesAgentLoop(
                 server=self.server,
                 tool_schemas=tools,
@@ -289,28 +288,30 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
             )
             result = await agent.run(messages)
 
-            # Compute reward
-            ctx = ToolContext(task_id)
-            try:
-                reward = await self.compute_reward(item, result, ctx)
-            except Exception as e:
-                logger.error("compute_reward failed: %s", e)
+            # Skip reward if agent produced no output
+            only_system_and_user = all(
+                msg.get("role") in ("system", "user") for msg in result.messages
+            )
+            if result.turns_used == 0 or only_system_and_user:
+                logger.warning("Agent produced no output for %s", challenge_key)
                 reward = 0.0
-            finally:
-                ctx.cleanup()
+            else:
+                ctx = ToolContext(task_id)
+                try:
+                    reward = await self.compute_reward(item, result, ctx)
+                finally:
+                    ctx.cleanup()
 
             # Track tool errors
             if result.tool_errors:
                 for err in result.tool_errors:
-                    self._tool_error_buffer.append(
-                        {
-                            "turn": err.turn,
-                            "tool": err.tool_name,
-                            "args": err.arguments[:150],
-                            "error": err.error[:300],
-                            "result": err.tool_result[:300],
-                        }
-                    )
+                    self._tool_error_buffer.append({
+                        "turn": err.turn,
+                        "tool": err.tool_name,
+                        "args": err.arguments[:150],
+                        "error": err.error[:300],
+                        "result": err.tool_result[:300],
+                    })
 
             # Build scored item (Phase 1: placeholder tokens)
             full_text = "\n".join(
@@ -327,11 +328,9 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
                 "scores": reward,
                 "messages": result.messages,
             }
-
             return scored_item, []
 
         finally:
-            # Always cleanup
             clear_flag_context(task_id)
             clear_task_env_overrides(task_id)
             cleanup_vm(task_id)
@@ -487,6 +486,7 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
             n = len(self.solve_rate_buffer)
             wandb_metrics["train/solve_rate"] = sum(self.solve_rate_buffer) / n
             wandb_metrics["train/num_rollouts"] = n
+            self.solve_rate_buffer = []
         await super().wandb_log(wandb_metrics)
 
 
