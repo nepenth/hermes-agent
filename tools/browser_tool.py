@@ -65,6 +65,11 @@ import requests
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from agent.auxiliary_client import call_llm
+
+try:
+    from tools.website_policy import check_website_access
+except Exception:
+    check_website_access = lambda url: None  # noqa: E731 — fail-open if policy module unavailable
 from tools.browser_providers.base import CloudBrowserProvider
 from tools.browser_providers.browserbase import BrowserbaseProvider
 from tools.browser_providers.browser_use import BrowserUseProvider
@@ -901,6 +906,15 @@ def browser_navigate(url: str, task_id: Optional[str] = None) -> str:
     Returns:
         JSON string with navigation result (includes stealth features info on first nav)
     """
+    # Website policy check — block before navigating
+    blocked = check_website_access(url)
+    if blocked:
+        return json.dumps({
+            "success": False,
+            "error": blocked["message"],
+            "blocked_by_policy": {"host": blocked["host"], "rule": blocked["rule"], "source": blocked["source"]},
+        })
+
     effective_task_id = task_id or "default"
     
     # Get session info to check if this is a new session

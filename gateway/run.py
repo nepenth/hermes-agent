@@ -1140,6 +1140,13 @@ class GatewayRunner:
                 return None
             return SmsAdapter(config)
 
+        elif platform == Platform.DINGTALK:
+            from gateway.platforms.dingtalk import DingTalkAdapter, check_dingtalk_requirements
+            if not check_dingtalk_requirements():
+                logger.warning("DingTalk: dingtalk-stream not installed or DINGTALK_CLIENT_ID/SECRET not set")
+                return None
+            return DingTalkAdapter(config)
+
         return None
     
     def _is_user_authorized(self, source: SessionSource) -> bool:

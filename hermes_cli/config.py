@@ -34,6 +34,7 @@ _EXTRA_ENV_KEYS = frozenset({
     "DISCORD_HOME_CHANNEL", "TELEGRAM_HOME_CHANNEL",
     "SIGNAL_ACCOUNT", "SIGNAL_HTTP_URL",
     "SIGNAL_ALLOWED_USERS", "SIGNAL_GROUP_ALLOWED_USERS",
+    "DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET",
     "TERMINAL_ENV", "TERMINAL_SSH_KEY", "TERMINAL_SSH_PORT",
     "WHATSAPP_MODE", "WHATSAPP_ENABLED",
 })
@@ -354,6 +355,11 @@ DEFAULT_CONFIG = {
         "tirith_path": "tirith",
         "tirith_timeout": 5,
         "tirith_fail_open": True,
+        "website_blocklist": {
+            "enabled": False,
+            "domains": [],
+            "shared_files": [],
+        },
     },
 
     # Config schema version - bump this when adding new required fields
