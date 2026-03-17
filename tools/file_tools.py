@@ -117,11 +117,11 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations:
             ssh_config = None
             if env_type == "ssh":
                 ssh_config = {
-                    "host": config.get("ssh_host", ""),
-                    "user": config.get("ssh_user", ""),
-                    "port": config.get("ssh_port", 22),
-                    "key": config.get("ssh_key", ""),
-                    "persistent": config.get("ssh_persistent", False),
+                    "host": overrides.get("ssh_host") or config.get("ssh_host", ""),
+                    "user": overrides.get("ssh_user") or config.get("ssh_user", ""),
+                    "port": overrides.get("ssh_port") or config.get("ssh_port", 22),
+                    "key": overrides.get("ssh_key") or config.get("ssh_key", ""),
+                    "persistent": overrides.get("ssh_persistent", config.get("ssh_persistent", False)),
                 }
 
             local_config = None
