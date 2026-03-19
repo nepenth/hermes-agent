@@ -43,50 +43,91 @@ def _patch_managed_server():
 
     _ManagedServer = _ms.ManagedServer
 
-    # Only patch if not already applied 
-    if "extra_template_kwargs" in inspect.signature(_ManagedServer._convert_messages_to_prompt).parameters:
-        return
+    # Patch 1: add extra_template_kwargs + chat_template_kwargs forwarding
+    # Only apply if not already in the installed version
+    _needs_patch1 = "extra_template_kwargs" not in inspect.signature(_ManagedServer._convert_messages_to_prompt).parameters
 
-    def _convert_messages_to_prompt(self, messages, tools=None, extra_template_kwargs=None):
-        if tools and self._get_translator():
-            messages = self._get_translator().convert_messages_for_template(messages)
-        if self.tokenizer is None:
+    if _needs_patch1:
+        def _convert_messages_to_prompt(self, messages, tools=None, extra_template_kwargs=None):
+            if tools and self._get_translator():
+                messages = self._get_translator().convert_messages_for_template(messages)
+            if self.tokenizer is None:
+                return "\n".join([f"{m['role']}: {m.get('content', '')}" for m in messages])
+            if hasattr(self.tokenizer, "apply_chat_template"):
+                add_generation_prompt = len(messages) == 0 or messages[-1].get("role") != "assistant"
+                if not self._preserve_think_blocks:
+                    messages = self._protect_think_blocks(messages)
+                template_kwargs = {"tokenize": False, "add_generation_prompt": add_generation_prompt}
+                if tools:
+                    template_kwargs["tools"] = tools
+                if extra_template_kwargs:
+                    template_kwargs.update(extra_template_kwargs)
+                prompt = self.tokenizer.apply_chat_template(messages, **template_kwargs)
+                prompt = prompt.replace(self._THINK_OPEN, "<think>")
+                prompt = prompt.replace(self._THINK_CLOSE, "</think>")
+                return prompt
             return "\n".join([f"{m['role']}: {m.get('content', '')}" for m in messages])
-        if hasattr(self.tokenizer, "apply_chat_template"):
-            add_generation_prompt = len(messages) == 0 or messages[-1].get("role") != "assistant"
-            if not self._preserve_think_blocks:
-                messages = self._protect_think_blocks(messages)
-            template_kwargs = {"tokenize": False, "add_generation_prompt": add_generation_prompt}
-            if tools:
-                template_kwargs["tools"] = tools
-            if extra_template_kwargs:
-                template_kwargs.update(extra_template_kwargs)
-            prompt = self.tokenizer.apply_chat_template(messages, **template_kwargs)
-            prompt = prompt.replace(self._THINK_OPEN, "<think>")
-            prompt = prompt.replace(self._THINK_CLOSE, "</think>")
-            return prompt
-        return "\n".join([f"{m['role']}: {m.get('content', '')}" for m in messages])
 
-    _orig_chat_completion = _ManagedServer.chat_completion
+        _orig_chat_completion = _ManagedServer.chat_completion
 
-    async def chat_completion(self, **kwargs):
-        extra_body = kwargs.get("extra_body", {}) or {}
-        chat_template_kwargs = extra_body.get("chat_template_kwargs", None)
-        # Stash on instance so _convert_messages_to_prompt picks it up
-        self._pending_chat_template_kwargs = chat_template_kwargs
-        try:
-            return await _orig_chat_completion(self, **kwargs)
-        finally:
-            self._pending_chat_template_kwargs = None
+        async def chat_completion(self, **kwargs):
+            extra_body = kwargs.get("extra_body", {}) or {}
+            chat_template_kwargs = extra_body.get("chat_template_kwargs", None)
+            self._pending_chat_template_kwargs = chat_template_kwargs
+            try:
+                return await _orig_chat_completion(self, **kwargs)
+            finally:
+                self._pending_chat_template_kwargs = None
 
-    def _convert_messages_to_prompt_with_stash(self, messages, tools=None, extra_template_kwargs=None):
-        if extra_template_kwargs is None:
-            extra_template_kwargs = getattr(self, "_pending_chat_template_kwargs", None)
-        return _convert_messages_to_prompt(self, messages, tools=tools, extra_template_kwargs=extra_template_kwargs)
+        def _convert_messages_to_prompt_with_stash(self, messages, tools=None, extra_template_kwargs=None):
+            if extra_template_kwargs is None:
+                extra_template_kwargs = getattr(self, "_pending_chat_template_kwargs", None)
+            return _convert_messages_to_prompt(self, messages, tools=tools, extra_template_kwargs=extra_template_kwargs)
 
-    _ManagedServer._convert_messages_to_prompt = _convert_messages_to_prompt_with_stash
-    _ManagedServer.chat_completion = chat_completion
-    logger.info("Patched ManagedServer to support chat_template_kwargs in extra_body")
+        _ManagedServer._convert_messages_to_prompt = _convert_messages_to_prompt_with_stash
+        _ManagedServer.chat_completion = chat_completion
+        print("[patch] ManagedServer: support chat_template_kwargs in extra_body")
+
+    # Patch 2: fix _find_extending_node and _compute_input_ids to normalize out
+    # Qwen3's empty think prefill before prefix matching. The model echoes the
+    # prefill (<think>\n\n</think>\n\n or <think>\n</think>\n\n) in its completion,
+    # but the chat template strips it when re-rendering prior turns, causing the
+    # prefix match to fail every turn.
+    import re as _re
+    _EMPTY_THINK_RE = _re.compile(r"<think>\n*</think>\n\n")
+
+    def _normalize_think(text):
+        return _EMPTY_THINK_RE.sub("", text)
+
+    if not getattr(_ManagedServer._find_extending_node, "_think_prefill_patched", False):
+
+        def _find_extending_node(self, input_text):
+            if not self.current_nodes:
+                return None
+            norm_input = _normalize_think(input_text)
+            for node in self.current_nodes:
+                if norm_input.startswith(_normalize_think(node.full_text)):
+                    return node
+            return None
+
+        _find_extending_node._think_prefill_patched = True
+        _ManagedServer._find_extending_node = _find_extending_node
+
+        _orig_compute_input_ids = _ManagedServer._compute_input_ids
+
+        def _compute_input_ids(self, input_text, extending_node):
+            if extending_node is not None:
+                norm_input = _normalize_think(input_text)
+                norm_existing = _normalize_think(extending_node.full_text)
+                new_suffix = norm_input[len(norm_existing):]
+                if new_suffix:
+                    new_tokens = self.tokenizer.encode(new_suffix, add_special_tokens=False)
+                    return extending_node.tokens + new_tokens
+                return extending_node.tokens.copy()
+            return self.tokenizer.encode(input_text, add_special_tokens=True)
+
+        _ManagedServer._compute_input_ids = _compute_input_ids
+        print("[patch] ManagedServer: Qwen3 think prefill normalization for extend")
 
 _patch_managed_server()
 
@@ -154,6 +195,10 @@ class EndlessTerminalsEnvConfig(HermesAgentEnvConfig):
     eval_split_ratio: float = Field(
         default=0.1,
         description="Fraction of dataset to hold out for evaluation (0.0-1.0)"
+    )
+    overfit_task_index: Optional[int] = Field(
+        default=None,
+        description="If set, always sample this dataset index (for overfitting tests)"
     )
 
     max_concurrent_containers: int = Field(
@@ -333,16 +378,18 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             raise RuntimeError("Dataset not loaded. Call setup() first.")
 
         # Get next task (with wraparound)
-        idx = self._dataset_indices[self._current_index]
-        task = self._train_dataset[idx]
-
-        # Advance to next task
-        self._current_index += 1
-        if self._current_index >= len(self._dataset_indices):
-            # Reshuffle for next epoch
-            random.shuffle(self._dataset_indices)
-            self._current_index = 0
-            logger.info("Reshuffled dataset (completed one epoch)")
+        if self.config.overfit_task_index is not None:
+            # Index into the full dataset (before train/eval split) for stability
+            idx = self.config.overfit_task_index % len(self._dataset)
+            task = self._dataset[idx]
+        else:
+            idx = self._dataset_indices[self._current_index]
+            self._current_index += 1
+            if self._current_index >= len(self._dataset_indices):
+                random.shuffle(self._dataset_indices)
+                self._current_index = 0
+                logger.info("Reshuffled dataset (completed one epoch)")
+            task = self._train_dataset[idx]
 
         # Extract task directory path
         task_dir = task.get("extra_info", {}).get("task_dir")
@@ -665,28 +712,15 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             managed_state: Optional[Dict[str, Any]] = None
             async with self._container_sem:
                 if self._use_managed_server():
-                    # Phase 2: ManagedServer with parser
-                    from environments.tool_call_parsers import get_parser
                     try:
-                        tc_parser = get_parser(self.config.tool_call_parser)
-                    except KeyError:
-                        logger.warning(
-                            "Tool call parser '%s' not found, falling back to 'hermes'",
-                            self.config.tool_call_parser,
+                        # No tool_call_parser — let the chat template render tool calls
+                        # natively so full_text is consistent across turns (enabling
+                        # multi-turn sequence extension). agent_loop has a fallback
+                        # to parse raw <tool_call> content.
+                        managed_ctx = self.server.managed_server(
+                            tokenizer=self.tokenizer,
+                            preserve_think_blocks=True,
                         )
-                        tc_parser = get_parser("hermes")
-
-                    try:
-                        # Try with tool_call_parser
-                        try:
-                            managed_ctx = self.server.managed_server(
-                                tokenizer=self.tokenizer,
-                                tool_call_parser=tc_parser,
-                            )
-                        except TypeError:
-                            # Fall back to tokenizer-only
-                            logger.info("Server doesn't support tool_call_parser, using tokenizer-only mode")
-                            managed_ctx = self.server.managed_server(tokenizer=self.tokenizer)
 
                         async with managed_ctx as managed:
                             agent = HermesAgentLoop(
@@ -790,14 +824,15 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             nodes = (managed_state or {}).get("nodes", []) if managed_state else []
 
             if nodes:
-                # Phase 2: Use last node's real tokens/masks/logprobs (full trajectory)
+                # Phase 2: Use last node — ManagedServer extends the sequence each turn,
+                # carrying forward masked_tokens so all assistant turns are unmasked.
                 node = nodes[-1]
                 tokens = node.tokens
                 masks = node.masked_tokens
                 if hasattr(node, "logprobs") and node.logprobs:
                     inference_logprobs = node.logprobs
                     real_logprobs = [lp for lp in inference_logprobs if lp != 1.0]
-                    logger.info(f"Phase 2: {len(tokens)} tokens, {len(real_logprobs)} generated, logprob_mean={sum(real_logprobs)/max(len(real_logprobs),1):.3f}")
+                    logger.info(f"Phase 2: {len(tokens)} tokens, {len(real_logprobs)} generated across {len(nodes)} nodes, logprob_mean={sum(real_logprobs)/max(len(real_logprobs),1):.3f}")
                 else:
                     inference_logprobs = [1.0] * len(tokens)
                     logger.warning(f"Phase 2: node has no logprobs! Falling back to placeholders.")
