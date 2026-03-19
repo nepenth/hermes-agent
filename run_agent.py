@@ -2804,6 +2804,14 @@ class AIAgent:
             finish_reason = "tool_calls"
         elif has_incomplete_items or (saw_commentary_phase and not saw_final_answer_phase):
             finish_reason = "incomplete"
+        elif reasoning_items_raw and not final_text:
+            # Response contains only reasoning (encrypted thinking state) with
+            # no visible content or tool calls.  The model is still thinking and
+            # needs another turn to produce the actual answer.  Marking this as
+            # "stop" would send it into the empty-content retry loop which burns
+            # 3 retries then fails — treat it as incomplete instead so the Codex
+            # continuation path handles it correctly.
+            finish_reason = "incomplete"
         else:
             finish_reason = "stop"
         return assistant_message, finish_reason
@@ -6214,8 +6222,9 @@ class AIAgent:
                     interim_msg = self._build_assistant_message(assistant_message, finish_reason)
                     interim_has_content = bool((interim_msg.get("content") or "").strip())
                     interim_has_reasoning = bool(interim_msg.get("reasoning", "").strip()) if isinstance(interim_msg.get("reasoning"), str) else False
+                    interim_has_codex_reasoning = bool(interim_msg.get("codex_reasoning_items"))
 
-                    if interim_has_content or interim_has_reasoning:
+                    if interim_has_content or interim_has_reasoning or interim_has_codex_reasoning:
                         last_msg = messages[-1] if messages else None
                         duplicate_interim = (
                             isinstance(last_msg, dict)
