@@ -27,8 +27,9 @@
 
       imports = [
         ./nix/packages.nix
+        ./nix/nixosModules.nix
+        ./nix/checks.nix
         ./nix/devShell.nix
-        ./nix/homeModules.nix
       ];
     };
 }

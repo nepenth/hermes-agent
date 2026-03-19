@@ -11,21 +11,6 @@
       ];
 
       runtimePath = pkgs.lib.makeBinPath runtimeDeps;
-
-      # Submodules fetched declaratively (git deps break Nix sandbox)
-      mini-swe-agent-src = pkgs.fetchFromGitHub {
-        owner = "SWE-agent";
-        repo = "mini-swe-agent";
-        rev = "07aa6a738556e44b30d7b5c3bbd5063dac871d25";
-        hash = "sha256-7+8dvi49iQMO4bXK5VYcem1+Tub5vMCrrZeNcEojAUQ=";
-      };
-
-      tinker-atropos-src = pkgs.fetchFromGitHub {
-        owner = "nousresearch";
-        repo = "tinker-atropos";
-        rev = "65f084ee8054a5d02aeac76e24ed60388511c82b";
-        hash = "sha256-tD1VyUfMin+KnkQD+eyEibeJNe6d4dgB1b6wFe+3gKs=";
-      };
     in {
       packages.default = pkgs.stdenv.mkDerivation {
         pname = "hermes-agent";
@@ -38,20 +23,13 @@
         installPhase = ''
           runHook preInstall
 
-          # Place submodule sources for runtime import
-          mkdir -p $out/share/hermes-agent
-          cp -r ${mini-swe-agent-src}/src/minisweagent $out/share/hermes-agent/minisweagent
-          cp -r ${tinker-atropos-src} $out/share/hermes-agent/tinker-atropos
-
           # Wrap entry points from the uv2nix venv
           mkdir -p $out/bin
           makeWrapper ${hermesVenv}/bin/hermes $out/bin/hermes \
-            --prefix PATH : "${runtimePath}" \
-            --prefix PYTHONPATH : $out/share/hermes-agent
+            --prefix PATH : "${runtimePath}"
 
           makeWrapper ${hermesVenv}/bin/hermes-agent $out/bin/hermes-agent \
-            --prefix PATH : "${runtimePath}" \
-            --prefix PYTHONPATH : $out/share/hermes-agent
+            --prefix PATH : "${runtimePath}"
 
           runHook postInstall
         '';
