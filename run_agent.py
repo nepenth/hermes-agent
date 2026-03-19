@@ -987,7 +987,7 @@ class AIAgent:
             threshold_percent=compression_threshold,
             protect_first_n=3,
             protect_last_n=4,
-            summary_target_tokens=2500,
+            summary_target_tokens=500,
             summary_model_override=compression_summary_model,
             quiet_mode=self.quiet_mode,
             base_url=self.base_url,
