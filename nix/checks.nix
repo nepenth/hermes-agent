@@ -22,6 +22,20 @@
           echo "ok" > $out/result
         '';
 
+        # Verify every pyproject.toml [project.scripts] entry has a wrapped binary
+        entry-points-sync = pkgs.runCommand "hermes-entry-points-sync" { } ''
+          set -e
+          echo "=== Checking entry points match pyproject.toml [project.scripts] ==="
+          # These must match [project.scripts] in pyproject.toml
+          for bin in hermes hermes-agent hermes-acp; do
+            test -x ${hermes-agent}/bin/$bin || (echo "FAIL: $bin binary missing from Nix package"; exit 1)
+            echo "PASS: $bin present"
+          done
+
+          mkdir -p $out
+          echo "ok" > $out/result
+        '';
+
         # Verify CLI subcommands are accessible
         cli-commands = pkgs.runCommand "hermes-cli-commands" { } ''
           set -e
@@ -37,15 +51,22 @@
           echo "ok" > $out/result
         '';
 
-        # Verify HERMES_MANAGED guard works
+        # Verify HERMES_MANAGED guard works on all mutation commands
         managed-guard = pkgs.runCommand "hermes-managed-guard" { } ''
           set -e
           export HOME=$(mktemp -d)
 
-          echo "=== Checking HERMES_MANAGED guard ==="
-          OUTPUT=$(HERMES_MANAGED=true ${hermes-agent}/bin/hermes config set model foo 2>&1 || true)
-          echo "$OUTPUT" | grep -q "managed by NixOS" || (echo "FAIL: managed guard not working"; echo "$OUTPUT"; exit 1)
-          echo "PASS: Managed guard blocks config mutation"
+          check_blocked() {
+            local label="$1"
+            shift
+            OUTPUT=$(HERMES_MANAGED=true "$@" 2>&1 || true)
+            echo "$OUTPUT" | grep -q "managed by NixOS" || (echo "FAIL: $label not guarded"; echo "$OUTPUT"; exit 1)
+            echo "PASS: $label blocked in managed mode"
+          }
+
+          echo "=== Checking HERMES_MANAGED guards ==="
+          check_blocked "config set" ${hermes-agent}/bin/hermes config set model foo
+          check_blocked "config edit" ${hermes-agent}/bin/hermes config edit
 
           echo "=== All guard checks passed ==="
           mkdir -p $out

@@ -31,6 +31,9 @@
           makeWrapper ${hermesVenv}/bin/hermes-agent $out/bin/hermes-agent \
             --prefix PATH : "${runtimePath}"
 
+          makeWrapper ${hermesVenv}/bin/hermes-acp $out/bin/hermes-acp \
+            --prefix PATH : "${runtimePath}"
+
           runHook postInstall
         '';
 
