@@ -136,6 +136,8 @@ _CONTEXT_LENGTH_KEYS = (
     "max_input_tokens",
     "max_sequence_length",
     "max_seq_len",
+    "n_ctx_train",
+    "n_ctx",
 )
 
 _MAX_COMPLETION_KEYS = (
@@ -341,6 +343,25 @@ def fetch_endpoint_model_metadata(
                 if pricing:
                     entry["pricing"] = pricing
                 _add_model_aliases(cache, model_id, entry)
+
+            # If this is a llama.cpp server, query /props for actual allocated context
+            is_llamacpp = any(
+                m.get("owned_by") == "llamacpp"
+                for m in payload.get("data", []) if isinstance(m, dict)
+            )
+            if is_llamacpp:
+                try:
+                    props_url = candidate.rstrip("/").replace("/v1", "") + "/props"
+                    props_resp = requests.get(props_url, headers=headers, timeout=5)
+                    if props_resp.ok:
+                        props = props_resp.json()
+                        gen_settings = props.get("default_generation_settings", {})
+                        n_ctx = gen_settings.get("n_ctx")
+                        model_alias = props.get("model_alias", "")
+                        if n_ctx and model_alias and model_alias in cache:
+                            cache[model_alias]["context_length"] = n_ctx
+                except Exception:
+                    pass
 
             _endpoint_model_metadata_cache[normalized] = cache
             _endpoint_model_metadata_cache_time[normalized] = time.time()
