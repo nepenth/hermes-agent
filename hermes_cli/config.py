@@ -59,7 +59,7 @@ def is_managed() -> bool:
     """
     if os.getenv("HERMES_MANAGED", "").lower() in ("true", "1", "yes"):
         return True
-    managed_marker = Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / ".managed"
+    managed_marker = Path(os.getenv("HERMES_HOME", str(Path.home() / ".hermes"))) / ".managed"
     return managed_marker.exists()
 
 def managed_error(action: str = "modify configuration"):
