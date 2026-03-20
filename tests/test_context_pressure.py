@@ -176,22 +176,10 @@ class TestContextPressureFlags:
         # Should not raise
         agent._emit_context_pressure(0.60, compressor)
 
-    def test_emit_skips_print_in_quiet_mode(self, agent, capsys):
-        """In quiet_mode, CLI output should be suppressed."""
+    def test_emit_prints_for_cli_platform(self, agent, capsys):
+        """CLI platform should always print context pressure, even in quiet_mode."""
         agent.quiet_mode = True
-        agent.status_callback = None
-
-        compressor = MagicMock()
-        compressor.context_length = 200_000
-        compressor.threshold_tokens = 100_000
-
-        agent._emit_context_pressure(0.85, compressor)
-        captured = capsys.readouterr()
-        assert "▰" not in captured.out
-
-    def test_emit_prints_in_non_quiet_mode(self, agent, capsys):
-        """In non-quiet mode, CLI output should appear."""
-        agent.quiet_mode = False
+        agent.platform = "cli"
         agent.status_callback = None
 
         compressor = MagicMock()
@@ -202,6 +190,19 @@ class TestContextPressureFlags:
         captured = capsys.readouterr()
         assert "▰" in captured.out
         assert "to compaction" in captured.out
+
+    def test_emit_skips_print_for_gateway_platform(self, agent, capsys):
+        """Gateway platforms get the callback, not CLI print."""
+        agent.platform = "telegram"
+        agent.status_callback = None
+
+        compressor = MagicMock()
+        compressor.context_length = 200_000
+        compressor.threshold_tokens = 100_000
+
+        agent._emit_context_pressure(0.85, compressor)
+        captured = capsys.readouterr()
+        assert "▰" not in captured.out
 
     def test_flags_reset_on_compression(self, agent):
         """After _compress_context, context pressure flags should reset."""
