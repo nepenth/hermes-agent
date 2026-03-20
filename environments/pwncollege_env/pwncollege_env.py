@@ -51,7 +51,7 @@ from environments.hermes_base_env import HermesAgentBaseEnv, HermesAgentEnvConfi
 # Import submit_flag_tool to trigger registry.register() at module load
 from environments.pwncollege_env import submit_flag_tool  # noqa: F401
 from environments.pwncollege_env.prompts import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
-from environments.pwncollege_env.sdk import DojoRLClient, DojoRLSyncClient
+from environments.pwncollege_env.sdk import DojoRLClient, DojoRLSyncClient, RLChallenge
 from environments.pwncollege_env.submit_flag_tool import (
     clear_flag_context,
     register_flag_context,
@@ -134,7 +134,7 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         super().__init__(config, server_configs, slurm, testing)
         self.config: PwnCollegeEnvConfig = config
 
-        self.train: list[dict] = []
+        self.train: list[RLChallenge] = []
         self.iter = 0
         self.solve_rate_buffer: list[float] = []
 
@@ -177,26 +177,23 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
 
         # Apply filters
         for c in challenges:
-            if self.config.dojo_filter and c.get("dojo_id") != self.config.dojo_filter:
+            if self.config.dojo_filter and c.dojo_id != self.config.dojo_filter:
                 continue
-            if (
-                self.config.module_filter
-                and c.get("module_id") != self.config.module_filter
-            ):
+            if self.config.module_filter and c.module_id != self.config.module_filter:
                 continue
             self.train.append(c)
 
         # If a specific challenge is set and no filters matched, use it directly
         if not self.train and self.config.challenge:
+            parts = self.config.challenge.split("/")
             self.train.append(
-                {
-                    "id": self.config.challenge.split("/")[-1],
-                    "module_id": self.config.challenge.split("/")[0],
-                    "dojo_id": "unknown",
-                    "name": self.config.challenge,
-                    "description": "",
-                    "challenge_key": self.config.challenge,
-                }
+                RLChallenge(
+                    id=parts[-1],
+                    module_id=parts[0],
+                    dojo_id="unknown",
+                    name=self.config.challenge,
+                    description="",
+                )
             )
 
         if not self.train:
@@ -208,28 +205,23 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
 
         logger.info("Training on %d challenges", len(self.train))
 
-    async def get_next_item(self) -> Item:
+    async def get_next_item(self) -> RLChallenge:
         """Return next challenge item (round-robin)."""
         item = self.train[self.iter % len(self.train)]
         self.iter += 1
         return item
 
-    def _get_challenge_key(self, item: Item) -> str:
-        """Extract the challenge key from a dataset item."""
-        return item.get(
-            "challenge_key",
-            f"{item.get('module_id', '')}/{item.get('id', '')}",
-        )
+    def _get_challenge_key(self, item: RLChallenge) -> str:
+        """Extract the challenge key from a challenge."""
+        return item.challenge_key or f"{item.module_id or ''}/{item.id}"
 
-    def format_prompt(self, item: Item) -> str:
+    def format_prompt(self, item: RLChallenge) -> str:
         """Build user prompt from challenge metadata."""
         challenge_key = self._get_challenge_key(item)
         return USER_PROMPT_TEMPLATE.format(
-            module_name=item.get("module_id", "unknown"),
-            challenge_name=item.get("name", item.get("id", "unknown")),
-            challenge_description=item.get(
-                "description", f"Solve the challenge: {challenge_key}"
-            ),
+            module_name=item.module_id or "unknown",
+            challenge_name=item.name or item.id,
+            challenge_description=item.description or f"Solve the challenge: {challenge_key}",
         )
 
     async def collect_trajectory(
@@ -393,8 +385,8 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         all_challenges = await self.client.list_challenges()
         eval_challenges = [
             c for c in all_challenges
-            if c.get("dojo_id") == self.config.eval_dojo
-            and (self.config.eval_module is None or c.get("module_id") == self.config.eval_module)
+            if c.dojo_id == self.config.eval_dojo
+            and (self.config.eval_module is None or c.module_id == self.config.eval_module)
         ]
 
         if not eval_challenges:
@@ -413,15 +405,15 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         semaphore = asyncio.Semaphore(self.config.eval_concurrency)
         results: list[dict] = []
 
-        async def eval_one(challenge: dict) -> dict:
-            challenge_key = f"{challenge.get('module_id', '')}/{challenge.get('id', '')}"
+        async def eval_one(challenge: RLChallenge) -> dict:
+            challenge_key = self._get_challenge_key(challenge)
             async with semaphore:
                 try:
                     scored, _ = await self.collect_trajectory(challenge)
                     solved = scored is not None and scored.get("scores", 0.0) >= 1.0
                     return {
                         "challenge": challenge_key,
-                        "name": challenge.get("name", ""),
+                        "name": challenge.name,
                         "solved": solved,
                         "reward": scored.get("scores", 0.0) if scored else 0.0,
                     }
@@ -429,7 +421,7 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
                     logger.error("Eval failed for %s: %s", challenge_key, e)
                     return {
                         "challenge": challenge_key,
-                        "name": challenge.get("name", ""),
+                        "name": challenge.name,
                         "solved": False,
                         "reward": 0.0,
                         "error": str(e),
