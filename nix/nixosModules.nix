@@ -424,9 +424,14 @@
             fi
 
             if [ "$NEED_CREATE" = "true" ]; then
+              # Resolve numeric UID/GID for container --user flag
+              HERMES_UID=$(${pkgs.coreutils}/bin/id -u ${cfg.user})
+              HERMES_GID=$(${pkgs.coreutils}/bin/id -g ${cfg.user})
+
               echo "Creating container..."
               ${containerBin} create \
                 --name ${containerName} \
+                --user "$HERMES_UID:$HERMES_GID" \
                 --network=host \
                 --volume /nix/store:/nix/store:ro \
                 --volume ${cfg.stateDir}:/data \

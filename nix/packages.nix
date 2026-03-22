@@ -6,6 +6,13 @@
         inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
       };
 
+      # Import bundled skills, excluding runtime caches
+      bundledSkills = pkgs.lib.cleanSourceWith {
+        src = ../skills;
+        filter = path: _type:
+          !(pkgs.lib.hasInfix "/index-cache/" path);
+      };
+
       runtimeDeps = with pkgs; [
         nodejs_20 ripgrep git openssh ffmpeg
       ];
@@ -23,16 +30,23 @@
         installPhase = ''
           runHook preInstall
 
+          # Copy bundled skills into share directory
+          mkdir -p $out/share/hermes-agent
+          cp -r ${bundledSkills} $out/share/hermes-agent/skills
+
           # Wrap entry points from the uv2nix venv
           mkdir -p $out/bin
           makeWrapper ${hermesVenv}/bin/hermes $out/bin/hermes \
-            --prefix PATH : "${runtimePath}"
+            --prefix PATH : "${runtimePath}" \
+            --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
 
           makeWrapper ${hermesVenv}/bin/hermes-agent $out/bin/hermes-agent \
-            --prefix PATH : "${runtimePath}"
+            --prefix PATH : "${runtimePath}" \
+            --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
 
           makeWrapper ${hermesVenv}/bin/hermes-acp $out/bin/hermes-acp \
-            --prefix PATH : "${runtimePath}"
+            --prefix PATH : "${runtimePath}" \
+            --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
 
           runHook postInstall
         '';

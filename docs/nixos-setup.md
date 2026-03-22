@@ -164,7 +164,7 @@ directory setup, config generation, secrets, documents, and service lifecycle.
     # ── MCP Servers ────────────────────────────────────────────────────
     mcpServers.filesystem = {
       command = "npx";
-      args = [ "-y" "@anthropic/mcp-filesystem" "/data/workspace" ];
+      args = [ "-y" "@modelcontextprotocol/server-filesystem" "/data/workspace" ];
     };
 
     # ── Container options ──────────────────────────────────────────────

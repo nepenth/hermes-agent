@@ -51,6 +51,26 @@
           echo "ok" > $out/result
         '';
 
+        # Verify bundled skills are present in the package
+        bundled-skills = pkgs.runCommand "hermes-bundled-skills" { } ''
+          set -e
+          echo "=== Checking bundled skills ==="
+          test -d ${hermes-agent}/share/hermes-agent/skills || (echo "FAIL: skills directory missing"; exit 1)
+          echo "PASS: skills directory exists"
+
+          SKILL_COUNT=$(find ${hermes-agent}/share/hermes-agent/skills -name "SKILL.md" | wc -l)
+          test "$SKILL_COUNT" -gt 0 || (echo "FAIL: no SKILL.md files found in skills directory"; exit 1)
+          echo "PASS: $SKILL_COUNT bundled skills found"
+
+          grep -q "HERMES_BUNDLED_SKILLS" ${hermes-agent}/bin/hermes || \
+            (echo "FAIL: HERMES_BUNDLED_SKILLS not in wrapper"; exit 1)
+          echo "PASS: HERMES_BUNDLED_SKILLS set in wrapper"
+
+          echo "=== All bundled skills checks passed ==="
+          mkdir -p $out
+          echo "ok" > $out/result
+        '';
+
         # Verify HERMES_MANAGED guard works on all mutation commands
         managed-guard = pkgs.runCommand "hermes-managed-guard" { } ''
           set -e
