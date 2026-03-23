@@ -30,23 +30,14 @@
         installPhase = ''
           runHook preInstall
 
-          # Copy bundled skills into share directory
-          mkdir -p $out/share/hermes-agent
+          mkdir -p $out/share/hermes-agent $out/bin
           cp -r ${bundledSkills} $out/share/hermes-agent/skills
 
-          # Wrap entry points from the uv2nix venv
-          mkdir -p $out/bin
-          makeWrapper ${hermesVenv}/bin/hermes $out/bin/hermes \
-            --prefix PATH : "${runtimePath}" \
-            --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
-
-          makeWrapper ${hermesVenv}/bin/hermes-agent $out/bin/hermes-agent \
-            --prefix PATH : "${runtimePath}" \
-            --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
-
-          makeWrapper ${hermesVenv}/bin/hermes-acp $out/bin/hermes-acp \
-            --prefix PATH : "${runtimePath}" \
-            --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
+          ${pkgs.lib.concatMapStringsSep "\n" (name: ''
+            makeWrapper ${hermesVenv}/bin/${name} $out/bin/${name} \
+              --prefix PATH : "${runtimePath}" \
+              --set HERMES_BUNDLED_SKILLS $out/share/hermes-agent/skills
+          '') [ "hermes" "hermes-agent" "hermes-acp" ]}
 
           runHook postInstall
         '';

@@ -6,8 +6,9 @@
 #
 # Container mode: hermes runs from /nix/store bind-mounted read-only into a
 # plain Ubuntu container. The writable layer (apt/pip/npm installs) persists
-# across restarts and agent updates. Only image/env/volume config changes
-# trigger container recreation.
+# across restarts and agent updates. Only image/volume/options changes trigger
+# container recreation. Environment variables are written to $HERMES_HOME/.env
+# and read by hermes at startup — no container recreation needed for env changes.
 #
 # Usage:
 #   services.hermes-agent = {
@@ -40,8 +41,6 @@
     envFileContent = lib.concatStringsSep "\n" (
       lib.mapAttrsToList (k: v: "${k}=${v}") cfg.environment
     );
-    generatedEnvFile = pkgs.writeText "hermes-env" envFileContent;
-
     # Build documents derivation (from 0xrsydn)
     documentDerivation = pkgs.runCommand "hermes-documents" { } (
       ''
@@ -62,11 +61,11 @@
       then "${pkgs.docker}/bin/docker"
       else "${pkgs.podman}/bin/podman";
 
-    # Identity hash — only recreate container when config changes
+    # Identity hash — only recreate container when structural config changes.
+    # Environment variables are handled via $HERMES_HOME/.env (read by
+    # load_hermes_dotenv at Python startup), so they don't need container recreation.
     containerIdentity = builtins.hashString "sha256" (builtins.toJSON {
       image = cfg.container.image;
-      environment = cfg.environment;
-      environmentFiles = cfg.environmentFiles;
       extraVolumes = cfg.container.extraVolumes;
       extraOptions = cfg.container.extraOptions;
     });
@@ -150,7 +149,8 @@
         default = [ ];
         description = ''
           Paths to environment files containing secrets (API keys, tokens).
-          Passed as systemd EnvironmentFile= entries.
+          Contents are merged into $HERMES_HOME/.env at activation time.
+          Hermes reads this file on every startup via load_hermes_dotenv().
         '';
       };
 
@@ -158,8 +158,8 @@
         type = types.attrsOf types.str;
         default = { };
         description = ''
-          Non-secret environment variables. Written to an env file visible
-          in the Nix store — do NOT put secrets here.
+          Non-secret environment variables. Merged into $HERMES_HOME/.env
+          at activation time. Do NOT put secrets here — use environmentFiles.
         '';
       };
 
@@ -296,13 +296,14 @@
       # ── Host CLI ──────────────────────────────────────────────────────
       (lib.mkIf cfg.addToSystemPackages {
         environment.systemPackages = [ cfg.package ];
+        environment.variables.HERMES_HOME = "${cfg.stateDir}/.hermes";
       })
 
       # ── Directories ───────────────────────────────────────────────────
       {
         systemd.tmpfiles.rules = [
-          "d ${cfg.stateDir}                0750 ${cfg.user} ${cfg.group} - -"
-          "d ${cfg.stateDir}/.hermes        0750 ${cfg.user} ${cfg.group} - -"
+          "d ${cfg.stateDir}                0755 ${cfg.user} ${cfg.group} - -"
+          "d ${cfg.stateDir}/.hermes        0755 ${cfg.user} ${cfg.group} - -"
           "d ${cfg.workingDirectory}         0750 ${cfg.user} ${cfg.group} - -"
         ];
       }
@@ -316,7 +317,7 @@
           chown ${cfg.user}:${cfg.group} ${cfg.stateDir} ${cfg.stateDir}/.hermes ${cfg.workingDirectory}
 
           # Link config file
-          install -o ${cfg.user} -g ${cfg.group} -m 0640 -D ${configFile} ${cfg.stateDir}/.hermes/config.yaml
+          install -o ${cfg.user} -g ${cfg.group} -m 0644 -D ${configFile} ${cfg.stateDir}/.hermes/config.yaml
 
           # Managed mode marker (so interactive shells also detect NixOS management)
           touch ${cfg.stateDir}/.hermes/.managed
@@ -331,6 +332,23 @@
                 install -o ${cfg.user} -g ${cfg.group} -m 0600 ${cfg.authFile} ${cfg.stateDir}/.hermes/auth.json
               fi
             ''}
+          ''}
+
+          # Seed .env from Nix-declared environment + environmentFiles.
+          # Hermes reads $HERMES_HOME/.env at startup via load_hermes_dotenv(),
+          # so this is the single source of truth for both native and container mode.
+          ${lib.optionalString (cfg.environment != {} || cfg.environmentFiles != []) ''
+            ENV_FILE="${cfg.stateDir}/.hermes/.env"
+            install -o ${cfg.user} -g ${cfg.group} -m 0600 /dev/null "$ENV_FILE"
+            cat > "$ENV_FILE" <<'HERMES_NIX_ENV_EOF'
+${envFileContent}
+HERMES_NIX_ENV_EOF
+            ${lib.concatStringsSep "\n" (map (f: ''
+              if [ -f "${f}" ]; then
+                echo "" >> "$ENV_FILE"
+                cat "${f}" >> "$ENV_FILE"
+              fi
+            '') cfg.environmentFiles)}
           ''}
 
           # Link documents into workspace
@@ -362,9 +380,9 @@
             Group = cfg.group;
             WorkingDirectory = cfg.workingDirectory;
 
-            EnvironmentFile =
-              lib.optional (cfg.environment != { }) generatedEnvFile
-              ++ cfg.environmentFiles;
+            # cfg.environment and cfg.environmentFiles are written to
+            # $HERMES_HOME/.env by the activation script. load_hermes_dotenv()
+            # reads them at Python startup — no systemd EnvironmentFile needed.
 
             ExecStart = lib.concatStringsSep " " ([
               "${cfg.package}/bin/hermes"
@@ -439,9 +457,6 @@
                 --env HERMES_HOME=/data/.hermes \
                 --env HERMES_MANAGED=true \
                 --env HOME=/home/hermes \
-                --env MESSAGING_CWD=/data/workspace \
-                ${lib.concatStringsSep " " (lib.mapAttrsToList (k: v: "--env ${k}=${v}") cfg.environment)} \
-                ${lib.concatStringsSep " " (map (f: "--env-file ${f}") cfg.environmentFiles)} \
                 ${lib.concatStringsSep " " cfg.container.extraOptions} \
                 ${cfg.container.image} \
                 /data/current-package/bin/hermes gateway run --replace ${lib.concatStringsSep " " cfg.extraArgs}

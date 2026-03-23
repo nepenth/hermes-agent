@@ -106,6 +106,11 @@ directory setup, config generation, secrets, documents, and service lifecycle.
 }
 ```
 
+> **Important:** `addToSystemPackages = true` also sets `HERMES_HOME` system-wide
+> so the interactive CLI shares state (sessions, skills, cron) with the gateway
+> service. Without it, running `hermes` in your shell creates a separate
+> `~/.hermes` directory.
+
 ### Minimal Configuration (Container Mode)
 
 ```nix
@@ -195,6 +200,11 @@ directory setup, config generation, secrets, documents, and service lifecycle.
 **Never put API keys in `environment`** — values end up in the Nix store
 (world-readable). Use `environmentFiles` with a secrets manager.
 
+Both `environment` and `environmentFiles` are merged into `$HERMES_HOME/.env`
+at activation time (`nixos-rebuild switch`). Hermes reads this file on every
+startup via `load_hermes_dotenv()`, so changes take effect on
+`systemctl restart hermes-agent` — no container recreation needed.
+
 ### sops-nix
 
 ```nix
@@ -267,6 +277,7 @@ Host                                    Container
   ├── .gc-root -> /nix/store/...           (prevents nix-collect-garbage)
   ├── .container-identity                  (sha256 hash, triggers recreation)
   ├── .hermes/                             (HERMES_HOME)
+  │   ├── .env                             (merged from environment + environmentFiles)
   │   ├── config.yaml                      (Nix-generated, copied by activation)
   │   ├── .managed                         (marker file)
   │   ├── state.db
@@ -292,13 +303,15 @@ which resolves through the symlink to the current Nix store path.
 | Host reboot | No | Persists | Persists |
 | `nix-collect-garbage` | No (GC root) | Persists | Persists |
 | Image change (`container.image`) | **Yes** | Persists | **Lost** |
-| Env/volume/options change | **Yes** | Persists | **Lost** |
+| Volume/options change | **Yes** | Persists | **Lost** |
+| `environment`/`environmentFiles` change | No | Persists | Persists |
 
 The container is only recreated when its **identity hash** changes. The hash
-covers: `image`, `environment`, `environmentFiles`, `extraVolumes`,
-`extraOptions`. Changes to `settings`, `documents`, or the hermes package
-itself do **not** trigger recreation — they take effect via the stateDir bind
-mount and the `current-package` symlink.
+covers: `image`, `extraVolumes`, `extraOptions`. Changes to `environment`,
+`environmentFiles`, `settings`, `documents`, or the hermes package itself do
+**not** trigger recreation — environment variables are written to
+`$HERMES_HOME/.env` by the activation script and read by hermes at startup.
+A `systemctl restart hermes-agent` is sufficient for env changes.
 
 ### When to Use Container Mode
 
@@ -350,7 +363,7 @@ If you need to change configuration, edit your `configuration.nix` and run
 | `createUser` | `bool` | `true` | Auto-create user/group |
 | `stateDir` | `str` | `"/var/lib/hermes"` | State directory (`HERMES_HOME` parent) |
 | `workingDirectory` | `str` | `"${stateDir}/workspace"` | Agent working directory (`MESSAGING_CWD`) |
-| `addToSystemPackages` | `bool` | `false` | Add `hermes` CLI to system PATH |
+| `addToSystemPackages` | `bool` | `false` | Add `hermes` CLI to system PATH and set `HERMES_HOME` system-wide so CLI and gateway share state |
 
 ### Configuration
 
@@ -528,7 +541,7 @@ nix-store --query --roots $(docker exec hermes-agent readlink /data/current-pack
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Cannot save configuration: managed by NixOS` | CLI guards active | Edit `configuration.nix` and `nixos-rebuild switch` |
-| Container recreated unexpectedly | `environment`, `environmentFiles`, `extraVolumes`, `extraOptions`, or `image` changed | Expected behavior — writable layer is reset. Reinstall packages if needed |
+| Container recreated unexpectedly | `extraVolumes`, `extraOptions`, or `image` changed | Expected behavior — writable layer is reset. Reinstall packages if needed |
 | `hermes version` shows old version after rebuild | Container not restarted | `systemctl restart hermes-agent` |
 | Permission denied on `/var/lib/hermes` | State dir is `0750 hermes:hermes` | Use `docker exec` or `sudo -u hermes` |
 | `nix-collect-garbage` removed hermes | GC root missing or broken | Restart the service (`preStart` recreates the GC root) |
