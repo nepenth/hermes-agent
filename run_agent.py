@@ -1417,6 +1417,11 @@ class AIAgent:
                         platform=self.platform,
                         provider=self.provider,
                     )
+                    # Suppress session file creation — this is a throwaway
+                    # agent whose only job is memory/skill review.  Without
+                    # this, every background review writes a ghost session
+                    # file with an auto-generated ID, cluttering sessions/.
+                    review_agent.session_log_file = None
                     review_agent._memory_store = self._memory_store
                     review_agent._memory_enabled = self._memory_enabled
                     review_agent._user_profile_enabled = self._user_profile_enabled
@@ -1892,7 +1897,7 @@ class AIAgent:
         Overwritten after each turn so it always reflects the latest state.
         """
         messages = messages or self._session_messages
-        if not messages:
+        if not messages or not self.session_log_file:
             return
 
         try:
