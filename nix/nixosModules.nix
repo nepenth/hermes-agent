@@ -69,26 +69,39 @@
 
       HERMES_UID="''${HERMES_UID:?HERMES_UID must be set}"
       HERMES_GID="''${HERMES_GID:?HERMES_GID must be set}"
-      HERMES_USER="hermes"
 
-      if ! getent group "$HERMES_USER" >/dev/null 2>&1; then
+      # ── Group: ensure a group with GID=$HERMES_GID exists ──
+      # Check by GID (not name) to avoid collisions with pre-existing groups
+      # (e.g. GID 100 = "users" on Ubuntu)
+      EXISTING_GROUP=$(getent group "$HERMES_GID" 2>/dev/null | cut -d: -f1 || true)
+      if [ -n "$EXISTING_GROUP" ]; then
+        GROUP_NAME="$EXISTING_GROUP"
+      else
+        GROUP_NAME="hermes"
         if command -v groupadd >/dev/null 2>&1; then
-          groupadd -g "$HERMES_GID" "$HERMES_USER"
+          groupadd -g "$HERMES_GID" "$GROUP_NAME"
         elif command -v addgroup >/dev/null 2>&1; then
-          addgroup -g "$HERMES_GID" "$HERMES_USER" 2>/dev/null || true
+          addgroup -g "$HERMES_GID" "$GROUP_NAME" 2>/dev/null || true
         fi
       fi
 
-      if ! getent passwd "$HERMES_USER" >/dev/null 2>&1; then
+      # ── User: ensure a user with UID=$HERMES_UID exists ──
+      EXISTING_USER=$(getent passwd "$HERMES_UID" 2>/dev/null | cut -d: -f1 || true)
+      if [ -n "$EXISTING_USER" ]; then
+        TARGET_USER="$EXISTING_USER"
+        TARGET_HOME=$(getent passwd "$HERMES_UID" | cut -d: -f6)
+      else
+        TARGET_USER="hermes"
+        TARGET_HOME="/home/hermes"
         if command -v useradd >/dev/null 2>&1; then
-          useradd -u "$HERMES_UID" -g "$HERMES_GID" -m -d /home/hermes -s /bin/bash "$HERMES_USER"
+          useradd -u "$HERMES_UID" -g "$HERMES_GID" -m -d "$TARGET_HOME" -s /bin/bash "$TARGET_USER"
         elif command -v adduser >/dev/null 2>&1; then
-          adduser -u "$HERMES_UID" -D -h /home/hermes -s /bin/sh -G "$HERMES_USER" "$HERMES_USER" 2>/dev/null || true
+          adduser -u "$HERMES_UID" -D -h "$TARGET_HOME" -s /bin/sh -G "$GROUP_NAME" "$TARGET_USER" 2>/dev/null || true
         fi
       fi
-      if [ ! -d /home/hermes ]; then
-        mkdir -p /home/hermes
-        chown "$HERMES_UID:$HERMES_GID" /home/hermes
+      if [ ! -d "$TARGET_HOME" ]; then
+        mkdir -p "$TARGET_HOME"
+        chown "$HERMES_UID:$HERMES_GID" "$TARGET_HOME"
       fi
 
       # Install sudo on Debian/Ubuntu if missing (first boot only, cached in writable layer)
@@ -97,14 +110,14 @@
       fi
       if command -v sudo >/dev/null 2>&1 && [ ! -f /etc/sudoers.d/hermes ]; then
         mkdir -p /etc/sudoers.d
-        echo "$HERMES_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/hermes
+        echo "$TARGET_USER ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/hermes
         chmod 0440 /etc/sudoers.d/hermes
       fi
 
       if command -v setpriv >/dev/null 2>&1; then
         exec setpriv --reuid="$HERMES_UID" --regid="$HERMES_GID" --init-groups "$@"
       elif command -v su >/dev/null 2>&1; then
-        exec su -s /bin/sh "$HERMES_USER" -c 'exec "$@"' -- "$@"
+        exec su -s /bin/sh "$TARGET_USER" -c 'exec "$@"' -- "$@"
       else
         echo "WARNING: no privilege-drop tool (setpriv/su), running as root" >&2
         exec "$@"
