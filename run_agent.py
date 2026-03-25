@@ -3653,6 +3653,7 @@ class AIAgent:
                         name = entry["function"]["name"]
                         if name and idx not in tool_gen_notified:
                             tool_gen_notified.add(idx)
+                            _fire_first_delta()
                             self._fire_tool_gen_started(name)
 
                 if chunk.choices[0].finish_reason:
@@ -3721,6 +3722,7 @@ class AIAgent:
                             has_tool_use = True
                             tool_name = getattr(block, "name", None)
                             if tool_name:
+                                _fire_first_delta()
                                 self._fire_tool_gen_started(tool_name)
 
                     elif event_type == "content_block_delta":
