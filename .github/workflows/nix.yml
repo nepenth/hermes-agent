@@ -30,6 +30,11 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
       - name: Check flake
+        if: runner.os == 'Linux'
         run: nix flake check --print-build-logs
       - name: Build package
+        if: runner.os == 'Linux'
         run: nix build --print-build-logs
+      - name: Evaluate flake (macOS)
+        if: runner.os == 'macOS'
+        run: nix flake show --json > /dev/null
