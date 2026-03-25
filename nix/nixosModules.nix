@@ -132,14 +132,13 @@
     '';
 
     # Identity hash — only recreate container when structural config changes.
-    # Environment variables are handled via $HERMES_HOME/.env (read by
-    # load_hermes_dotenv at Python startup), so they don't need container recreation.
+    # Package and entrypoint use stable symlinks (current-package, current-entrypoint)
+    # so they can update without recreation. Env vars go through $HERMES_HOME/.env.
     containerIdentity = builtins.hashString "sha256" (builtins.toJSON {
-      schema = 2; # bump when hardcoded volumes/env vars change
+      schema = 3; # bump when identity inputs change
       image = cfg.container.image;
       extraVolumes = cfg.container.extraVolumes;
       extraOptions = cfg.container.extraOptions;
-      entrypoint = builtins.toString containerEntrypoint;
     });
 
     identityFile = "${cfg.stateDir}/.container-identity";
@@ -512,7 +511,6 @@
       # ── Host CLI ──────────────────────────────────────────────────────
       (lib.mkIf cfg.addToSystemPackages {
         environment.systemPackages = [ cfg.package ];
-        environment.variables.HERMES_HOME = "${cfg.stateDir}/.hermes";
       })
 
       # ── Directories ───────────────────────────────────────────────────
@@ -651,11 +649,13 @@ HERMES_NIX_ENV_EOF
           requires = lib.optional (cfg.container.backend == "docker") "docker.service";
 
           preStart = ''
-            # Update symlink to current hermes package
+            # Stable symlinks — container references these, not store paths directly
             ln -sfn ${cfg.package} ${cfg.stateDir}/current-package
+            ln -sfn ${containerEntrypoint} ${cfg.stateDir}/current-entrypoint
 
-            # GC root so nix-collect-garbage doesn't remove the running package
+            # GC roots so nix-collect-garbage doesn't remove store paths in use
             ${pkgs.nix}/bin/nix-store --add-root ${cfg.stateDir}/.gc-root --indirect -r ${cfg.package} 2>/dev/null || true
+            ${pkgs.nix}/bin/nix-store --add-root ${cfg.stateDir}/.gc-root-entrypoint --indirect -r ${containerEntrypoint} 2>/dev/null || true
 
             # Check if container needs (re)creation
             NEED_CREATE=false
@@ -676,7 +676,7 @@ HERMES_NIX_ENV_EOF
               ${containerBin} create \
                 --name ${containerName} \
                 --network=host \
-                --entrypoint ${containerEntrypoint} \
+                --entrypoint ${containerDataDir}/current-entrypoint \
                 --volume /nix/store:/nix/store:ro \
                 --volume ${cfg.stateDir}:${containerDataDir} \
                 --volume ${cfg.stateDir}/home:${containerHomeDir} \
