@@ -253,6 +253,8 @@ The full set of config keys is defined in [`nix/config-keys.json`](https://githu
     # ── Service tuning ─────────────────────────────────────────────────
     addToSystemPackages = true;
     extraArgs = [ "--verbose" ];
+    restart = "always";
+    restartSec = 5;
   };
 }
 ```
@@ -706,12 +708,13 @@ nix build .#checks.x86_64-linux.config-roundtrip    # merge script preserves use
 ### Native Mode
 
 ```
-/var/lib/hermes/                     # stateDir (owned by hermes:hermes)
+/var/lib/hermes/                     # stateDir (owned by hermes:hermes, 0750)
 ├── .hermes/                         # HERMES_HOME
 │   ├── config.yaml                  # Nix-generated (deep-merged each rebuild)
 │   ├── .managed                     # Marker: CLI config mutation blocked
 │   ├── .env                         # Merged from environment + environmentFiles
 │   ├── auth.json                    # OAuth credentials (seeded, then self-managed)
+│   ├── gateway.pid
 │   ├── state.db
 │   ├── mcp-tokens/                  # OAuth tokens for MCP servers
 │   ├── sessions/
@@ -773,8 +776,10 @@ docker logs -f hermes-agent
 ```bash
 systemctl status hermes-agent
 docker ps -a --filter name=hermes-agent
+docker inspect hermes-agent --format='{{.State.Status}}'
 docker exec -it hermes-agent bash
 docker exec hermes-agent readlink /data/current-package
+docker exec hermes-agent cat /data/.container-identity
 ```
 
 ### Force Container Recreation
