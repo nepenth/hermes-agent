@@ -1,5 +1,9 @@
 # Nix Setup Guide for Hermes Agent
 
+> **Canonical version:** This document is maintained in the docs site at
+> [`website/docs/getting-started/nix-setup.md`](../website/docs/getting-started/nix-setup.md).
+> The version below may be out of date.
+
 ## Prerequisites
 
 - Nix with flakes enabled ([Determinate Nix](https://install.determinate.systems) recommended — enables flakes by default)
