@@ -2396,8 +2396,101 @@ def main() -> int:
         skill_conflict_mode=args.skill_conflict,
     )
     report = migrator.migrate()
-    print(json.dumps(report, indent=2, ensure_ascii=False))
-    return 0 if report["summary"].get("error", 0) == 0 else 1
+
+    # ── Human-readable terminal recap ─────────────────────────
+    s = report["summary"]
+    items = report["items"]
+    mode_label = "DRY RUN" if not args.execute else "EXECUTED"
+    total = sum(s.values())
+
+    print()
+    print(f"  ╔══════════════════════════════════════════════════════╗")
+    print(f"  ║   OpenClaw -> Hermes Migration   [{mode_label:>8s}]   ║")
+    print(f"  ╠══════════════════════════════════════════════════════╣")
+    print(f"  ║  Source:  {str(report['source_root'])[:42]:<42s}  ║")
+    print(f"  ║  Target:  {str(report['target_root'])[:42]:<42s}  ║")
+    print(f"  ╠══════════════════════════════════════════════════════╣")
+    print(f"  ║  ✔ Migrated:  {s.get('migrated', 0):>3d}    ◆ Archived:  {s.get('archived', 0):>3d}        ║")
+    print(f"  ║  ⊘ Skipped:   {s.get('skipped', 0):>3d}    ⚠ Conflicts: {s.get('conflict', 0):>3d}        ║")
+    print(f"  ║  ✖ Errors:    {s.get('error', 0):>3d}    Total:       {total:>3d}        ║")
+    print(f"  ╚══════════════════════════════════════════════════════╝")
+
+    # Show what was migrated
+    migrated = [i for i in items if i["status"] == "migrated"]
+    if migrated:
+        print()
+        print("  Migrated:")
+        seen_kinds = set()
+        for item in migrated:
+            label = item["kind"]
+            if label in seen_kinds:
+                continue
+            seen_kinds.add(label)
+            dest = item.get("destination") or ""
+            if dest.startswith(str(report["target_root"])):
+                dest = "~/.hermes/" + dest[len(str(report["target_root"])) + 1:]
+            meta = MIGRATION_OPTION_METADATA.get(label, {})
+            display = meta.get("label", label)
+            print(f"    ✔ {display:<35s} -> {dest}")
+
+    # Show what was archived
+    archived = [i for i in items if i["status"] == "archived"]
+    if archived:
+        print()
+        print("  Archived (manual review needed):")
+        seen_kinds = set()
+        for item in archived:
+            label = item["kind"]
+            if label in seen_kinds:
+                continue
+            seen_kinds.add(label)
+            reason = item.get("reason", "")
+            meta = MIGRATION_OPTION_METADATA.get(label, {})
+            display = meta.get("label", label)
+            short_reason = reason[:50] + "..." if len(reason) > 50 else reason
+            print(f"    ◆ {display:<35s}  {short_reason}")
+
+    # Show conflicts
+    conflicts = [i for i in items if i["status"] == "conflict"]
+    if conflicts:
+        print()
+        print("  Conflicts (use --overwrite to force):")
+        for item in conflicts:
+            print(f"    ⚠ {item['kind']}: {item.get('reason', '')}")
+
+    # Show errors
+    errors = [i for i in items if i["status"] == "error"]
+    if errors:
+        print()
+        print("  Errors:")
+        for item in errors:
+            print(f"    ✖ {item['kind']}: {item.get('reason', '')}")
+
+    # PM2 reassurance
+    print()
+    print("  ℹ PM2 processes (Discord/Telegram bots) are NOT affected.")
+
+    # Next steps
+    if args.execute:
+        print()
+        print("  Next steps:")
+        print("    1. Review ~/.hermes/config.yaml")
+        print("    2. Run: hermes mcp list")
+        if any(i["kind"] == "cron-jobs" and i["status"] == "archived" for i in items):
+            print("    3. Recreate cron jobs: hermes cron")
+        if report.get("output_dir"):
+            print(f"    → Full report: {report['output_dir']}/MIGRATION_NOTES.md")
+    elif not args.execute:
+        print()
+        print("  This was a dry run. Add --execute to apply changes.")
+
+    print()
+
+    # Also dump JSON for programmatic use
+    if os.environ.get("MIGRATION_JSON_OUTPUT"):
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+
+    return 0 if s.get("error", 0) == 0 else 1
 
 
 if __name__ == "__main__":
