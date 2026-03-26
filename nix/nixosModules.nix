@@ -121,6 +121,21 @@
         chmod 0440 /etc/sudoers.d/hermes
       fi
 
+      # ── Provision mutable agent tools (first boot only, cached in writable layer) ──
+      # Agents need extensible tools (nodejs/npm for npm i -g, uv for Python).
+      # These live in /usr/bin and ~/.local/bin so they're writable, unlike nix store.
+      # The hermes wrapper uses --suffix PATH so these take priority over nix fallbacks.
+      if [ ! -f /var/lib/hermes-tools-provisioned ] && command -v apt-get >/dev/null 2>&1; then
+        echo "First boot: provisioning agent tools..."
+        apt-get update -qq
+        apt-get install -y -qq nodejs npm curl
+        # uv (Python manager) — not in Ubuntu repos, installed as target user
+        if ! command -v uv >/dev/null 2>&1; then
+          su -s /bin/sh "$TARGET_USER" -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' || true
+        fi
+        touch /var/lib/hermes-tools-provisioned
+      fi
+
       if command -v setpriv >/dev/null 2>&1; then
         exec setpriv --reuid="$HERMES_UID" --regid="$HERMES_GID" --init-groups "$@"
       elif command -v su >/dev/null 2>&1; then
