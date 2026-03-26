@@ -128,7 +128,7 @@ hermes wallet balance                        # Check it arrived
 Add `wallet` to your toolsets in `config.yaml` (or `hermes chat -t hermes-cli,wallet`), and the agent gets 7 tools: `wallet_list`, `wallet_balance`, `wallet_address`, `wallet_send`, `wallet_history`, `wallet_estimate_gas`, `wallet_networks`.
 
 **Key design:**
-- 🔐 Private keys are encrypted at rest (Argon2id + XChaCha20-Poly1305) and never exposed to the agent
+- 🔐 Private keys are encrypted at rest (Argon2id + XSalsa20-Poly1305 via libsodium SecretBox) and never exposed to the agent
 - 📋 Policy engine enforces spending limits, rate limits, and approval thresholds
 - ✅ **User wallets** require owner approval for every transaction
 - 🤖 **Agent wallets** (`hermes wallet create-agent`) auto-approve within configurable limits

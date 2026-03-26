@@ -33,11 +33,16 @@ hermes keystore init
 You'll be prompted to create a passphrase. This is needed each time Hermes starts. To avoid typing it every time:
 
 ```bash
-# Save to your OS credential store (macOS Keychain, GNOME Keyring, etc.)
+# Save to your OS credential store (macOS Keychain, Windows Credential Locker,
+# GNOME/KDE Secret Service, or Linux keyctl when available)
 hermes keystore remember
 
 # Or set an env var (for Docker / systemd / headless)
 export HERMES_KEYSTORE_PASSPHRASE="your-passphrase"
+
+Hermes intentionally does **not** fall back to a machine-derived encrypted file
+for remembered passphrases. In the current same-user execution model, that would
+be derivable by the local agent process and would weaken the keystore boundary.
 ```
 
 ### 2. Create a wallet
@@ -135,7 +140,7 @@ hermes keystore status            Show keystore status
 ### Encryption
 
 - Master key derived from your passphrase via **Argon2id** (memory-hard KDF, 64MB)
-- Each secret encrypted with **XChaCha20-Poly1305** (AEAD, random nonce per write)
+- Each secret encrypted with **XSalsa20-Poly1305** via libsodium SecretBox (AEAD, random nonce per write)
 - Master key held in memory only — never written to disk
 - Keystore DB file permissions: `0600`, directory: `0700`
 
@@ -244,11 +249,20 @@ wallet:
     solana: "https://api.mainnet-beta.solana.com"
     ethereum: "https://eth.llamarpc.com"
 
-  # Agent wallet policy overrides (tightens defaults, cannot loosen)
+  # Minimal policy overrides currently supported at runtime
+  # (global/shared state, not per-wallet yet)
   agent_wallet:
     enabled: true
-    auto_approve_below_native: "0.5"
-    daily_limit_native: "5.0"
-    max_per_tx_native: "1.0"
-    rate_limit: "5/hour"
+    auto_approve_below_native: "0.5"   # maps to require_approval.above_native
+    daily_limit_native: "5.0"          # maps to daily_limit.max_native
+    max_per_tx_native: "1.0"           # maps to spending_limit.max_native
 ```
+
+:::note
+Per-wallet policy management and richer policy configuration are not fully surfaced yet. Today Hermes supports:
+- runtime RPC endpoint overrides via `wallet.rpc_endpoints`
+- a minimal set of global agent-wallet policy overrides via `wallet.agent_wallet`
+- durable freeze/rate-limit/daily-limit state across CLI invocations
+
+More granular per-wallet policy editing is planned follow-up work.
+:::

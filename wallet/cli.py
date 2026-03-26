@@ -37,34 +37,13 @@ def _cprint(msg: str, style: str = "") -> None:
 
 
 def _get_wallet_manager():
-    """Initialize and return the wallet manager + policy engine."""
+    """Initialize and return the shared wallet manager + policy engine."""
     try:
-        from keystore.client import get_keystore
-        from wallet.manager import WalletManager
-        from wallet.policy import PolicyEngine
-
-        ks = get_keystore()
-        if not ks.is_unlocked:
+        from wallet.runtime import get_runtime
+        mgr, policy = get_runtime()
+        if mgr is None:
             from keystore.store import KeystoreLocked
             raise KeystoreLocked("Keystore is locked")
-
-        mgr = WalletManager(ks)
-        policy = PolicyEngine()
-
-        # Register providers
-        try:
-            from wallet.chains.evm import EVMProvider, EVM_CHAINS
-            for chain_id, config in EVM_CHAINS.items():
-                mgr.register_provider(chain_id, EVMProvider(config))
-        except ImportError:
-            pass
-        try:
-            from wallet.chains.solana import SolanaProvider, SOLANA_CHAINS
-            for chain_id, config in SOLANA_CHAINS.items():
-                mgr.register_provider(chain_id, SolanaProvider(config))
-        except ImportError:
-            pass
-
         return mgr, policy
     except ImportError as e:
         _cprint(f"\n  ✗ Wallet dependencies not installed: {e}", style="bold red")
@@ -304,17 +283,46 @@ def cmd_wallet_send(args: argparse.Namespace) -> None:
         _cprint("\n  ✗ Cancelled\n", style="yellow")
         return
 
-    # Execute
+    # Evaluate policy first
     try:
-        result = mgr.send(wallet.wallet_id, to_address, amount, decided_by="owner_cli")
+        from wallet.policy import TxRequest, PolicyVerdict
+        tx_req = TxRequest(
+            wallet_id=wallet.wallet_id,
+            wallet_type=wallet.wallet_type,
+            chain=wallet.chain,
+            to_address=to_address,
+            amount=amount,
+            symbol=symbol,
+        )
+        eval_result = policy.evaluate(tx_req)
+        if eval_result.verdict == PolicyVerdict.BLOCK:
+            _cprint(f"\n  ✗ Blocked by policy: {eval_result.reason}\n", style="bold red")
+            return
+
+        # CLI owner explicitly approved by confirming above, so approval-gated
+        # txs may proceed here. We still preserve the policy result in history.
+        result = mgr.send(
+            wallet.wallet_id,
+            to_address,
+            amount,
+            decided_by="owner_cli",
+            policy_result=json.dumps({
+                "verdict": eval_result.verdict.value,
+                "checked": eval_result.checked,
+                "failed": eval_result.failed,
+                "approved_via": "owner_cli",
+            }),
+        )
         if result.status == "failed":
             _cprint(f"\n  ✗ Transaction failed: {result.error}\n", style="bold red")
-        else:
-            _cprint(f"\n  ✓ Transaction submitted!", style="bold green")
-            _cprint(f"    TX hash: {result.tx_hash}")
-            if result.explorer_url:
-                _cprint(f"    Explorer: {result.explorer_url}")
-            _cprint("")
+            return
+
+        policy.record_transaction(tx_req)
+        _cprint(f"\n  ✓ Transaction submitted!", style="bold green")
+        _cprint(f"    TX hash: {result.tx_hash}")
+        if result.explorer_url:
+            _cprint(f"    Explorer: {result.explorer_url}")
+        _cprint("")
     except Exception as e:
         _cprint(f"\n  ✗ Error: {e}\n", style="bold red")
 

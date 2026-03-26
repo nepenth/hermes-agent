@@ -43,20 +43,8 @@ def _get_manager():
         return _wallet_manager, _policy_engine
 
     try:
-        from keystore.client import get_keystore
-        from wallet.manager import WalletManager
-        from wallet.policy import PolicyEngine
-
-        ks = get_keystore()
-        if not ks.is_unlocked:
-            return None, None
-
-        _wallet_manager = WalletManager(ks)
-        _policy_engine = PolicyEngine()
-
-        # Register available chain providers, respecting config.yaml overrides
-        _register_providers(_wallet_manager)
-
+        from wallet.runtime import get_runtime
+        _wallet_manager, _policy_engine = get_runtime()
         return _wallet_manager, _policy_engine
     except ImportError:
         return None, None
@@ -64,36 +52,6 @@ def _get_manager():
         logger.debug("Wallet manager init failed: %s", e)
         return None, None
 
-
-def _load_rpc_overrides() -> dict:
-    """Load user RPC endpoint overrides from config.yaml."""
-    try:
-        from hermes_cli.config import load_config
-        cfg = load_config()
-        return cfg.get("wallet", {}).get("rpc_endpoints", {})
-    except Exception:
-        return {}
-
-
-def _register_providers(mgr):
-    """Register chain providers based on installed deps + config overrides."""
-    overrides = _load_rpc_overrides()
-
-    try:
-        from wallet.chains.evm import EVMProvider, EVM_CHAINS
-        for chain_id, config in EVM_CHAINS.items():
-            rpc = overrides.get(chain_id, "")
-            mgr.register_provider(chain_id, EVMProvider(config, rpc_url_override=rpc))
-    except ImportError:
-        pass
-
-    try:
-        from wallet.chains.solana import SolanaProvider, SOLANA_CHAINS
-        for chain_id, config in SOLANA_CHAINS.items():
-            rpc = overrides.get(chain_id, "")
-            mgr.register_provider(chain_id, SolanaProvider(config, rpc_url_override=rpc))
-    except ImportError:
-        pass
 
 
 def _check_wallet_available() -> bool:
@@ -255,7 +213,18 @@ def wallet_send(args: dict, task_id: str = None, **kw) -> str:
 
     # Policy passed — execute
     try:
-        tx_result = mgr.send(wallet.wallet_id, to_address, amount, decided_by="policy_auto")
+        tx_result = mgr.send(
+            wallet.wallet_id,
+            to_address,
+            amount,
+            decided_by="policy_auto",
+            policy_result=json.dumps({
+                "verdict": result.verdict.value,
+                "checked": result.checked,
+                "failed": result.failed,
+                "approved_via": "policy_auto",
+            }),
+        )
         if policy:
             policy.record_transaction(tx_req)
 

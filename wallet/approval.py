@@ -66,42 +66,57 @@ def has_pending(session_key: str) -> bool:
 def execute_approved(session_key: str, pending: dict) -> str:
     """Execute an approved wallet transaction.
 
-    Called by the CLI callback or gateway /approve handler after the user
-    approves.  Returns a JSON string with the result.
+    Uses the shared wallet runtime so approvals go through the same provider
+    configuration and persisted policy state as normal tool execution.
     """
     try:
-        from keystore.client import get_keystore
-        from wallet.manager import WalletManager
-        from wallet.policy import PolicyEngine
+        from wallet.runtime import get_runtime
+        from wallet.policy import TxRequest, PolicyVerdict
 
-        ks = get_keystore()
-        if not ks.is_unlocked:
+        mgr, policy = get_runtime()
+        if mgr is None:
             return json.dumps({"error": "Keystore is locked"})
-
-        mgr = WalletManager(ks)
-
-        # Register providers
-        try:
-            from wallet.chains.evm import EVMProvider, EVM_CHAINS
-            for chain_id, config in EVM_CHAINS.items():
-                mgr.register_provider(chain_id, EVMProvider(config))
-        except ImportError:
-            pass
-        try:
-            from wallet.chains.solana import SolanaProvider, SOLANA_CHAINS
-            for chain_id, config in SOLANA_CHAINS.items():
-                mgr.register_provider(chain_id, SolanaProvider(config))
-        except ImportError:
-            pass
 
         wallet_id = pending["wallet_id"]
         to_address = pending["to_address"]
         amount = Decimal(pending["amount"])
 
-        result = mgr.send(wallet_id, to_address, amount, decided_by="owner_approved")
+        tx_req = TxRequest(
+            wallet_id=wallet_id,
+            wallet_type=pending.get("wallet_type", "user"),
+            chain=pending["chain"],
+            to_address=to_address,
+            amount=amount,
+            symbol=pending["symbol"],
+        )
+
+        # Re-evaluate policies at execution time so freeze/cumulative limits
+        # still apply. Approval only overrides the require_approval verdict.
+        eval_result = policy.evaluate(tx_req)
+        if eval_result.verdict == PolicyVerdict.BLOCK:
+            return json.dumps({
+                "status": "blocked",
+                "error": eval_result.reason,
+                "policy": eval_result.failed,
+            })
+
+        result = mgr.send(
+            wallet_id,
+            to_address,
+            amount,
+            decided_by="owner_approved",
+            policy_result=json.dumps({
+                "verdict": eval_result.verdict.value,
+                "checked": eval_result.checked,
+                "failed": eval_result.failed,
+                "approved_via": "owner",
+            }),
+        )
 
         if result.status == "failed":
             return json.dumps({"status": "failed", "error": result.error})
+
+        policy.record_transaction(tx_req)
 
         return json.dumps({
             "status": "submitted",

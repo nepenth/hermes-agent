@@ -1,7 +1,8 @@
 """Encrypted secret store backed by SQLite.
 
-Secrets are encrypted at the field level using XChaCha20-Poly1305 (AEAD).
-The master encryption key is derived from a user passphrase via Argon2id.
+Secrets are encrypted at the field level using XSalsa20-Poly1305 (AEAD)
+via ``nacl.secret.SecretBox``. The master encryption key is derived from a
+user passphrase via Argon2id.
 
 The master key is held in memory only — never written to disk.
 The encrypted DB can be freely copied/backed up; it's useless without
@@ -25,7 +26,7 @@ from typing import Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Crypto imports — pynacl for XChaCha20-Poly1305, argon2-cffi for KDF
+# Crypto imports — pynacl SecretBox (XSalsa20-Poly1305), argon2-cffi for KDF
 # ---------------------------------------------------------------------------
 
 try:
@@ -53,7 +54,7 @@ _SCHEMA_VERSION = 1
 _KDF_TIME_COST = 3
 _KDF_MEMORY_COST = 65536  # 64 MB
 _KDF_PARALLELISM = 4
-_KDF_HASH_LEN = 32  # 256 bits — matches XChaCha20-Poly1305 key size
+_KDF_HASH_LEN = 32  # 256 bits — matches SecretBox key size
 _SALT_LEN = 16
 
 
@@ -361,7 +362,7 @@ class EncryptedStore:
                 self._log_access(conn, name, "denied", requester)
                 conn.commit()
                 return None
-            if category == "sealed" and requester not in ("daemon", "wallet", "migration"):
+            if category == "sealed" and requester not in ("daemon", "wallet", "migration", "cli_export"):
                 self._log_access(conn, name, "denied", requester)
                 conn.commit()
                 return None
@@ -644,18 +645,17 @@ class EncryptedStore:
 
     @staticmethod
     def _encrypt(key: bytes, plaintext: bytes) -> bytes:
-        """Encrypt with XChaCha20-Poly1305 (AEAD).
+        """Encrypt with XSalsa20-Poly1305 (AEAD) via ``nacl.secret.SecretBox``.
 
         Returns nonce + ciphertext as a single blob.
-        nacl.secret.SecretBox uses XSalsa20-Poly1305 with a 24-byte nonce,
-        which is functionally equivalent and widely audited.
+        SecretBox uses a 24-byte nonce and is widely audited.
         """
         box = nacl.secret.SecretBox(key)
         return bytes(box.encrypt(plaintext))
 
     @staticmethod
     def _decrypt(key: bytes, ciphertext: bytes) -> bytes:
-        """Decrypt XChaCha20-Poly1305 ciphertext.
+        """Decrypt SecretBox (XSalsa20-Poly1305) ciphertext.
 
         Raises nacl.exceptions.CryptoError on tampered/wrong-key data.
         """

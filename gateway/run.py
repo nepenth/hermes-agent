@@ -136,6 +136,23 @@ if _config_path.exists():
                         os.environ[_env_var] = str(_val)
         # Compression config is read directly from config.yaml by run_agent.py
         # and auxiliary_client.py — no env var bridging needed.
+        # Keystore-backed secret injection (overrides stubbed .env after migration).
+        # Unlock priority matches CLI startup:
+        #   1) OS credential store / keyctl (via hermes keystore remember)
+        #   2) HERMES_KEYSTORE_PASSPHRASE env var
+        #   3) No interactive prompt in gateway mode — fail gracefully and keep .env fallback
+        try:
+            from keystore.client import get_keystore
+            _ks = get_keystore()
+            if _ks.is_initialized and _ks.ensure_unlocked(interactive=False):
+                _ks.inject_env()
+        except ImportError:
+            pass  # keystore extras not installed
+        except Exception as _e:
+            # Gateway remains usable with plaintext .env fallback when keystore
+            # isn't configured or cannot be auto-unlocked.
+            logging.getLogger(__name__).debug("Gateway keystore injection skipped: %s", _e)
+
         # Auxiliary model/direct-endpoint overrides (vision, web_extract).
         # Each task has provider/model/base_url/api_key; bridge non-default values to env vars.
         _auxiliary_cfg = _cfg.get("auxiliary", {})

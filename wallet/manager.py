@@ -11,10 +11,12 @@ Wallet metadata is stored alongside the key in the keystore:
 
 import json
 import logging
+import os
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Dict, List, Optional
 
 from keystore.client import KeystoreClient
@@ -66,10 +68,13 @@ class WalletManager:
     wallet tools which use session tokens.
     """
 
-    def __init__(self, keystore: KeystoreClient):
+    def __init__(self, keystore: KeystoreClient, state_dir: Optional[Path] = None):
         self._ks = keystore
         self._providers: Dict[str, ChainProvider] = {}
-        self._tx_log: List[TxRecord] = []  # In-memory for now, persisted to keystore
+        self._state_dir = Path(state_dir) if state_dir else Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "wallet"
+        self._state_dir.mkdir(parents=True, exist_ok=True)
+        self._tx_log_path = self._state_dir / "tx_log.json"
+        self._tx_log: List[TxRecord] = self._load_tx_log()
 
     # ------------------------------------------------------------------
     # Chain provider management
@@ -247,7 +252,7 @@ class WalletManager:
         """
         wallet = self.get_wallet(wallet_id)
         key_name = f"wallet:{wallet.chain}:{wallet.address}"
-        private_key = self._ks.get_secret(key_name, requester="cli")
+        private_key = self._ks.get_secret(key_name, requester="cli_export")
         if not private_key:
             raise WalletError(f"Failed to retrieve private key for wallet '{wallet_id}'")
         return private_key
@@ -274,6 +279,7 @@ class WalletManager:
         to_address: str,
         amount: Decimal,
         decided_by: str = "owner_cli",
+        policy_result: str = "{}",
     ) -> TransactionResult:
         """Execute a native token transfer.
 
@@ -312,20 +318,39 @@ class WalletManager:
             symbol=provider.config.symbol,
             tx_hash=result.tx_hash,
             status=result.status,
-            policy_result="{}",
+            policy_result=policy_result,
             requested_at=datetime.now(timezone.utc).isoformat(),
             decided_by=decided_by,
         )
         self._tx_log.append(tx_record)
+        self._save_tx_log()
 
         return result
 
     def get_tx_history(self, wallet_id: Optional[str] = None, limit: int = 20) -> List[TxRecord]:
-        """Get transaction history from local log."""
+        """Get transaction history from durable local log."""
         records = self._tx_log
         if wallet_id:
             records = [r for r in records if r.wallet_id == wallet_id]
         return records[-limit:]
+
+    def _load_tx_log(self) -> List[TxRecord]:
+        try:
+            if not self._tx_log_path.exists():
+                return []
+            data = json.loads(self._tx_log_path.read_text())
+            return [TxRecord(**item) for item in data]
+        except Exception as e:
+            logger.warning("Failed to load wallet tx log: %s", e)
+            return []
+
+    def _save_tx_log(self) -> None:
+        try:
+            tmp = self._tx_log_path.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps([asdict(r) for r in self._tx_log], indent=2))
+            os.replace(tmp, self._tx_log_path)
+        except Exception as e:
+            logger.warning("Failed to save wallet tx log: %s", e)
 
     # ------------------------------------------------------------------
     # Helpers

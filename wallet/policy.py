@@ -7,12 +7,15 @@ For v1, policies are in-memory (loaded from config.yaml).  A future
 version will persist per-wallet policies in the keystore.
 """
 
+import json
 import logging
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
+from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -147,15 +150,22 @@ USER_WALLET_DEFAULTS = {
 
 
 class PolicyEngine:
-    """Evaluates transactions against a set of policies."""
+    """Evaluates transactions against a set of policies.
 
-    def __init__(self, policies: Optional[Dict[str, dict]] = None):
+    State for freeze/rate-limit/daily-limit is persisted to a JSON file so
+    CLI invocations and approval replays share the same safeguards.
+    """
+
+    def __init__(self, policies: Optional[Dict[str, dict]] = None, state_path: Optional[Path] = None):
         self._policies = policies or {}
+        self._state_path = Path(state_path) if state_path else Path(os.getenv("HERMES_HOME", Path.home() / ".hermes")) / "wallet" / "policy_state.json"
+        self._state_path.parent.mkdir(parents=True, exist_ok=True)
         # Tracking state for rate-based policies
         self._daily_totals: Dict[str, Decimal] = defaultdict(Decimal)
         self._tx_timestamps: Dict[str, list] = defaultdict(list)
         self._last_tx_time: Dict[str, float] = {}
         self._frozen = False
+        self._load_state()
 
     @property
     def is_frozen(self) -> bool:
@@ -164,11 +174,13 @@ class PolicyEngine:
     def freeze(self) -> None:
         """Kill switch — block all transactions."""
         self._frozen = True
+        self._save_state()
         logger.warning("Wallet FROZEN — all transactions blocked")
 
     def unfreeze(self) -> None:
         """Unfreeze — resume normal operation."""
         self._frozen = False
+        self._save_state()
         logger.info("Wallet unfrozen")
 
     def evaluate(self, tx: TxRequest) -> PolicyResult:
@@ -237,3 +249,33 @@ class PolicyEngine:
 
         self._tx_timestamps[tx.wallet_id].append(time.time())
         self._last_tx_time[tx.wallet_id] = time.time()
+        self._save_state()
+
+    def _load_state(self) -> None:
+        try:
+            if not self._state_path.exists():
+                return
+            data = json.loads(self._state_path.read_text())
+            self._frozen = bool(data.get("frozen", False))
+            self._daily_totals = defaultdict(
+                Decimal,
+                {k: Decimal(str(v)) for k, v in (data.get("daily_totals", {}) or {}).items()},
+            )
+            self._tx_timestamps = defaultdict(list, data.get("tx_timestamps", {}) or {})
+            self._last_tx_time = data.get("last_tx_time", {}) or {}
+        except Exception as e:
+            logger.warning("Failed to load wallet policy state: %s", e)
+
+    def _save_state(self) -> None:
+        try:
+            payload = {
+                "frozen": self._frozen,
+                "daily_totals": {k: str(v) for k, v in self._daily_totals.items()},
+                "tx_timestamps": dict(self._tx_timestamps),
+                "last_tx_time": dict(self._last_tx_time),
+            }
+            tmp = self._state_path.with_suffix('.json.tmp')
+            tmp.write_text(json.dumps(payload, indent=2))
+            os.replace(tmp, self._state_path)
+        except Exception as e:
+            logger.warning("Failed to save wallet policy state: %s", e)

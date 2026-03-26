@@ -1,19 +1,26 @@
 """Cross-platform credential store for keystore passphrase caching.
 
-Detects the best available backend at runtime.  No hard dependency
+Detects the best available backend at runtime. No hard dependency
 on any OS-specific service — every backend is probed and the first
 working one is used.
 
 Backend priority:
   macOS      → Keychain Services (via keyring library)
   Windows    → Credential Locker / DPAPI (via keyring library)
-  Linux      → Secret Service D-Bus  >  kernel keyctl  >  encrypted file
-  Fallback   → Encrypted file (~/.hermes/keystore/.credential)
+  Linux      → Secret Service D-Bus > kernel keyctl
+  Fallback   → None
 
-The encrypted file fallback uses a machine-derived key (machine-id +
-UID + static salt) — same trust model as Windows DPAPI ("same user on
-same machine can decrypt").  Less secure than a real system keychain
-but strictly better than plaintext and always available.
+Security note:
+  We intentionally DO NOT provide an automatic encrypted-file fallback.
+  In Hermes' current same-user execution model, any fallback whose key is
+  derivable from local machine/user state would be reachable by the agent
+  itself via file reads and local code execution, collapsing the security
+  boundary around sealed secrets. If no real OS/keyctl-backed credential
+  store exists, users must either:
+
+    - type the keystore passphrase at startup, or
+    - provide HERMES_KEYSTORE_PASSPHRASE explicitly for headless/systemd
+      deployments, accepting that tradeoff consciously.
 """
 
 import hashlib
@@ -300,13 +307,7 @@ def _detect_backend() -> Optional[_Backend]:
         except (OSError, subprocess.TimeoutExpired):
             pass
 
-    # 3. Encrypted file (needs pynacl — which is a keystore dependency)
-    try:
-        import nacl.secret  # noqa: F401
-        return _EncryptedFileBackend()
-    except ImportError:
-        pass
-
+    # No insecure fallback. If no real backend is available, return None.
     return None
 
 

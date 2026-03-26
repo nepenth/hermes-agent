@@ -49,7 +49,7 @@ Enable the `wallet` toolset in `config.yaml` or via `hermes chat -t hermes-cli,w
 | `hermes keystore show <name>` | Decrypt and display |
 | `hermes keystore delete <name>` | Remove a secret |
 | `hermes keystore migrate` | Import from `.env` |
-| `hermes keystore remember` | Cache passphrase in OS credential store |
+| `hermes keystore remember` | Cache passphrase in OS credential store (no insecure file fallback) |
 | `hermes keystore forget` | Remove cached passphrase |
 | `hermes keystore change-passphrase` | Re-encrypt everything |
 | `hermes keystore audit` | Access log |
@@ -68,7 +68,7 @@ Enable the `wallet` toolset in `config.yaml` or via `hermes chat -t hermes-cli,w
 
 ## Security
 
-- **Encryption:** Argon2id KDF + XChaCha20-Poly1305 per-secret AEAD
+- **Encryption:** Argon2id KDF + XSalsa20-Poly1305 per-secret AEAD (libsodium SecretBox)
 - **Agent never sees keys:** Private keys are `sealed` — the agent uses tools, not keys
 - **Policies:** Spending limits, rate limits, daily caps, approval thresholds, recipient lists
 - **User wallets:** Every transaction requires owner approval
