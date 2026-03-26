@@ -383,6 +383,7 @@ class APIServerAdapter(BasePlatformAdapter):
             quiet_mode=True,
             verbose_logging=False,
             ephemeral_system_prompt=ephemeral_system_prompt or None,
+            enabled_toolsets=["hermes-api-server"],
             session_id=session_id,
             platform="api_server",
             stream_delta_callback=stream_delta_callback,
