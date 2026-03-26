@@ -503,12 +503,9 @@ class TelegramAdapter(BasePlatformAdapter):
                     self.name,
                     ", ".join(fallback_ips),
                 )
-                request = HTTPXRequest(
-                    httpx_kwargs={"transport": TelegramFallbackTransport(fallback_ips)}
-                )
-                get_updates_request = HTTPXRequest(
-                    httpx_kwargs={"transport": TelegramFallbackTransport(fallback_ips)}
-                )
+                transport = TelegramFallbackTransport(fallback_ips)
+                request = HTTPXRequest(httpx_kwargs={"transport": transport})
+                get_updates_request = HTTPXRequest(httpx_kwargs={"transport": transport})
                 builder = builder.request(request).get_updates_request(get_updates_request)
             self._app = builder.build()
             self._bot = self._app.bot
