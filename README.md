@@ -99,10 +99,43 @@ All documentation lives at **[hermes-agent.nousresearch.com/docs](https://hermes
 | [MCP Integration](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp) | Connect any MCP server for extended capabilities |
 | [Cron Scheduling](https://hermes-agent.nousresearch.com/docs/user-guide/features/cron) | Scheduled tasks with platform delivery |
 | [Context Files](https://hermes-agent.nousresearch.com/docs/user-guide/features/context-files) | Project context that shapes every conversation |
+| [Wallet](https://hermes-agent.nousresearch.com/docs/user-guide/features/wallet) | Crypto wallet — keystore, transactions, policies, approval flow |
 | [Architecture](https://hermes-agent.nousresearch.com/docs/developer-guide/architecture) | Project structure, agent loop, key classes |
 | [Contributing](https://hermes-agent.nousresearch.com/docs/developer-guide/contributing) | Development setup, PR process, code style |
 | [CLI Reference](https://hermes-agent.nousresearch.com/docs/reference/cli-commands) | All commands and flags |
 | [Environment Variables](https://hermes-agent.nousresearch.com/docs/reference/environment-variables) | Complete env var reference |
+
+---
+
+## Crypto Wallet
+
+Give your agent its own wallet. Hermes can hold funds, check balances, and send transactions on Solana and EVM chains — with encrypted key storage and policy-controlled spending limits.
+
+```bash
+pip install 'hermes-agent[wallet]'          # EVM (Ethereum, Base, Polygon, etc.)
+pip install 'hermes-agent[wallet-solana]'    # + Solana support
+```
+
+**Quick start:**
+```bash
+hermes keystore init                         # Set a master passphrase (one-time)
+hermes wallet create --chain solana          # Create a fresh wallet
+hermes wallet fund                           # Shows the deposit address
+# Send some tokens to the address, then:
+hermes wallet balance                        # Check it arrived
+```
+
+Add `wallet` to your toolsets in `config.yaml` (or `hermes chat -t hermes-cli,wallet`), and the agent gets 7 tools: `wallet_list`, `wallet_balance`, `wallet_address`, `wallet_send`, `wallet_history`, `wallet_estimate_gas`, `wallet_networks`.
+
+**Key design:**
+- 🔐 Private keys are encrypted at rest (Argon2id + XChaCha20-Poly1305) and never exposed to the agent
+- 📋 Policy engine enforces spending limits, rate limits, and approval thresholds
+- ✅ **User wallets** require owner approval for every transaction
+- 🤖 **Agent wallets** (`hermes wallet create-agent`) auto-approve within configurable limits
+- 🔒 Kill switch: `hermes wallet freeze` blocks everything instantly
+- 📦 Migration: `hermes wallet export` / `hermes wallet import` to move between machines
+
+See the [full wallet documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/wallet) for details.
 
 ---
 
