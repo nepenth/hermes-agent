@@ -72,12 +72,8 @@ def test_gateway_refresh_reinjects_keystore_secret(monkeypatch, tmp_path):
     gateway_run = _reload_gateway_run(monkeypatch, home)
     assert os.environ.get("OPENAI_API_KEY") == "sk-old"
 
-    # Rotate secret in keystore; .env stays empty.
+    # Rotate secret in keystore; refresh must overwrite the stale in-process env var.
     ks.set_secret("OPENAI_API_KEY", "sk-new")
     os.environ["OPENAI_API_KEY"] = "stale"
-    gateway_run._inject_keystore_env()
-    assert os.environ.get("OPENAI_API_KEY") == "stale" or os.environ.get("OPENAI_API_KEY") == "sk-new"
-    # More important guarantee: if env is cleared, reinjection restores the keystore value.
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    gateway_run._inject_keystore_env()
+    gateway_run._inject_keystore_env(force=True)
     assert os.environ.get("OPENAI_API_KEY") == "sk-new"

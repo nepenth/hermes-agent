@@ -87,8 +87,13 @@ _env_path = _hermes_home / '.env'
 load_hermes_dotenv(hermes_home=_hermes_home, project_env=Path(__file__).resolve().parents[1] / '.env')
 
 
-def _inject_keystore_env() -> None:
+def _inject_keystore_env(force: bool = False) -> None:
     """Inject keystore-backed secrets into os.environ when available.
+
+    Args:
+        force: If True, overwrite already-present env vars with the latest
+            keystore values. This is used by the gateway refresh path so
+            secret rotation takes effect without restart.
 
     Runs independently of config.yaml so gateway/headless deployments using
     only a keystore (with stubbed .env) still receive credentials.
@@ -97,7 +102,7 @@ def _inject_keystore_env() -> None:
         from keystore.client import get_keystore
         _ks = get_keystore()
         if _ks.is_initialized and _ks.ensure_unlocked(interactive=False):
-            _ks.inject_env()
+            _ks.inject_env(force=force)
     except ImportError:
         pass
     except Exception as _e:
@@ -5252,7 +5257,7 @@ class GatewayRunner:
             # Re-inject keystore secrets too so rotated values take effect
             # without requiring a gateway restart.
             try:
-                _inject_keystore_env()
+                _inject_keystore_env(force=True)
             except Exception:
                 pass
 

@@ -153,27 +153,35 @@ class KeystoreClient:
 
         raise PassphraseMismatch("Too many incorrect passphrase attempts")
 
-    def inject_env(self) -> Dict[str, bool]:
+    def inject_env(self, force: bool = False) -> Dict[str, bool]:
         """Inject all ``injectable`` secrets into ``os.environ``.
 
-        Returns a dict of {secret_name: True} for each injected secret.
-        Existing env vars are NOT overwritten (shell exports take priority).
+        Args:
+            force: If True, overwrite existing env vars with keystore values.
+                Use this only for explicit refresh flows in long-lived processes
+                (e.g. gateway credential reload). Startup paths should usually
+                keep the default ``False`` so shell exports/Docker env vars win.
+
+        Returns:
+            Dict of ``{secret_name: injected_or_overwritten}``.
         """
         secrets = self._store.get_injectable_secrets()
         injected = {}
         for name, value in secrets.items():
-            if name not in os.environ:
+            if force or name not in os.environ:
                 os.environ[name] = value
                 injected[name] = True
             else:
                 # Already set in environment (shell export or Docker env)
                 injected[name] = False
         self._injected = injected
-        count_new = sum(1 for v in injected.values() if v)
-        count_existing = sum(1 for v in injected.values() if not v)
+        count_written = sum(1 for v in injected.values() if v)
+        count_skipped = sum(1 for v in injected.values() if not v)
         logger.info(
-            "Keystore: injected %d secrets (%d already in env)",
-            count_new, count_existing,
+            "Keystore: %s %d secrets (%d skipped)",
+            "refreshed" if force else "injected",
+            count_written,
+            count_skipped,
         )
         return injected
 
