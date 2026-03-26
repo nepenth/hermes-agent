@@ -102,3 +102,29 @@ def test_gateway_refresh_does_not_clobber_external_env(monkeypatch, tmp_path):
     ks.set_secret("OPENAI_API_KEY", "rotated-keystore-value")
     gateway_run._inject_keystore_env(force=True)
     assert os.environ.get("OPENAI_API_KEY") == "env-wins"
+
+
+def test_gateway_refresh_revokes_deleted_keystore_secret(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("")
+    (home / "config.yaml").write_text("toolsets:\n- hermes-cli\n")
+
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    from keystore.client import KeystoreClient, reset_keystore
+    reset_keystore()
+    ks = KeystoreClient(home / "keystore" / "secrets.db")
+    ks.initialize("passphrase")
+    ks.set_secret("OPENAI_API_KEY", "sk-old")
+    monkeypatch.setenv("HERMES_KEYSTORE_PASSPHRASE", "passphrase")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    gateway_run = _reload_gateway_run(monkeypatch, home)
+    assert os.environ.get("OPENAI_API_KEY") == "sk-old"
+
+    # Delete from keystore; force refresh should revoke the previously
+    # injected env var from the long-lived process.
+    ks.delete_secret("OPENAI_API_KEY")
+    gateway_run._inject_keystore_env(force=True)
+    assert os.environ.get("OPENAI_API_KEY") is None

@@ -180,6 +180,18 @@ class KeystoreClient:
         previous = dict(self._injected)
         owned = _owned_env_names()
         injected = {}
+        current_names = set(secrets.keys())
+
+        # Force-refresh also acts as revocation for previously keystore-owned
+        # env vars that have been deleted from the keystore or are no longer
+        # injectable. External env vars are never in `owned`, so they are not
+        # touched here.
+        if force:
+            removed = owned - current_names
+            for name in removed:
+                os.environ.pop(name, None)
+            owned -= removed
+
         for name, value in secrets.items():
             should_write = False
             if name not in os.environ:
