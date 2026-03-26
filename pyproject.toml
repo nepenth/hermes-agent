@@ -65,6 +65,21 @@ rl = [
   "wandb>=0.15.0,<1",
 ]
 yc-bench = ["yc-bench @ git+https://github.com/collinear-ai/yc-bench.git ; python_version >= '3.12'"]
+keystore = [
+  "argon2-cffi>=23.0,<24",
+  "pynacl>=1.5.0,<2",
+  "keyring>=25.0,<26",
+]
+wallet = [
+  "hermes-agent[keystore]",
+  "eth-account>=0.13.0,<1",
+  "web3>=7.0,<8",
+]
+wallet-solana = [
+  "hermes-agent[keystore]",
+  "solders>=0.21,<1",
+  "solana>=0.36,<1",
+]
 all = [
   "hermes-agent[modal]",
   "hermes-agent[daytona]",
@@ -82,6 +97,7 @@ all = [
   "hermes-agent[acp]",
   "hermes-agent[voice]",
   "hermes-agent[dingtalk]",
+  "hermes-agent[keystore]",
 ]
 
 [project.scripts]
@@ -93,7 +109,7 @@ hermes-acp = "acp_adapter.entry:main"
 py-modules = ["run_agent", "model_tools", "toolsets", "batch_runner", "trajectory_compressor", "toolset_distributions", "cli", "hermes_constants", "hermes_state", "hermes_time", "rl_cli", "utils"]
 
 [tool.setuptools.packages.find]
-include = ["agent", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "cron", "honcho_integration", "acp_adapter"]
+include = ["agent", "tools", "tools.*", "hermes_cli", "gateway", "gateway.*", "cron", "honcho_integration", "acp_adapter", "keystore", "wallet", "wallet.*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

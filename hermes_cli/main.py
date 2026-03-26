@@ -517,6 +517,25 @@ def cmd_chat(args):
     if getattr(args, "source", None):
         os.environ["HERMES_SESSION_SOURCE"] = args.source
 
+    # Keystore: inject encrypted secrets into os.environ before CLI startup.
+    # This replaces plaintext .env for secret resolution.  Falls back
+    # gracefully if keystore deps aren't installed or store isn't initialized.
+    try:
+        from keystore.client import get_keystore
+        ks = get_keystore()
+        if ks.is_initialized:
+            if ks.ensure_unlocked(interactive=True):
+                injected = ks.inject_env()
+                count = sum(1 for v in injected.values() if v)
+                if count:
+                    logger.debug("Keystore: injected %d secrets", count)
+    except ImportError:
+        pass  # keystore extras not installed — use .env as before
+    except KeyboardInterrupt:
+        sys.exit(0)
+    except Exception as e:
+        logger.debug("Keystore unlock skipped: %s", e)
+
     # Import and run the CLI
     from cli import main as cli_main
     
@@ -3117,6 +3136,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "chat", "model", "gateway", "setup", "whatsapp", "login", "logout",
         "status", "cron", "doctor", "config", "pairing", "skills", "tools",
         "mcp", "sessions", "insights", "version", "update", "uninstall",
+        "keystore",
     }
     _SESSION_FLAGS = {"-c", "--continue", "-r", "--resume"}
 
@@ -4317,6 +4337,20 @@ For more help on a command:
             sys.exit(1)
 
     acp_parser.set_defaults(func=cmd_acp)
+
+    # =========================================================================
+    # keystore command
+    # =========================================================================
+    try:
+        from keystore.cli import register_subparser as register_keystore
+        register_keystore(subparsers)
+    except ImportError:
+        # keystore deps not installed — register a stub that prints install instructions
+        _ks_parser = subparsers.add_parser("keystore", help="Manage encrypted secret store (requires keystore extras)")
+        def _cmd_keystore_stub(args):
+            print("\n  Keystore dependencies not installed.")
+            print("  Install with: pip install 'hermes-agent[keystore]'\n")
+        _ks_parser.set_defaults(func=_cmd_keystore_stub)
     
     # =========================================================================
     # Parse and execute

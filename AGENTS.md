@@ -57,13 +57,19 @@ hermes-agent/
 │   ├── session.py        # SessionStore — conversation persistence
 │   └── platforms/        # Adapters: telegram, discord, slack, whatsapp, homeassistant, signal
 ├── acp_adapter/          # ACP server (VS Code / Zed / JetBrains integration)
+├── keystore/             # Encrypted secret store (optional: pip install .[keystore])
+│   ├── store.py          # Core encrypted SQLite store (Argon2id + XChaCha20-Poly1305)
+│   ├── credential_store.py # Cross-platform passphrase caching (Keychain/DPAPI/keyctl/file)
+│   ├── client.py         # High-level API (unlock, inject_env, migrate)
+│   ├── categories.py     # Secret access categories (injectable/gated/sealed/user_only)
+│   └── cli.py            # `hermes keystore` subcommands
 ├── cron/                 # Scheduler (jobs.py, scheduler.py)
 ├── environments/         # RL training environments (Atropos)
 ├── tests/                # Pytest suite (~3000 tests)
 └── batch_runner.py       # Parallel batch processing
 ```
 
-**User config:** `~/.hermes/config.yaml` (settings), `~/.hermes/.env` (API keys)
+**User config:** `~/.hermes/config.yaml` (settings), `~/.hermes/.env` (API keys — or encrypted keystore if enabled)
 
 ## File Dependency Chain
 

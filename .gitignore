@@ -58,3 +58,8 @@ mini-swe-agent/
 # Nix
 .direnv/
 result
+
+# Keystore (encrypted secrets — never commit)
+keystore/secrets.db
+keystore/.credential
+*.db-journal
