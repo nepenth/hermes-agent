@@ -5704,6 +5704,37 @@ class HermesCLI:
             except Exception:
                 pass
 
+            # Check for pending wallet transaction approvals (like dangerous cmd approval)
+            try:
+                from wallet.approval import pop_pending as pop_wallet_pending
+                wallet_pending = pop_wallet_pending(self.session_id)
+                if wallet_pending:
+                    from hermes_cli.callbacks import wallet_approval_callback
+                    decision = wallet_approval_callback(self, wallet_pending)
+                    if decision == "approve":
+                        from wallet.approval import execute_approved
+                        tx_result_json = execute_approved(self.session_id, wallet_pending)
+                        import json as _json
+                        tx_result = _json.loads(tx_result_json)
+                        if tx_result.get("status") == "submitted":
+                            amt = tx_result.get("amount", "?")
+                            sym = tx_result.get("symbol", "?")
+                            tx_hash = tx_result.get("tx_hash", "")
+                            explorer = tx_result.get("explorer_url", "")
+                            _cprint(f"\n{_DIM}  ✅ Transaction sent: {amt} {sym}{_RST}")
+                            if tx_hash:
+                                _cprint(f"{_DIM}  TX: {tx_hash}{_RST}")
+                            if explorer:
+                                _cprint(f"{_DIM}  {explorer}{_RST}")
+                        else:
+                            _cprint(f"\n{_DIM}  ❌ Transaction failed: {tx_result.get('error', '?')}{_RST}")
+                    else:
+                        _cprint(f"\n{_DIM}  ❌ Transaction denied{_RST}")
+            except ImportError:
+                pass  # wallet not installed
+            except Exception as e:
+                logging.debug("Wallet approval check failed: %s", e)
+
             # Flush any remaining streamed text and close the box
             self._flush_stream()
 

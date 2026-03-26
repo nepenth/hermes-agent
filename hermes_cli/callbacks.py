@@ -277,3 +277,68 @@ def approval_callback(cli, command: str, description: str) -> str:
             cli._app.invalidate()
         cprint(f"\n{_DIM}  ⏱ Timeout — denying command{_RST}")
         return "deny"
+
+
+def wallet_approval_callback(cli, tx_details: dict) -> str:
+    """Prompt for wallet transaction approval through the TUI.
+
+    Shows transaction details and choices: approve / deny.
+    Mirrors approval_callback() for dangerous commands.
+
+    Returns "approve" or "deny".
+    """
+    lock = getattr(cli, "_approval_lock", None)
+    if lock is None:
+        import threading
+        cli._approval_lock = threading.Lock()
+        lock = cli._approval_lock
+
+    with lock:
+        timeout = 120
+        response_queue = queue.Queue()
+        choices = ["approve", "deny"]
+
+        amt = tx_details.get("amount", "?")
+        sym = tx_details.get("symbol", "?")
+        to_addr = tx_details.get("to_address", "?")
+        chain = tx_details.get("chain", "?")
+        wallet_label = tx_details.get("wallet_label", "?")
+
+        description = (
+            f"Send {amt} {sym} → {to_addr}\n"
+            f"  From: {wallet_label} on {chain}"
+        )
+
+        cli._approval_state = {
+            "command": f"💰 Wallet Transaction: {amt} {sym}",
+            "description": description,
+            "choices": choices,
+            "selected": 0,
+            "response_queue": response_queue,
+        }
+        cli._approval_deadline = _time.monotonic() + timeout
+
+        if hasattr(cli, "_app") and cli._app:
+            cli._app.invalidate()
+
+        while True:
+            try:
+                result = response_queue.get(timeout=1)
+                cli._approval_state = None
+                cli._approval_deadline = 0
+                if hasattr(cli, "_app") and cli._app:
+                    cli._app.invalidate()
+                return result
+            except queue.Empty:
+                remaining = cli._approval_deadline - _time.monotonic()
+                if remaining <= 0:
+                    break
+                if hasattr(cli, "_app") and cli._app:
+                    cli._app.invalidate()
+
+        cli._approval_state = None
+        cli._approval_deadline = 0
+        if hasattr(cli, "_app") and cli._app:
+            cli._app.invalidate()
+        cprint(f"\n{_DIM}  ⏱ Timeout — denying transaction{_RST}")
+        return "deny"

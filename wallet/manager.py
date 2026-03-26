@@ -237,6 +237,21 @@ class WalletManager:
         logger.info("Deleted wallet '%s' (%s)", wallet.label, wallet.address)
         return True
 
+    def export_private_key(self, wallet_id: str) -> str:
+        """Export a wallet's private key for migration.
+
+        This is a CLI-only operation — NEVER exposed via agent tools.
+        Returns the hex-encoded private key.
+
+        Raises WalletNotFound or WalletError on failure.
+        """
+        wallet = self.get_wallet(wallet_id)
+        key_name = f"wallet:{wallet.chain}:{wallet.address}"
+        private_key = self._ks.get_secret(key_name, requester="cli")
+        if not private_key:
+            raise WalletError(f"Failed to retrieve private key for wallet '{wallet_id}'")
+        return private_key
+
     # ------------------------------------------------------------------
     # Balance & Transactions
     # ------------------------------------------------------------------

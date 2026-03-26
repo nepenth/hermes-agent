@@ -1,9 +1,10 @@
 """CLI subcommands for ``hermes wallet``.
 
 Provides:
-    hermes wallet create       — Create a new wallet
-    hermes wallet create-agent — Create an agent wallet (with auto-approve policies)
-    hermes wallet import       — Import from private key
+    hermes wallet create       — Create a new wallet (fresh keypair)
+    hermes wallet create-agent — Create an agent wallet (auto-approve within policy)
+    hermes wallet import       — Import wallet from exported private key (migration)
+    hermes wallet export       — Export private key for migration to another machine
     hermes wallet list         — List wallets
     hermes wallet balance      — Check balance
     hermes wallet send         — Send tokens (interactive approval)
@@ -93,7 +94,9 @@ def cmd_wallet_create(args: argparse.Namespace) -> None:
     _cprint(f"    Chain:   {wallet.chain}")
     _cprint(f"    Address: {wallet.address}")
     _cprint(f"    ID:      {wallet.wallet_id}")
-    _cprint(f"\n  💡 Fund this wallet by sending tokens to the address above.\n")
+    _cprint(f"\n  💡 Fund this wallet by sending tokens to the address above.")
+    _cprint(f"     This is a fresh wallet — send it some tokens to get started.")
+    _cprint(f"     All transactions from this wallet require your approval.\n")
 
 
 def cmd_wallet_create_agent(args: argparse.Namespace) -> None:
@@ -118,25 +121,84 @@ def cmd_wallet_create_agent(args: argparse.Namespace) -> None:
 
 
 def cmd_wallet_import(args: argparse.Namespace) -> None:
-    """Import a wallet from a private key."""
+    """Import a wallet from an exported private key (for migration)."""
     mgr, _ = _get_wallet_manager()
     chain = args.chain
     label = args.label or ""
+    wallet_type = args.type or "user"
 
-    private_key = getpass.getpass("  Private key (hex, hidden): ")
+    _cprint("\n  📦 Import Wallet")
+    _cprint("  This is for migrating a wallet from another Hermes install.")
+    _cprint("  Use 'hermes wallet export' on the source machine first.\n")
+
+    private_key = getpass.getpass("  Private key (hidden): ")
     if not private_key:
         _cprint("\n  ✗ Cancelled\n", style="yellow")
         return
 
     try:
-        wallet = mgr.import_wallet(chain=chain, private_key=private_key.strip(), label=label)
+        wallet = mgr.import_wallet(
+            chain=chain, private_key=private_key.strip(),
+            label=label, wallet_type=wallet_type,
+        )
         _cprint(f"\n  ✓ Wallet imported!", style="bold green")
         _cprint(f"    Label:   {wallet.label}")
         _cprint(f"    Chain:   {wallet.chain}")
         _cprint(f"    Address: {wallet.address}")
+        _cprint(f"    Type:    {wallet.wallet_type}")
         _cprint(f"    ID:      {wallet.wallet_id}\n")
     except Exception as e:
         _cprint(f"\n  ✗ Import failed: {e}\n", style="bold red")
+
+
+def cmd_wallet_export(args: argparse.Namespace) -> None:
+    """Export a wallet's private key for migration to another machine."""
+    mgr, _ = _get_wallet_manager()
+
+    wallet_id = args.wallet_id
+    chain = args.chain
+
+    try:
+        wallet = mgr.resolve_wallet(wallet_id=wallet_id, chain=chain)
+    except Exception as e:
+        _cprint(f"\n  ✗ {e}\n", style="bold red")
+        return
+
+    _cprint(f"\n  ⚠️  Export Private Key: {wallet.label}")
+    _cprint(f"     Chain:   {wallet.chain}")
+    _cprint(f"     Address: {wallet.address}")
+    _cprint(f"\n     This will display the private key in your terminal.")
+    _cprint(f"     Anyone with this key has FULL control of this wallet.")
+    _cprint(f"     Make sure nobody is watching your screen.\n")
+
+    # Require passphrase re-entry as confirmation
+    passphrase = getpass.getpass("  Re-enter keystore passphrase to confirm: ")
+    if not passphrase:
+        _cprint("\n  ✗ Cancelled\n", style="yellow")
+        return
+
+    # Verify passphrase
+    try:
+        from keystore.client import get_keystore
+        ks = get_keystore()
+        # Quick verify by attempting to re-derive (the store validates on unlock)
+        from keystore.store import EncryptedStore
+        test_store = EncryptedStore(ks._store._db_path)
+        test_store.unlock(passphrase)
+        test_store.lock()
+    except Exception:
+        _cprint("\n  ✗ Incorrect passphrase\n", style="bold red")
+        return
+
+    try:
+        private_key = mgr.export_private_key(wallet.wallet_id)
+        _cprint(f"\n  Private key for {wallet.label}:")
+        _cprint(f"  {private_key}\n", style="bold")
+        _cprint(f"  To import on another machine:")
+        _cprint(f"    hermes wallet import --chain {wallet.chain} --type {wallet.wallet_type}")
+        _cprint(f"\n  ⚠️  This key will not be shown again. Copy it now.\n")
+    except Exception as e:
+        _cprint(f"\n  ✗ Export failed: {e}\n", style="bold red")
 
 
 def cmd_wallet_list(args: argparse.Namespace) -> None:
@@ -366,10 +428,18 @@ def register_subparser(subparsers: argparse._SubParsersAction) -> None:
     agent_p.set_defaults(func=cmd_wallet_create_agent)
 
     # import
-    import_p = w_sub.add_parser("import", help="Import wallet from private key")
+    import_p = w_sub.add_parser("import", help="Import wallet from exported private key (migration)")
     import_p.add_argument("--chain", "-c", required=True, help="Chain")
     import_p.add_argument("--label", "-l", default="", help="Wallet label")
+    import_p.add_argument("--type", "-t", default="user", choices=["user", "agent"],
+                          help="Wallet type (default: user)")
     import_p.set_defaults(func=cmd_wallet_import)
+
+    # export
+    export_p = w_sub.add_parser("export", help="Export private key for migration to another machine")
+    export_p.add_argument("--wallet-id", "-w", default=None, help="Wallet ID")
+    export_p.add_argument("--chain", "-c", default=None, help="Chain")
+    export_p.set_defaults(func=cmd_wallet_export)
 
     # list
     w_sub.add_parser("list", aliases=["ls"], help="List all wallets").set_defaults(func=cmd_wallet_list)

@@ -2602,6 +2602,32 @@ class GatewayRunner:
                     response = (response or "") + approval_hint
             except Exception as e:
                 logger.debug("Failed to check pending approvals: %s", e)
+
+            # Check for pending wallet transaction approvals
+            try:
+                from wallet.approval import pop_pending as pop_wallet_pending
+                import time as _wtime
+                wallet_pending = pop_wallet_pending(session_key)
+                if wallet_pending:
+                    wallet_pending["timestamp"] = _wtime.time()
+                    wallet_pending["_type"] = "wallet_tx"
+                    self._pending_approvals[session_key] = wallet_pending
+                    amt = wallet_pending.get("amount", "?")
+                    sym = wallet_pending.get("symbol", "?")
+                    to_addr = wallet_pending.get("to_address", "?")
+                    chain = wallet_pending.get("chain", "?")
+                    from_label = wallet_pending.get("wallet_label", "?")
+                    approval_hint = (
+                        f"\n\n💰 **Wallet transaction requires approval:**\n"
+                        f"Send **{amt} {sym}** → `{to_addr}`\n"
+                        f"From: {from_label} on {chain}\n\n"
+                        f"Reply `/approve` to execute or `/deny` to cancel."
+                    )
+                    response = (response or "") + approval_hint
+            except ImportError:
+                pass  # wallet not installed
+            except Exception as e:
+                logger.debug("Failed to check wallet pending approvals: %s", e)
             
             # Save the full conversation to the transcript, including tool calls.
             # This preserves the complete agent loop (tool_calls, tool results,
@@ -4358,6 +4384,32 @@ class GatewayRunner:
             return "⚠️ Approval expired (timed out after 5 minutes). Ask the agent to try again."
 
         self._pending_approvals.pop(session_key)
+
+        # Wallet transaction approval — different dispatch from command approval
+        if approval.get("_type") == "wallet_tx":
+            try:
+                from wallet.approval import execute_approved
+                result_json = execute_approved(session_key, approval)
+                import json as _json
+                result = _json.loads(result_json)
+                if result.get("status") == "submitted":
+                    tx_hash = result.get("tx_hash", "")
+                    explorer = result.get("explorer_url", "")
+                    amt = result.get("amount", "?")
+                    sym = result.get("symbol", "?")
+                    msg = f"✅ Transaction approved and sent!\n\n"
+                    msg += f"**{amt} {sym}** → `{result.get('to', '')}`\n"
+                    if tx_hash:
+                        msg += f"TX: `{tx_hash}`\n"
+                    if explorer:
+                        msg += f"[View on explorer]({explorer})"
+                    return msg
+                else:
+                    return f"❌ Transaction failed: {result.get('error', 'unknown error')}"
+            except Exception as e:
+                logger.error("Wallet approval execution failed: %s", e)
+                return f"❌ Transaction execution failed: {e}"
+
         cmd = approval["command"]
         pattern_keys = approval.get("pattern_keys", [])
         if not pattern_keys:

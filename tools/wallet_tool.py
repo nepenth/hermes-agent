@@ -220,8 +220,21 @@ def wallet_send(args: dict, task_id: str = None, **kw) -> str:
             })
 
         if result.verdict == PolicyVerdict.REQUIRE_APPROVAL:
-            # For v1: return pending status — the CLI/gateway approval flow
-            # will handle the user interaction
+            # Stash the transaction for user approval via CLI or gateway
+            from wallet.approval import PendingWalletTx, submit_pending
+            pending_tx = PendingWalletTx(
+                wallet_id=wallet.wallet_id,
+                chain=wallet.chain,
+                from_address=wallet.address,
+                to_address=to_address,
+                amount=str(amount),
+                symbol=symbol,
+                wallet_label=wallet.label,
+                wallet_type=wallet.wallet_type,
+            )
+            # Use task_id as session key (matches how the agent loop tracks sessions)
+            session_key = kw.get("task_id") or task_id or "default"
+            submit_pending(session_key, pending_tx)
             return json.dumps({
                 "status": "pending_approval",
                 "reason": result.reason,
