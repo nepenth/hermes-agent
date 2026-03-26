@@ -1791,19 +1791,17 @@ class TelegramAdapter(BasePlatformAdapter):
         elif chat.type == ChatType.CHANNEL:
             chat_type = "channel"
 
-        # Resolve DM topic name for chat_topic context injection
+        # Resolve DM topic name and skill binding
         thread_id_raw = message.message_thread_id
         thread_id_str = str(thread_id_raw) if thread_id_raw else None
         chat_topic = None
+        topic_skill = None
 
         if chat_type == "dm" and thread_id_str:
             topic_info = self._get_dm_topic_info(str(chat.id), thread_id_str)
             if topic_info:
                 chat_topic = topic_info.get("name")
-                # If topic has a skill, inject it as context hint
                 topic_skill = topic_info.get("skill")
-                if topic_skill:
-                    chat_topic = f"{chat_topic} [skill: {topic_skill}]"
 
             # Also check forum_topic_created service message for topic discovery
             if hasattr(message, "forum_topic_created") and message.forum_topic_created:
@@ -1839,5 +1837,6 @@ class TelegramAdapter(BasePlatformAdapter):
             message_id=str(message.message_id),
             reply_to_message_id=reply_to_id,
             reply_to_text=reply_to_text,
+            auto_skill=topic_skill,
             timestamp=message.date,
         )

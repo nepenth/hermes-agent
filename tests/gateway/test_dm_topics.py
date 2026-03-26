@@ -395,3 +395,90 @@ def test_cache_dm_topic_from_message_no_overwrite():
     adapter._cache_dm_topic_from_message("111", "999", "General")
 
     assert adapter._dm_topics["111:General"] == 100  # unchanged
+
+
+# ── _build_message_event: auto_skill binding ──
+
+
+def _make_mock_message(chat_id=111, chat_type="private", text="hello", thread_id=None,
+                       user_id=42, user_name="Test User", forum_topic_created=None):
+    """Create a mock Telegram Message for _build_message_event tests."""
+    chat = SimpleNamespace(
+        id=chat_id,
+        type=chat_type,
+        title=None,
+    )
+    # Add full_name attribute for DM chats
+    if not hasattr(chat, "full_name"):
+        chat.full_name = user_name
+
+    user = SimpleNamespace(
+        id=user_id,
+        full_name=user_name,
+    )
+
+    msg = SimpleNamespace(
+        chat=chat,
+        from_user=user,
+        text=text,
+        message_thread_id=thread_id,
+        message_id=1001,
+        reply_to_message=None,
+        date=None,
+        forum_topic_created=forum_topic_created,
+    )
+    return msg
+
+
+def test_build_message_event_sets_auto_skill():
+    """When topic has a skill binding, auto_skill should be set on the event."""
+    from gateway.platforms.base import MessageType
+
+    adapter = _make_adapter([
+        {
+            "chat_id": 111,
+            "topics": [
+                {"name": "My Project", "skill": "accessibility-auditor", "thread_id": 100},
+            ],
+        }
+    ])
+    adapter._dm_topics["111:My Project"] = 100
+
+    msg = _make_mock_message(chat_id=111, thread_id=100, text="check this page")
+    event = adapter._build_message_event(msg, MessageType.TEXT)
+
+    assert event.auto_skill == "accessibility-auditor"
+    # chat_topic should be the clean topic name, no [skill: ...] suffix
+    assert event.source.chat_topic == "My Project"
+
+
+def test_build_message_event_no_auto_skill_without_binding():
+    """Topics without skill binding should have auto_skill=None."""
+    from gateway.platforms.base import MessageType
+
+    adapter = _make_adapter([
+        {
+            "chat_id": 111,
+            "topics": [
+                {"name": "General", "thread_id": 200},
+            ],
+        }
+    ])
+    adapter._dm_topics["111:General"] = 200
+
+    msg = _make_mock_message(chat_id=111, thread_id=200)
+    event = adapter._build_message_event(msg, MessageType.TEXT)
+
+    assert event.auto_skill is None
+    assert event.source.chat_topic == "General"
+
+
+def test_build_message_event_no_auto_skill_without_thread():
+    """Regular DM messages (no thread_id) should have auto_skill=None."""
+    from gateway.platforms.base import MessageType
+
+    adapter = _make_adapter()
+    msg = _make_mock_message(chat_id=111, thread_id=None)
+    event = adapter._build_message_event(msg, MessageType.TEXT)
+
+    assert event.auto_skill is None
