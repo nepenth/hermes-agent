@@ -638,7 +638,8 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         # Resolve toolsets once for the whole group
         self._current_group_tools = self._resolve_tools_for_group()
 
-        tasks = [self.collect_trajectory(item) for _ in range(self.config.group_size)]
+        temperatures = [round(random.uniform(0.4, 0.9), 2) for _ in range(self.config.group_size)]
+        tasks = [self.collect_trajectory(item, temperature=t) for t in temperatures]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         group = ScoredDataGroup()
@@ -670,7 +671,7 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         return group, backlog
 
     async def collect_trajectory(
-        self, item: Item
+        self, item: Item, temperature: Optional[float] = None
     ) -> Tuple[Optional[ScoredDataItem], List[Item]]:
         """
         Override to register per-task Docker image before running the agent.
@@ -742,7 +743,7 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                                 valid_tool_names=valid_names,
                                 max_turns=self.config.max_agent_turns,
                                 task_id=task_id,
-                                temperature=self.config.agent_temperature,
+                                temperature=temperature or self.config.agent_temperature,
                                 max_tokens=self.config.max_token_length,
                                 extra_body=self.config.extra_body,
                             )
@@ -757,7 +758,7 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                             valid_tool_names=valid_names,
                             max_turns=self.config.max_agent_turns,
                             task_id=task_id,
-                            temperature=self.config.agent_temperature,
+                            temperature=temperature or self.config.agent_temperature,
                             max_tokens=self.config.max_token_length,
                             extra_body=self.config.extra_body,
                         )
@@ -770,7 +771,7 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                         valid_tool_names=valid_names,
                         max_turns=self.config.max_agent_turns,
                         task_id=task_id,
-                        temperature=self.config.agent_temperature,
+                        temperature=temperature or self.config.agent_temperature,
                         max_tokens=self.config.max_token_length,
                         extra_body=self.config.extra_body,
                     )

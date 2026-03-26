@@ -1,19 +1,21 @@
-# Endless Terminals Env Config - openthinker SFT model
-# Trainer: environments/endless_terminals/grpo_trainer.py (not tinker)
+# Endless Terminals Env Config - Qwen3-4B-Instruct-2507
+# Training on Endless Terminals dataset
 
 env:
   # Toolsets
   enabled_toolsets: ["terminal", "file"]
 
-  # Model / tokenizer (must match openai.model_name below)
-  tokenizer_name: "obiwan96/qwen3-8b-openthinker-sft-endless-terminals"
+  tokenizer_name: "Qwen/Qwen3-4B-Instruct-2507"
 
   # Agent configuration
   max_agent_turns: 16
   max_token_length: 2048
   agent_temperature: 0.6
+  extra_body:
+    chat_template_kwargs:
+      enable_thinking: false
+  tool_call_parser: "hermes"
 
-  # Terminal backend (must be containerized -- tasks need Linux paths like /home/user)
   terminal_backend: "docker"
 
   # Dataset settings
@@ -24,20 +26,17 @@ env:
   tasks_base_dir: "/Users/samherring/Desktop/Projects/Hermes-Agent/endless-terminals"
 
   # Test execution
-  test_timeout_s: 60
+  test_timeout_s: 180
   default_docker_image: "ubuntu:22.04"
   max_concurrent_containers: 16
 
   # Training configuration
   group_size: 16
-  batch_size: 16          # 1 group × 16 rollouts per step (matches paper)
-  total_steps: 10000
+  batch_size: 64          # 4 groups × 16 rollouts per step
+  total_steps: 500
   steps_per_eval: 50
-  min_items_sent_before_logging: 1  # Log to wandb after every group
+  min_items_sent_before_logging: 1
   ensure_scores_are_not_same: true
-
-  # Overfitting test — pin to a single task to verify learning signal
-  overfit_task_index: 69
 
   # Evaluation configuration
   num_eval_tasks: 20
@@ -45,7 +44,7 @@ env:
 
   # Logging
   use_wandb: true
-  wandb_name: "endless-terminals-openthinker"
+  wandb_name: "endless-terminals-qwen3-4b"
 
   # System prompt
   system_prompt: >
@@ -56,8 +55,14 @@ env:
     Keep each command short and focused — break complex tasks into multiple steps
     rather than writing long one-liners.
 
+tinker:
+  max_token_trainer_length: 32768
+  wandb_project: "endless-terminals"
+  wandb_run_name: "qwen3-4b"
+  tool_call_parser: "hermes"
+
 openai:
-  - model_name: "obiwan96/qwen3-8b-openthinker-sft-endless-terminals"
-    base_url: "http://localhost:9001/v1"
+  - model_name: "Qwen/Qwen3-4B-Instruct-2507"
+    base_url: "http://localhost:8001/v1"
     api_key: "x"
-    server_type: "vllm"
+    server_type: "sglang"
