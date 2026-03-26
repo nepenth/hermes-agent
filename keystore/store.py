@@ -131,7 +131,6 @@ class EncryptedStore:
         self._db_path = Path(db_path).expanduser().resolve()
         self._master_key: Optional[bytes] = None  # In-memory only
         self._lock = threading.Lock()
-        self._conn: Optional[sqlite3.Connection] = None
 
     @property
     def is_initialized(self) -> bool:
@@ -281,12 +280,6 @@ class EncryptedStore:
                 # Best-effort memory wipe (Python doesn't guarantee this,
                 # but it's better than leaving it around)
                 self._master_key = None
-            if self._conn is not None:
-                try:
-                    self._conn.close()
-                except Exception:
-                    pass
-                self._conn = None
             logger.info("Keystore locked")
 
     def set(
@@ -313,22 +306,24 @@ class EncryptedStore:
             encrypted_value = self._encrypt(self._master_key, value.encode("utf-8"))
             tags_json = json.dumps(tags or [])
 
-            conn = self._get_conn()
-            conn.execute(
-                """INSERT INTO secrets (name, category, encrypted_value, description, tags, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(name) DO UPDATE SET
-                       encrypted_value = excluded.encrypted_value,
-                       category = excluded.category,
-                       description = excluded.description,
-                       tags = excluded.tags,
-                       updated_at = excluded.updated_at
-                """,
-                (name, category, encrypted_value, description, tags_json, now, now),
-            )
-            conn.commit()
-
-            self._log_access(conn, name, "write", "cli")
+            conn = self._open_db()
+            try:
+                conn.execute(
+                    """INSERT INTO secrets (name, category, encrypted_value, description, tags, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(name) DO UPDATE SET
+                           encrypted_value = excluded.encrypted_value,
+                           category = excluded.category,
+                           description = excluded.description,
+                           tags = excluded.tags,
+                           updated_at = excluded.updated_at
+                    """,
+                    (name, category, encrypted_value, description, tags_json, now, now),
+                )
+                self._log_access(conn, name, "write", "cli")
+                conn.commit()
+            finally:
+                conn.close()
 
     def get(self, name: str, requester: str = "cli") -> Optional[str]:
         """Retrieve and decrypt a secret value.
@@ -346,78 +341,85 @@ class EncryptedStore:
         with self._lock:
             self._require_unlocked()
 
-            conn = self._get_conn()
-            cursor = conn.execute(
-                "SELECT encrypted_value, category FROM secrets WHERE name = ?",
-                (name,),
-            )
-            row = cursor.fetchone()
-            if row is None:
-                return None
-
-            encrypted_value, category = row
-
-            # Enforce category access control
-            if category == "user_only" and requester not in ("cli", "migration"):
-                self._log_access(conn, name, "denied", requester)
-                conn.commit()
-                return None
-            if category == "sealed" and requester not in ("daemon", "wallet", "migration", "cli_export"):
-                self._log_access(conn, name, "denied", requester)
-                conn.commit()
-                return None
-
+            conn = self._open_db()
             try:
-                value = self._decrypt(self._master_key, encrypted_value).decode("utf-8")
-            except nacl.exceptions.CryptoError:
-                raise KeystoreCorrupted(f"Failed to decrypt secret '{name}' — DB may be corrupted")
+                cursor = conn.execute(
+                    "SELECT encrypted_value, category FROM secrets WHERE name = ?",
+                    (name,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
 
-            # Update access tracking
-            now = _now()
-            conn.execute(
-                "UPDATE secrets SET last_accessed_at = ?, access_count = access_count + 1 WHERE name = ?",
-                (now, name),
-            )
-            self._log_access(conn, name, "read", requester)
-            conn.commit()
+                encrypted_value, category = row
 
-            return value
+                # Enforce category access control
+                if category == "user_only" and requester not in ("cli", "migration"):
+                    self._log_access(conn, name, "denied", requester)
+                    conn.commit()
+                    return None
+                if category == "sealed" and requester not in ("daemon", "wallet", "migration", "cli_export"):
+                    self._log_access(conn, name, "denied", requester)
+                    conn.commit()
+                    return None
+
+                try:
+                    value = self._decrypt(self._master_key, encrypted_value).decode("utf-8")
+                except nacl.exceptions.CryptoError:
+                    raise KeystoreCorrupted(f"Failed to decrypt secret '{name}' — DB may be corrupted")
+
+                now = _now()
+                conn.execute(
+                    "UPDATE secrets SET last_accessed_at = ?, access_count = access_count + 1 WHERE name = ?",
+                    (now, name),
+                )
+                self._log_access(conn, name, "read", requester)
+                conn.commit()
+                return value
+            finally:
+                conn.close()
 
     def delete(self, name: str) -> bool:
         """Delete a secret. Returns True if it existed."""
         with self._lock:
             self._require_unlocked()
-            conn = self._get_conn()
-            cursor = conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
-            deleted = cursor.rowcount > 0
-            if deleted:
-                self._log_access(conn, name, "delete", "cli")
-            conn.commit()
-            return deleted
+            conn = self._open_db()
+            try:
+                cursor = conn.execute("DELETE FROM secrets WHERE name = ?", (name,))
+                deleted = cursor.rowcount > 0
+                if deleted:
+                    self._log_access(conn, name, "delete", "cli")
+                conn.commit()
+                return deleted
+            finally:
+                conn.close()
 
     def list_secrets(self) -> List[SecretEntry]:
         """List all secrets (metadata only, no values)."""
         with self._lock:
             self._require_unlocked()
-            conn = self._get_conn()
-            cursor = conn.execute(
-                """SELECT name, category, description, tags,
-                          created_at, updated_at, last_accessed_at, access_count
-                   FROM secrets ORDER BY name"""
-            )
-            results = []
-            for row in cursor:
-                results.append(SecretEntry(
-                    name=row[0],
-                    category=row[1],
-                    description=row[2],
-                    tags=json.loads(row[3]) if row[3] else [],
-                    created_at=row[4],
-                    updated_at=row[5],
-                    last_accessed_at=row[6],
-                    access_count=row[7],
-                ))
-            return results
+            conn = self._open_db()
+            try:
+                cursor = conn.execute(
+                    """SELECT name, category, description, tags,
+                              created_at, updated_at, last_accessed_at, access_count
+                       FROM secrets ORDER BY name"""
+                )
+                results = []
+                for row in cursor:
+                    results.append(SecretEntry(
+                        name=row[0],
+                        category=row[1],
+                        description=row[2],
+                        tags=json.loads(row[3]) if row[3] else [],
+                        created_at=row[4],
+                        updated_at=row[5],
+                        last_accessed_at=row[6],
+                        access_count=row[7],
+                    ))
+                return results
+            finally:
+                conn.close()
 
     def get_injectable_secrets(self) -> Dict[str, str]:
         """Return all injectable secrets as a name→value dict.
@@ -426,62 +428,70 @@ class EncryptedStore:
         """
         with self._lock:
             self._require_unlocked()
-            conn = self._get_conn()
-            cursor = conn.execute(
-                "SELECT name, encrypted_value FROM secrets WHERE category = 'injectable'"
-            )
-            result = {}
-            now = _now()
-            for name, encrypted_value in cursor:
-                try:
-                    value = self._decrypt(self._master_key, encrypted_value).decode("utf-8")
-                    result[name] = value
-                except nacl.exceptions.CryptoError:
-                    logger.warning("Failed to decrypt injectable secret '%s' — skipping", name)
-                    continue
-
-            # Batch update access tracking
-            if result:
-                conn.executemany(
-                    "UPDATE secrets SET last_accessed_at = ?, access_count = access_count + 1 WHERE name = ?",
-                    [(now, name) for name in result],
+            conn = self._open_db()
+            try:
+                cursor = conn.execute(
+                    "SELECT name, encrypted_value FROM secrets WHERE category = 'injectable'"
                 )
-                conn.commit()
+                result = {}
+                now = _now()
+                for name, encrypted_value in cursor:
+                    try:
+                        value = self._decrypt(self._master_key, encrypted_value).decode("utf-8")
+                        result[name] = value
+                    except nacl.exceptions.CryptoError:
+                        logger.warning("Failed to decrypt injectable secret '%s' — skipping", name)
+                        continue
 
-            return result
+                if result:
+                    conn.executemany(
+                        "UPDATE secrets SET last_accessed_at = ?, access_count = access_count + 1 WHERE name = ?",
+                        [(now, name) for name in result],
+                    )
+                    conn.commit()
+
+                return result
+            finally:
+                conn.close()
 
     def set_category(self, name: str, category: str) -> bool:
         """Change the access category of a secret. Returns True if it existed."""
         with self._lock:
             self._require_unlocked()
-            conn = self._get_conn()
-            cursor = conn.execute(
-                "UPDATE secrets SET category = ?, updated_at = ? WHERE name = ?",
-                (category, _now(), name),
-            )
-            conn.commit()
-            return cursor.rowcount > 0
+            conn = self._open_db()
+            try:
+                cursor = conn.execute(
+                    "UPDATE secrets SET category = ?, updated_at = ? WHERE name = ?",
+                    (category, _now(), name),
+                )
+                conn.commit()
+                return cursor.rowcount > 0
+            finally:
+                conn.close()
 
     def get_access_log(self, limit: int = 50) -> List[dict]:
         """Return recent access log entries."""
         with self._lock:
             self._require_unlocked()
-            conn = self._get_conn()
-            cursor = conn.execute(
-                """SELECT secret_name, action, requester, timestamp, details
-                   FROM access_log ORDER BY id DESC LIMIT ?""",
-                (limit,),
-            )
-            return [
-                {
-                    "secret_name": row[0],
-                    "action": row[1],
-                    "requester": row[2],
-                    "timestamp": row[3],
-                    "details": row[4],
-                }
-                for row in cursor
-            ]
+            conn = self._open_db()
+            try:
+                cursor = conn.execute(
+                    """SELECT secret_name, action, requester, timestamp, details
+                       FROM access_log ORDER BY id DESC LIMIT ?""",
+                    (limit,),
+                )
+                return [
+                    {
+                        "secret_name": row[0],
+                        "action": row[1],
+                        "requester": row[2],
+                        "timestamp": row[3],
+                        "details": row[4],
+                    }
+                    for row in cursor
+                ]
+            finally:
+                conn.close()
 
     def change_passphrase(self, old_passphrase: str, new_passphrase: str) -> None:
         """Re-encrypt all secrets with a new passphrase.
@@ -494,12 +504,6 @@ class EncryptedStore:
                 raise KeystoreError("Keystore not initialized")
 
             # Close persistent connection to avoid "database is locked"
-            if self._conn is not None:
-                try:
-                    self._conn.close()
-                except Exception:
-                    pass
-                self._conn = None
 
             conn = self._open_db()
             try:
@@ -570,11 +574,6 @@ class EncryptedStore:
         """Open a new SQLite connection to the keystore DB."""
         return sqlite3.connect(str(self._db_path), timeout=10)
 
-    def _get_conn(self) -> sqlite3.Connection:
-        """Get or create a persistent connection (for the unlocked session)."""
-        if self._conn is None:
-            self._conn = self._open_db()
-        return self._conn
 
     def _create_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript("""

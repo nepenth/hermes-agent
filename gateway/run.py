@@ -86,6 +86,24 @@ from hermes_cli.env_loader import load_hermes_dotenv
 _env_path = _hermes_home / '.env'
 load_hermes_dotenv(hermes_home=_hermes_home, project_env=Path(__file__).resolve().parents[1] / '.env')
 
+
+def _inject_keystore_env() -> None:
+    """Inject keystore-backed secrets into os.environ when available.
+
+    Runs independently of config.yaml so gateway/headless deployments using
+    only a keystore (with stubbed .env) still receive credentials.
+    """
+    try:
+        from keystore.client import get_keystore
+        _ks = get_keystore()
+        if _ks.is_initialized and _ks.ensure_unlocked(interactive=False):
+            _ks.inject_env()
+    except ImportError:
+        pass
+    except Exception as _e:
+        logging.getLogger(__name__).debug("Gateway keystore injection skipped: %s", _e)
+
+
 # Bridge config.yaml values into the environment so os.getenv() picks them up.
 # config.yaml is authoritative for terminal settings — overrides .env.
 _config_path = _hermes_home / 'config.yaml'
@@ -136,22 +154,6 @@ if _config_path.exists():
                         os.environ[_env_var] = str(_val)
         # Compression config is read directly from config.yaml by run_agent.py
         # and auxiliary_client.py — no env var bridging needed.
-        # Keystore-backed secret injection (overrides stubbed .env after migration).
-        # Unlock priority matches CLI startup:
-        #   1) OS credential store / keyctl (via hermes keystore remember)
-        #   2) HERMES_KEYSTORE_PASSPHRASE env var
-        #   3) No interactive prompt in gateway mode — fail gracefully and keep .env fallback
-        try:
-            from keystore.client import get_keystore
-            _ks = get_keystore()
-            if _ks.is_initialized and _ks.ensure_unlocked(interactive=False):
-                _ks.inject_env()
-        except ImportError:
-            pass  # keystore extras not installed
-        except Exception as _e:
-            # Gateway remains usable with plaintext .env fallback when keystore
-            # isn't configured or cannot be auto-unlocked.
-            logging.getLogger(__name__).debug("Gateway keystore injection skipped: %s", _e)
 
         # Auxiliary model/direct-endpoint overrides (vision, web_extract).
         # Each task has provider/model/base_url/api_key; bridge non-default values to env vars.
@@ -210,6 +212,11 @@ if _config_path.exists():
                 os.environ["HERMES_REDACT_SECRETS"] = str(_redact).lower()
     except Exception:
         pass  # Non-fatal; gateway can still run with .env values
+
+# Inject keystore-backed secrets regardless of whether config.yaml exists.
+# This lets headless / gateway-only installs run with a stubbed .env after
+# secrets are migrated into the encrypted keystore.
+_inject_keystore_env()
 
 # Gateway runs in quiet mode - suppress debug output and use cwd directly (no temp dirs)
 os.environ["HERMES_QUIET"] = "1"
@@ -5239,6 +5246,13 @@ class GatewayRunner:
                 load_dotenv(_env_path, override=True, encoding="utf-8")
             except UnicodeDecodeError:
                 load_dotenv(_env_path, override=True, encoding="latin-1")
+            except Exception:
+                pass
+
+            # Re-inject keystore secrets too so rotated values take effect
+            # without requiring a gateway restart.
+            try:
+                _inject_keystore_env()
             except Exception:
                 pass
 
