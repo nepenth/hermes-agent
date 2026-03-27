@@ -16,6 +16,7 @@ argon2 = pytest.importorskip("argon2")
 def _reload_gateway_run(monkeypatch, home: Path):
     monkeypatch.setenv("HERMES_HOME", str(home))
     monkeypatch.delenv("HERMES_KEYSTORE_OWNED_VARS", raising=False)
+    monkeypatch.delenv("HERMES_KEYSTORE_OWNED_VALUES_JSON", raising=False)
     # Reset cached singletons that capture prior HERMES_HOME or lock state.
     try:
         from keystore.client import reset_keystore
@@ -128,3 +129,29 @@ def test_gateway_refresh_revokes_deleted_keystore_secret(monkeypatch, tmp_path):
     ks.delete_secret("OPENAI_API_KEY")
     gateway_run._inject_keystore_env(force=True)
     assert os.environ.get("OPENAI_API_KEY") is None
+
+
+def test_gateway_refresh_delete_preserves_external_replacement(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("")
+    (home / "config.yaml").write_text("toolsets:\n- hermes-cli\n")
+
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    from keystore.client import KeystoreClient, reset_keystore
+    reset_keystore()
+    ks = KeystoreClient(home / "keystore" / "secrets.db")
+    ks.initialize("passphrase")
+    ks.set_secret("OPENAI_API_KEY", "sk-old")
+    monkeypatch.setenv("HERMES_KEYSTORE_PASSPHRASE", "passphrase")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    gateway_run = _reload_gateway_run(monkeypatch, home)
+    assert os.environ.get("OPENAI_API_KEY") == "sk-old"
+
+    # Secret removed from keystore, but an external source now provides a replacement.
+    ks.delete_secret("OPENAI_API_KEY")
+    os.environ["OPENAI_API_KEY"] = "env-replacement"
+    gateway_run._inject_keystore_env(force=True)
+    assert os.environ.get("OPENAI_API_KEY") == "env-replacement"

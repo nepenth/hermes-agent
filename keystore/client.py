@@ -64,6 +64,23 @@ def _set_owned_env_names(names: set[str]) -> None:
     os.environ["HERMES_KEYSTORE_OWNED_VARS"] = ",".join(sorted(names))
 
 
+def _owned_env_values() -> dict[str, str]:
+    raw = os.getenv("HERMES_KEYSTORE_OWNED_VALUES_JSON", "")
+    if not raw:
+        return {}
+    try:
+        import json as _json
+        data = _json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _set_owned_env_values(values: dict[str, str]) -> None:
+    import json as _json
+    os.environ["HERMES_KEYSTORE_OWNED_VALUES_JSON"] = _json.dumps(values, sort_keys=True)
+
+
 class KeystoreClient:
     """High-level keystore interface for CLI, gateway, and agent startup."""
 
@@ -179,18 +196,23 @@ class KeystoreClient:
         secrets = self._store.get_injectable_secrets()
         previous = dict(self._injected)
         owned = _owned_env_names()
+        owned_values = _owned_env_values()
         injected = {}
         current_names = set(secrets.keys())
 
         # Force-refresh also acts as revocation for previously keystore-owned
         # env vars that have been deleted from the keystore or are no longer
-        # injectable. External env vars are never in `owned`, so they are not
-        # touched here.
+        # injectable. Revoke only if the current env value still matches the
+        # last keystore-injected value; if an external source replaced it in
+        # the meantime, preserve that replacement.
         if force:
             removed = owned - current_names
             for name in removed:
-                os.environ.pop(name, None)
-            owned -= removed
+                current_val = os.environ.get(name)
+                if current_val is not None and current_val == owned_values.get(name):
+                    os.environ.pop(name, None)
+                owned.discard(name)
+                owned_values.pop(name, None)
 
         for name, value in secrets.items():
             should_write = False
@@ -204,6 +226,7 @@ class KeystoreClient:
                 os.environ[name] = value
                 injected[name] = True
                 owned.add(name)
+                owned_values[name] = value
             else:
                 # Existing env var remains authoritative. Preserve ownership
                 # markers for vars we previously injected so later refreshes
@@ -212,8 +235,10 @@ class KeystoreClient:
                 injected[name] = False
                 if not (previous.get(name) is True or name in owned):
                     owned.discard(name)
+                    owned_values.pop(name, None)
         self._injected = injected
         _set_owned_env_names(owned)
+        _set_owned_env_values(owned_values)
         count_written = sum(1 for v in injected.values() if v)
         count_skipped = sum(1 for v in injected.values() if not v)
         logger.info(
