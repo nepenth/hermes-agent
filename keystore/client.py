@@ -179,7 +179,7 @@ class KeystoreClient:
 
         raise PassphraseMismatch("Too many incorrect passphrase attempts")
 
-    def inject_env(self, force: bool = False) -> Dict[str, bool]:
+    def inject_env(self, force: bool = False, external_managed_names: Optional[set[str]] = None) -> Dict[str, bool]:
         """Inject all ``injectable`` secrets into ``os.environ``.
 
         Args:
@@ -187,8 +187,13 @@ class KeystoreClient:
                 (default), existing env vars are preserved so shell/Docker env
                 wins over keystore values at startup. When ``True``, only env
                 vars that were previously injected by this client instance are
-                overwritten. Externally provided env vars that were skipped on
-                initial injection remain authoritative across refreshes.
+                refreshed.
+            external_managed_names: Optional set of env-var names that were
+                supplied by non-keystore sources during the current refresh
+                cycle (e.g. .env, config bridging, shell/systemd env). This
+                lets long-lived processes distinguish a stale injected value
+                from an external replacement even when the replacement uses the
+                same credential string.
 
         Returns:
             Dict of ``{secret_name: injected_or_overwritten}``.
@@ -197,19 +202,18 @@ class KeystoreClient:
         previous = dict(self._injected)
         owned = _owned_env_names()
         owned_values = _owned_env_values()
+        external_managed_names = set(external_managed_names or set())
         injected = {}
         current_names = set(secrets.keys())
 
         # Force-refresh also acts as revocation for previously keystore-owned
         # env vars that have been deleted from the keystore or are no longer
-        # injectable. Revoke only if the current env value still matches the
-        # last keystore-injected value; if an external source replaced it in
-        # the meantime, preserve that replacement.
+        # injectable. Only revoke names that are still keystore-owned AND not
+        # externally managed in this refresh cycle.
         if force:
             removed = owned - current_names
             for name in removed:
-                current_val = os.environ.get(name)
-                if current_val is not None and current_val == owned_values.get(name):
+                if name not in external_managed_names:
                     os.environ.pop(name, None)
                 owned.discard(name)
                 owned_values.pop(name, None)
@@ -218,6 +222,9 @@ class KeystoreClient:
             should_write = False
             if name not in os.environ:
                 should_write = True
+            elif name in external_managed_names:
+                # Current refresh explicitly sourced this name externally.
+                should_write = False
             elif force and (previous.get(name) is True or name in owned):
                 # Only refresh vars we previously injected ourselves.
                 should_write = True
@@ -228,12 +235,9 @@ class KeystoreClient:
                 owned.add(name)
                 owned_values[name] = value
             else:
-                # Existing env var remains authoritative. Preserve ownership
-                # markers for vars we previously injected so later refreshes
-                # can update them. Only discard ownership when the key was
-                # never ours in this process.
                 injected[name] = False
-                if not (previous.get(name) is True or name in owned):
+                if name in external_managed_names and not (previous.get(name) is True):
+                    # External source owns it in this process.
                     owned.discard(name)
                     owned_values.pop(name, None)
         self._injected = injected

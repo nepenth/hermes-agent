@@ -78,7 +78,7 @@ def test_gateway_refresh_reinjects_keystore_secret(monkeypatch, tmp_path):
     # because that value originally came from keystore injection.
     ks.set_secret("OPENAI_API_KEY", "sk-new")
     os.environ["OPENAI_API_KEY"] = "stale"
-    gateway_run._inject_keystore_env(force=True)
+    gateway_run._inject_keystore_env(force=True, external_managed_names=set())
     assert os.environ.get("OPENAI_API_KEY") == "sk-new"
 
 
@@ -101,7 +101,7 @@ def test_gateway_refresh_does_not_clobber_external_env(monkeypatch, tmp_path):
     assert os.environ.get("OPENAI_API_KEY") == "env-wins"
 
     ks.set_secret("OPENAI_API_KEY", "rotated-keystore-value")
-    gateway_run._inject_keystore_env(force=True)
+    gateway_run._inject_keystore_env(force=True, external_managed_names={"OPENAI_API_KEY"})
     assert os.environ.get("OPENAI_API_KEY") == "env-wins"
 
 
@@ -127,14 +127,15 @@ def test_gateway_refresh_revokes_deleted_keystore_secret(monkeypatch, tmp_path):
     # Delete from keystore; force refresh should revoke the previously
     # injected env var from the long-lived process.
     ks.delete_secret("OPENAI_API_KEY")
-    gateway_run._inject_keystore_env(force=True)
+    gateway_run._inject_keystore_env(force=True, external_managed_names=set())
     assert os.environ.get("OPENAI_API_KEY") is None
 
 
 def test_gateway_refresh_delete_preserves_external_replacement(monkeypatch, tmp_path):
     home = tmp_path / ".hermes"
     home.mkdir(parents=True)
-    (home / ".env").write_text("")
+    env_path = home / ".env"
+    env_path.write_text("")
     (home / "config.yaml").write_text("toolsets:\n- hermes-cli\n")
 
     monkeypatch.setenv("HERMES_HOME", str(home))
@@ -150,8 +151,39 @@ def test_gateway_refresh_delete_preserves_external_replacement(monkeypatch, tmp_
     gateway_run = _reload_gateway_run(monkeypatch, home)
     assert os.environ.get("OPENAI_API_KEY") == "sk-old"
 
-    # Secret removed from keystore, but an external source now provides a replacement.
+    # Secret removed from keystore, but .env now provides a replacement.
     ks.delete_secret("OPENAI_API_KEY")
-    os.environ["OPENAI_API_KEY"] = "env-replacement"
-    gateway_run._inject_keystore_env(force=True)
+    env_path.write_text("OPENAI_API_KEY=env-replacement\n")
+    from dotenv import load_dotenv
+    load_dotenv(env_path, override=True)
+    gateway_run._inject_keystore_env(force=True, external_managed_names={"OPENAI_API_KEY"})
     assert os.environ.get("OPENAI_API_KEY") == "env-replacement"
+
+
+def test_gateway_refresh_delete_preserves_same_value_external_replacement(monkeypatch, tmp_path):
+    home = tmp_path / ".hermes"
+    home.mkdir(parents=True)
+    env_path = home / ".env"
+    env_path.write_text("")
+    (home / "config.yaml").write_text("toolsets:\n- hermes-cli\n")
+
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    from keystore.client import KeystoreClient, reset_keystore
+    reset_keystore()
+    ks = KeystoreClient(home / "keystore" / "secrets.db")
+    ks.initialize("passphrase")
+    ks.set_secret("OPENAI_API_KEY", "same-value")
+    monkeypatch.setenv("HERMES_KEYSTORE_PASSPHRASE", "passphrase")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    gateway_run = _reload_gateway_run(monkeypatch, home)
+    assert os.environ.get("OPENAI_API_KEY") == "same-value"
+
+    # Move the key back to external .env management without rotating the string.
+    ks.delete_secret("OPENAI_API_KEY")
+    env_path.write_text("OPENAI_API_KEY=same-value\n")
+    from dotenv import load_dotenv
+    load_dotenv(env_path, override=True)
+    gateway_run._inject_keystore_env(force=True, external_managed_names={"OPENAI_API_KEY"})
+    assert os.environ.get("OPENAI_API_KEY") == "same-value"

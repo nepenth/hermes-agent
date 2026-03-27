@@ -81,19 +81,28 @@ _hermes_home = get_hermes_home()
 
 # Load environment variables from ~/.hermes/.env first.
 # User-managed env files should override stale shell exports on restart.
-from dotenv import load_dotenv  # backward-compat for tests that monkeypatch this symbol
+from dotenv import load_dotenv, dotenv_values  # backward-compat for tests that monkeypatch this symbol
 from hermes_cli.env_loader import load_hermes_dotenv
 _env_path = _hermes_home / '.env'
 load_hermes_dotenv(hermes_home=_hermes_home, project_env=Path(__file__).resolve().parents[1] / '.env')
 
 
-def _inject_keystore_env(force: bool = False) -> None:
+def _external_env_names_from_dotenv(path: Path) -> set[str]:
+    try:
+        vals = dotenv_values(path)
+        return {str(k) for k, v in (vals or {}).items() if k and v not in (None, "")}
+    except Exception:
+        return set()
+
+
+def _inject_keystore_env(force: bool = False, external_managed_names: set[str] | None = None) -> None:
     """Inject keystore-backed secrets into os.environ when available.
 
     Args:
-        force: If True, overwrite already-present env vars with the latest
-            keystore values. This is used by the gateway refresh path so
-            secret rotation takes effect without restart.
+        force: If True, refresh previously keystore-injected values.
+        external_managed_names: Names sourced externally during the current
+            gateway refresh cycle (.env/config/system env). These remain
+            authoritative even during forced refresh.
 
     Runs independently of config.yaml so gateway/headless deployments using
     only a keystore (with stubbed .env) still receive credentials.
@@ -102,7 +111,7 @@ def _inject_keystore_env(force: bool = False) -> None:
         from keystore.client import get_keystore
         _ks = get_keystore()
         if _ks.is_initialized and _ks.ensure_unlocked(interactive=False):
-            _ks.inject_env(force=force)
+            _ks.inject_env(force=force, external_managed_names=external_managed_names)
     except ImportError:
         pass
     except Exception as _e:
@@ -5255,9 +5264,12 @@ class GatewayRunner:
                 pass
 
             # Re-inject keystore secrets too so rotated values take effect
-            # without requiring a gateway restart.
+            # without requiring a gateway restart. Names explicitly sourced
+            # from .env during this refresh remain authoritative even when a
+            # previously keystore-owned secret has the same string value.
             try:
-                _inject_keystore_env(force=True)
+                _external_names = _external_env_names_from_dotenv(_env_path)
+                _inject_keystore_env(force=True, external_managed_names=_external_names)
             except Exception:
                 pass
 
