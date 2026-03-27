@@ -63,7 +63,11 @@ def get_runtime():
 
     ks = get_keystore()
     if not ks.is_unlocked:
-        return None, None
+        try:
+            if not ks.ensure_unlocked(interactive=False):
+                return None, None
+        except Exception:
+            return None, None
 
     mgr = WalletManager(ks, state_dir=_wallet_state_dir())
     wallet_cfg = _load_wallet_config()
