@@ -83,21 +83,19 @@ class SSHEnvironment(PersistentShellMixin, BaseEnvironment):
         cmd = self._build_ssh_command()
         cmd.append("echo 'SSH connection established'")
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+            result = subprocess.run(cmd, capture_output=True, text=True, errors="replace", timeout=15)
             if result.returncode != 0:
                 error_msg = result.stderr.strip() or result.stdout.strip()
                 raise RuntimeError(f"SSH connection failed: {error_msg}")
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"SSH connection to {self.user}@{self.host} timed out")
 
-    _poll_interval_start: float = 0.15  # SSH: higher initial interval (150ms) for network latency
-
     @property
     def _temp_prefix(self) -> str:
         return f"/tmp/hermes-ssh-{self._session_id}"
 
     def _spawn_shell_process(self) -> subprocess.Popen:
-        cmd = self._build_ssh_command()
+        cmd = self._build_ssh_command(extra_args=["-tt"])
         cmd.append("bash -l")
         return subprocess.Popen(
             cmd,
@@ -105,6 +103,7 @@ class SSHEnvironment(PersistentShellMixin, BaseEnvironment):
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             text=True,
+            errors="replace",
         )
 
     def _read_temp_files(self, *paths: str) -> list[str]:
@@ -113,7 +112,7 @@ class SSHEnvironment(PersistentShellMixin, BaseEnvironment):
             cmd.append(f"cat {paths[0]} 2>/dev/null")
             try:
                 result = subprocess.run(
-                    cmd, capture_output=True, text=True, timeout=10,
+                    cmd, capture_output=True, text=True, errors="replace", timeout=10,
                 )
                 return [result.stdout]
             except (subprocess.TimeoutExpired, OSError):
@@ -127,7 +126,7 @@ class SSHEnvironment(PersistentShellMixin, BaseEnvironment):
         cmd.append(script)
         try:
             result = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=10,
+                cmd, capture_output=True, text=True, errors="replace", timeout=10,
             )
             parts = result.stdout.split(delim + "\n")
             return [parts[i] if i < len(parts) else "" for i in range(len(paths))]
@@ -179,6 +178,7 @@ class SSHEnvironment(PersistentShellMixin, BaseEnvironment):
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if effective_stdin else subprocess.DEVNULL,
             text=True,
+            errors="replace",
         )
 
         if effective_stdin:

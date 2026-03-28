@@ -19,7 +19,7 @@ env:
   base_url: "http://100.120.55.25:8080"
   ssh_host: "100.120.55.25"
   ssh_port: 2222
-  ssh_key: "environments/pwncollege_env/keys/rl_agent_00"
+  ssh_key: "environments/pwncollege_env/keys/rl_test_key"
 
   # Training: challenge selection
   # challenge: "hello/hello"        # Single challenge (training fallback)

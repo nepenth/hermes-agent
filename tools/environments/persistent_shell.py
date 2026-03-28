@@ -12,6 +12,9 @@ from tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL_PREFIX = "__HERMES_DONE_"
+_SENTINEL_SUFFIX = "__"
+
 
 class PersistentShellMixin:
     """Mixin that adds persistent shell capability to any BaseEnvironment.
@@ -40,8 +43,6 @@ class PersistentShellMixin:
     def _cleanup_temp_files(self): ...
 
     _session_id: str = ""
-    _poll_interval_start: float = 0.01  # initial poll interval (10ms)
-    _poll_interval_max: float = 0.25    # max poll interval (250ms) — reduces I/O for long commands
 
     @property
     def _temp_prefix(self) -> str:
@@ -56,6 +57,8 @@ class PersistentShellMixin:
         self._shell_proc: subprocess.Popen | None = None
         self._shell_alive: bool = False
         self._shell_pid: int | None = None
+        self._sentinel_event = threading.Event()
+        self._sentinel_cmd_id: str | None = None
 
         self._session_id = uuid.uuid4().hex[:12]
         p = self._temp_prefix
@@ -73,33 +76,44 @@ class PersistentShellMixin:
         )
         self._drain_thread.start()
 
+        init_cmd_id = "init"
         init_script = (
+            # Disable echo so sentinel markers aren't duplicated in stdout
+            f"stty -echo 2>/dev/null\n"
             f"export TERM=${{TERM:-dumb}}\n"
             f"touch {self._pshell_stdout} {self._pshell_stderr} "
             f"{self._pshell_status} {self._pshell_cwd} {self._pshell_pid_file}\n"
             f"echo $$ > {self._pshell_pid_file}\n"
             f"pwd > {self._pshell_cwd}\n"
+            f"echo '{_SENTINEL_PREFIX}{init_cmd_id}{_SENTINEL_SUFFIX}'\n"
         )
+        self._sentinel_event.clear()
+        self._sentinel_cmd_id = init_cmd_id
         self._send_to_shell(init_script)
 
-        deadline = time.monotonic() + 3.0
+        deadline = time.monotonic() + 10.0
         while time.monotonic() < deadline:
-            pid_str = self._read_temp_files(self._pshell_pid_file)[0].strip()
-            if pid_str.isdigit():
-                self._shell_pid = int(pid_str)
+            remaining = deadline - time.monotonic()
+            if self._sentinel_event.wait(timeout=min(remaining, 0.5)):
                 break
-            time.sleep(0.05)
         else:
-            logger.warning("Could not read persistent shell PID")
-            self._shell_pid = None
+            logger.warning("Persistent shell init sentinel not received")
 
-        if self._shell_pid:
+        pid_str, reported_cwd = self._read_temp_files(
+            self._pshell_pid_file, self._pshell_cwd,
+        )
+        pid_str = pid_str.strip()
+        if pid_str.isdigit():
+            self._shell_pid = int(pid_str)
             logger.info(
                 "Persistent shell started (session=%s, pid=%d)",
                 self._session_id, self._shell_pid,
             )
+        else:
+            logger.warning("Could not read persistent shell PID")
+            self._shell_pid = None
 
-        reported_cwd = self._read_temp_files(self._pshell_cwd)[0].strip()
+        reported_cwd = reported_cwd.strip()
         if reported_cwd:
             self.cwd = reported_cwd
 
@@ -151,11 +165,19 @@ class PersistentShellMixin:
 
     def _drain_shell_output(self):
         try:
-            for _ in self._shell_proc.stdout:
-                pass
+            for line in self._shell_proc.stdout:
+                stripped = line.rstrip('\r\n')
+                if (
+                    stripped.startswith(_SENTINEL_PREFIX)
+                    and stripped.endswith(_SENTINEL_SUFFIX)
+                ):
+                    inner = stripped[len(_SENTINEL_PREFIX):-len(_SENTINEL_SUFFIX)]
+                    if inner == self._sentinel_cmd_id:
+                        self._sentinel_event.set()
         except Exception:
             pass
         self._shell_alive = False
+        self._sentinel_event.set()
 
     def _send_to_shell(self, text: str):
         if not self._shell_alive or self._shell_proc is None:
@@ -222,21 +244,16 @@ class PersistentShellMixin:
             f"__EC=$?\n"
             f"pwd > {self._pshell_cwd}\n"
             f"echo {cmd_id}:$__EC > {self._pshell_status}\n"
+            f"echo '{_SENTINEL_PREFIX}{cmd_id}{_SENTINEL_SUFFIX}'\n"
         )
+        self._sentinel_event.clear()
+        self._sentinel_cmd_id = cmd_id
         self._send_to_shell(ipc_script)
         deadline = time.monotonic() + timeout
-        poll_interval = self._poll_interval_start  # starts at 10ms, backs off to 250ms
 
         while True:
-            if is_interrupted():
-                self._kill_shell_children()
-                output, _, _ = self._read_persistent_output()
-                return {
-                    "output": output + "\n[Command interrupted]",
-                    "returncode": 130,
-                }
-
-            if time.monotonic() > deadline:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
                 self._kill_shell_children()
                 output, _, _ = self._read_persistent_output()
                 if output:
@@ -246,21 +263,22 @@ class PersistentShellMixin:
                     }
                 return self._timeout_result(timeout)
 
+            if is_interrupted():
+                self._kill_shell_children()
+                output, _, _ = self._read_persistent_output()
+                return {
+                    "output": output + "\n[Command interrupted]",
+                    "returncode": 130,
+                }
+
             if not self._shell_alive:
                 return {
                     "output": "Persistent shell died during execution",
                     "returncode": 1,
                 }
 
-            status_content = self._read_temp_files(self._pshell_status)[0].strip()
-            if status_content.startswith(cmd_id + ":"):
+            if self._sentinel_event.wait(timeout=min(remaining, 0.5)):
                 break
-
-            time.sleep(poll_interval)
-            # Exponential backoff: fast start (10ms) for quick commands,
-            # ramps up to 250ms for long-running commands — reduces I/O by 10-25x
-            # on WSL2 where polling keeps the VM hot and memory pressure high.
-            poll_interval = min(poll_interval * 1.5, self._poll_interval_max)
 
         output, exit_code, new_cwd = self._read_persistent_output()
         if new_cwd:

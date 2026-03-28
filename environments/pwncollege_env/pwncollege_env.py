@@ -16,6 +16,7 @@ Usage:
         --config environments/pwncollege_env/default.yaml
 """
 
+import asyncio
 import atexit
 import json
 import logging
@@ -24,6 +25,8 @@ import re
 import signal
 import sys
 import uuid
+
+import httpx
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -108,6 +111,14 @@ class PwnCollegeEnvConfig(HermesAgentEnvConfig):
     eval_module: Optional[str] = Field(
         default=None,
         description="Module to evaluate on (None = all modules)",
+    )
+    eval_exclude_modules: List[str] = Field(
+        default_factory=list,
+        description="Modules to exclude from evaluation",
+    )
+    eval_challenges: Optional[List[str]] = Field(
+        default=None,
+        description="Specific challenges to evaluate (format: module_id/challenge_id). Overrides dojo/module filters.",
     )
     eval_concurrency: int = Field(
         default=4,
@@ -280,11 +291,32 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         task_id = str(uuid.uuid4())
         challenge_key = self._get_challenge_key(item)
 
-        try:
-            inst = await self.client.create_instance(challenge_key)
-        except Exception as e:
-            logger.error("Failed to create instance for %s: %s", challenge_key, e)
-            return None, []
+        max_retries = 5
+        inst = None
+        for attempt in range(max_retries):
+            try:
+                inst = await self.client.create_instance(challenge_key)
+                break
+            except Exception as e:
+                err_str = str(e)
+                is_transient = (
+                    isinstance(e, httpx.HTTPStatusError) and e.response.status_code >= 500
+                    or isinstance(e, (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError))
+                    or "No available slots" in err_str
+                )
+                if is_transient and attempt < max_retries - 1:
+                    wait = min(2 ** (attempt + 1), 30)
+                    logger.warning(
+                        "Transient error creating instance for %s (attempt %d/%d): %s, retrying in %ds",
+                        challenge_key, attempt + 1, max_retries, err_str[:100], wait,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(
+                        "Failed to create instance for %s after %d attempts: %s",
+                        challenge_key, attempt + 1, e,
+                    )
+                    return None, []
 
         slot = inst.slot
         self._active_slots.add(slot)
@@ -416,7 +448,6 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         Fetches challenges matching eval_dojo/eval_module, runs each through
         the agent loop with concurrency control, and logs results.
         """
-        import asyncio
         import time
 
         if not self.client:
@@ -427,12 +458,17 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
 
         # Fetch and filter eval challenges
         all_challenges = await self.client.list_challenges()
-        eval_challenges = [
-            c for c in all_challenges
-            if (self.config.eval_dojo is None or c.dojo_id == self.config.eval_dojo)
-            and (self.config.eval_module is None or c.module_id == self.config.eval_module)
-            and c.dojo_id not in self.config.eval_exclude_dojos
-        ]
+        if self.config.eval_challenges:
+            challenge_set = set(self.config.eval_challenges)
+            eval_challenges = [c for c in all_challenges if c.challenge_key in challenge_set]
+        else:
+            eval_challenges = [
+                c for c in all_challenges
+                if (self.config.eval_dojo is None or c.dojo_id == self.config.eval_dojo)
+                and (self.config.eval_module is None or c.module_id == self.config.eval_module)
+                and c.dojo_id not in self.config.eval_exclude_dojos
+                and c.module_id not in self.config.eval_exclude_modules
+            ]
 
         if not eval_challenges:
             logger.warning(
@@ -467,18 +503,32 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
                         f"(reward={reward:.1f})",
                         flush=True,
                     )
-                    return {
+                    result = {
                         "challenge": challenge_key,
                         "name": challenge.name,
                         "solved": solved,
                         "reward": reward,
                     }
+                    # Stream-write sample with full conversation for HTML viewer
+                    self.log_eval_sample({
+                        "score": reward,
+                        "challenge": challenge_key,
+                        "solved": solved,
+                        "messages": scored.get("messages", []) if scored else [],
+                    })
+                    return result
                 except Exception as e:
                     completed += 1
                     print(
                         f"  [{completed}/{total}] [ERR ] {challenge_key}: {e}",
                         flush=True,
                     )
+                    self.log_eval_sample({
+                        "score": 0.0,
+                        "challenge": challenge_key,
+                        "solved": False,
+                        "messages": [{"role": "system", "content": f"Error: {e}"}],
+                    })
                     return {
                         "challenge": challenge_key,
                         "name": challenge.name,
@@ -511,19 +561,8 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
             "eval/total": n,
         }
 
-        samples = [
-            {
-                "prompt": r["challenge"],
-                "response": "SOLVED" if r["solved"] else "FAILED",
-                "expected": "SOLVED",
-                "reward": r["reward"],
-            }
-            for r in results
-        ]
-
         await self.evaluate_log(
             metrics=eval_metrics,
-            samples=samples,
             start_time=start_time,
             end_time=end_time,
         )
