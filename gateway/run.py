@@ -2204,6 +2204,15 @@ class GatewayRunner:
                                     ),
                                 )
 
+                                # _compress_context ends the old session and creates
+                                # a new session_id.  Write compressed messages into
+                                # the NEW session so the old transcript stays intact
+                                # and searchable via session_search.
+                                _hyg_new_sid = _hyg_agent.session_id
+                                if _hyg_new_sid != session_entry.session_id:
+                                    session_entry.session_id = _hyg_new_sid
+                                    self.session_store._save()
+
                                 self.session_store.rewrite_transcript(
                                     session_entry.session_id, _compressed
                                 )
@@ -4016,7 +4025,7 @@ class GatewayRunner:
                 session_entry.session_key, last_prompt_tokens=0
             )
             new_count = len(compressed)
-            new_tokens=estimate_messages_tokens_rough(compressed)
+            new_tokens = estimate_messages_tokens_rough(compressed)
 
             return (
                 f"🗜️ Compressed: {original_count} → {new_count} messages\n"
