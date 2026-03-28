@@ -374,7 +374,6 @@ class EmailAdapter(BasePlatformAdapter):
                 msg_headers = dict(msg.items())
                 if _is_automated_sender(sender_addr, msg_headers):
                     logger.debug("[Email] Skipping automated sender: %s", sender_addr)
-                    self._seen_uids.add(uid)
                     continue
                 body = _extract_text_body(msg)
                 attachments = _extract_attachments(msg, skip_attachments=self._skip_attachments)
@@ -403,11 +402,11 @@ class EmailAdapter(BasePlatformAdapter):
         # Skip self-messages
         if sender_addr == self._address.lower():
             return
-            
+
         # Never reply to automated senders
         if _is_automated_sender(sender_addr, {}):
             logger.debug("[Email] Dropping automated sender at dispatch: %s", sender_addr)
-            return    
+            return
 
         subject = msg_data["subject"]
         body = msg_data["body"].strip()
