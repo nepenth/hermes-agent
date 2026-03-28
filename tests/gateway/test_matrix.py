@@ -539,6 +539,9 @@ class TestMatrixE2EEMaintenance:
         adapter._encryption = True
         adapter._closing = False
 
+        class FakeSyncError:
+            pass
+
         async def _sync_once(timeout=30000):
             adapter._closing = True
             return MagicMock()
@@ -559,7 +562,11 @@ class TestMatrixE2EEMaintenance:
 
         adapter._client = fake_client
 
-        await adapter._sync_loop()
+        fake_nio = MagicMock()
+        fake_nio.SyncError = FakeSyncError
+
+        with patch.dict("sys.modules", {"nio": fake_nio}):
+            await adapter._sync_loop()
 
         fake_client.sync.assert_awaited_once_with(timeout=30000)
         fake_client.send_to_device_messages.assert_awaited_once()
