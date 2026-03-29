@@ -1,0 +1,74 @@
+env:
+  group_size: 4
+  max_num_workers: -1
+  max_eval_workers: 16
+  max_num_workers_per_node: 8
+  steps_per_eval: 100
+  max_token_length: 16384
+  eval_handling: STOP_TRAIN
+  eval_limit_ratio: 0.5
+  inference_weight: 1.0
+  batch_size: -1
+  max_batches_offpolicy: 3
+  tokenizer_name: NousResearch/Hermes-3-Llama-3.1-8B
+  use_wandb: false
+  rollout_server_url: http://localhost:8000
+  total_steps: 1000
+  wandb_name: pwncollege-smoke-hello
+  num_rollouts_to_keep: 32
+  num_rollouts_per_group_for_logging: 1
+  ensure_scores_are_not_same: false
+  data_path_to_save_groups: null
+  data_dir_to_save_evals: environments/pwncollege_env/eval_runs/smoke_hello
+  min_items_sent_before_logging: 2
+  include_messages: false
+  min_batch_allocation: null
+  worker_timeout: 600.0
+  thinking_mode: false
+  reasoning_effort: null
+  max_reasoning_tokens: null
+  custom_thinking_prompt: null
+  enabled_toolsets:
+    - terminal
+    - file
+    - pwncollege
+  disabled_toolsets: null
+  distribution: null
+  max_agent_turns: 20
+  agent_temperature: 0.7
+  terminal_backend: ssh
+  terminal_timeout: 120
+  terminal_lifetime: 3600
+  disable_command_guards: true
+  dataset_name: null
+  dataset_split: train
+  prompt_field: prompt
+  tool_pool_size: 128
+  tool_call_parser: hermes
+  extra_body: null
+  base_url: http://100.120.55.25:8080
+  ssh_host: 100.120.55.25
+  ssh_port: 2222
+  ssh_key: environments/pwncollege_env/keys/rl_test_key
+  challenge: hello/hello
+  dojo_filter: null
+  module_filter: null
+  eval_dojo: linux-luminarium
+  eval_exclude_dojos:
+    - archive
+  eval_module: hello
+  eval_concurrency: 2
+openai:
+  - timeout: 1200
+    num_max_requests_at_once: 512
+    num_requests_for_eval: 64
+    model_name: xiaomi/mimo-v2-flash
+    rolling_buffer_length: 1000
+    server_type: openai
+    tokenizer_name: none
+    api_key: ""
+    base_url: https://openrouter.ai/api/v1
+    n_kwarg_is_ignored: false
+    health_check: false
+slurm: false
+testing: false

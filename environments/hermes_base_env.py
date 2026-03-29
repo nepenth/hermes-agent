@@ -176,6 +176,16 @@ class HermesAgentEnvConfig(BaseEnvConfig):
         "transforms, and other provider-specific settings.",
     )
 
+    # --- Security guards ---
+    disable_command_guards: bool = Field(
+        default=False,
+        description="Disable terminal command security guards (dangerous command "
+        "detection, tirith scanning, approval prompts). Enable this for RL "
+        "environment runs where the agent operates inside isolated containers "
+        "and needs unrestricted command execution (e.g., pwn.college challenges "
+        "that require inline Python, raw sockets, binary exploitation, etc.).",
+    )
+
 
 class HermesAgentBaseEnv(BaseEnv):
     """
@@ -218,6 +228,12 @@ class HermesAgentBaseEnv(BaseEnv):
             os.environ["TERMINAL_ENV"] = config.terminal_backend
         os.environ["TERMINAL_TIMEOUT"] = str(config.terminal_timeout)
         os.environ["TERMINAL_LIFETIME_SECONDS"] = str(config.terminal_lifetime)
+
+        # Disable command security guards for RL environments that need
+        # unrestricted execution (agent runs inside isolated containers).
+        if config.disable_command_guards:
+            os.environ["HERMES_YOLO_MODE"] = "1"
+            print("🔓 Command guards disabled (disable_command_guards=true)")
         print(
             f"🖥️  Terminal: backend={config.terminal_backend}, "
             f"timeout={config.terminal_timeout}s, lifetime={config.terminal_lifetime}s"

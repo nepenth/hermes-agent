@@ -1,0 +1,3 @@
+# SSH private keys -- never commit
+*
+!.gitignore
