@@ -1338,7 +1338,7 @@ def setup_model_provider(config: dict):
                         print_warning("Skipped — install Claude Code and re-run setup")
             else:
                 print()
-                print_info("Get an API key at: https://console.anthropic.com/settings/keys")
+                print_info("Get an API key at: https://platform.claude.com/settings/keys")
                 print()
                 api_key = prompt("API key (sk-ant-...)", password=True)
                 if api_key:

@@ -2265,7 +2265,7 @@ def _model_flow_anthropic(config, current_model=""):
 
         elif choice == "2":
             print()
-            print("  Get an API key at: https://console.anthropic.com/settings/keys")
+            print("  Get an API key at: https://platform.claude.com/settings/keys")
             print()
             try:
                 api_key = input("  API key (sk-ant-...): ").strip()
