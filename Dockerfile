@@ -9,7 +9,10 @@ WORKDIR /opt/hermes
 RUN pip install -e ".[all]" --break-system-packages
 RUN npm install
 RUN npx playwright install --with-deps chromium
+WORKDIR /opt/hermes/scripts/whatsapp-bridge
+RUN npm install
 
+WORKDIR /opt/hermes
 RUN chmod +x /opt/hermes/docker/entrypoint.sh
 
 ENV HERMES_HOME=/opt/data
