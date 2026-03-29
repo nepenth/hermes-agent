@@ -285,6 +285,9 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     logger.info("Running job '%s' (ID: %s)", job_name, job_id)
     logger.info("Prompt: %s", prompt[:100])
 
+    # Mark this as a cron session so the approval system can apply cron_mode
+    os.environ["HERMES_CRON_SESSION"] = "1"
+
     # Inject origin context so the agent's send_message tool knows the chat
     if origin:
         os.environ["HERMES_SESSION_PLATFORM"] = origin["platform"]
