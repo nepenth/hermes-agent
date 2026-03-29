@@ -7,8 +7,6 @@ COPY . /opt/hermes
 WORKDIR /opt/hermes
 
 RUN pip install -e ".[all]" --break-system-packages
-RUN pip install -e "./mini-swe-agent" --break-system-packages
-# RUN pip install -e "./tinker-atropos" --break-system-packages
 RUN npm install
 RUN npx playwright install --with-deps chromium
 
