@@ -2462,7 +2462,6 @@ def cmd_uninstall(args):
     run_uninstall(args)
 
 
-<<<<<<< HEAD
 def _clear_bytecode_cache(root: Path) -> int:
     """Remove all __pycache__ directories under *root*.
 
@@ -2489,7 +2488,6 @@ def _clear_bytecode_cache(root: Path) -> int:
                 pass
             dirnames.clear()  # nothing left to recurse into
     return removed
-=======
 def cmd_web(args):
     """Start the web UI server."""
     try:
@@ -2532,7 +2530,6 @@ def cmd_web(args):
         port=args.port,
         open_browser=not args.no_open,
     )
->>>>>>> 4a23336e (feat: web ui to manage hermes agent)
 
 
 def _update_via_zip(args):
