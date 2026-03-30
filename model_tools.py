@@ -21,6 +21,7 @@ Public API (signatures preserved from the original 2,400-line version):
 """
 
 import json
+import re
 import asyncio
 import logging
 import threading
@@ -365,6 +366,33 @@ _AGENT_LOOP_TOOLS = {"todo", "memory", "session_search", "delegate_task"}
 _READ_SEARCH_TOOLS = {"read_file", "search_files"}
 
 
+def _sanitize_tool_error(error_msg: str) -> str:
+    """Sanitize tool error messages before sending to the LLM.
+
+    - Strips XML/JSON boundary markers that could confuse the model
+    - Truncates to 2000 chars max
+    - Wraps in a clear error format so the LLM knows it's an error
+    """
+    sanitized = error_msg
+    # Strip XML-like tags that could confuse the LLM (role / framing tags)
+    sanitized = re.sub(
+        r'</?(?:tool_call|function_call|result|response|output|input|system|assistant|user)>',
+        '', sanitized,
+    )
+    # Strip markdown code fences (opening and closing)
+    sanitized = re.sub(r'^\s*```(?:json|xml)?\s*', '', sanitized)
+    sanitized = re.sub(r'\s*```\s*$', '', sanitized)
+    # Remove CDATA sections
+    sanitized = re.sub(r'<!\[CDATA\[.*?\]\]>', '', sanitized, flags=re.DOTALL)
+
+    # Truncate very long error messages
+    if len(sanitized) > 2000:
+        sanitized = sanitized[:1997] + '...'
+
+    # Wrap in clear error format
+    return f"[TOOL_ERROR] {sanitized}"
+
+
 def handle_function_call(
     function_name: str,
     function_args: Dict[str, Any],
@@ -438,9 +466,10 @@ def handle_function_call(
         return result
 
     except Exception as e:
-        error_msg = f"Error executing {function_name}: {str(e)}"
-        logger.error(error_msg)
-        return json.dumps({"error": error_msg}, ensure_ascii=False)
+        raw_error = f"Error executing {function_name}: {str(e)}"
+        logger.error(raw_error)
+        sanitized = _sanitize_tool_error(raw_error)
+        return json.dumps({"error": sanitized}, ensure_ascii=False)
 
 
 # =============================================================================

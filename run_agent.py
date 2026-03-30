@@ -6270,6 +6270,7 @@ class AIAgent:
         codex_ack_continuations = 0
         length_continue_retries = 0
         truncated_response_prefix = ""
+        truncated_tool_call_count = 0
         compression_attempts = 0
         
         # Clear any stale interrupt state at start
@@ -6434,6 +6435,11 @@ class AIAgent:
             while retry_count < max_retries:
                 try:
                     api_kwargs = self._build_api_kwargs(api_messages)
+                    # Feature: Temporarily disable tools after repeated truncations
+                    if getattr(self, '_tools_temporarily_disabled', False):
+                        api_kwargs['tools'] = None
+                        self._tools_temporarily_disabled = False
+                        self._vprint(f"{self.log_prefix}ℹ️  Tools temporarily disabled for this call")
                     if self.api_mode == "codex_responses":
                         api_kwargs = self._preflight_codex_api_kwargs(api_kwargs, allow_stream=False)
 
@@ -6697,6 +6703,46 @@ class AIAgent:
 
                         if self.api_mode == "chat_completions":
                             assistant_message = response.choices[0].message
+                            if assistant_message.tool_calls:
+                                # Feature: Discard truncated tool calls (Ironclaw #1632)
+                                # When finish_reason=length with tool_calls, the calls
+                                # are likely truncated (incomplete JSON). Discard them.
+                                truncated_tool_call_count += 1
+                                tc_count = len(assistant_message.tool_calls)
+                                self._vprint(
+                                    f"{self.log_prefix}⚠️  Discarding {tc_count} truncated tool call(s) "
+                                    f"(finish_reason='length', consecutive={truncated_tool_call_count})",
+                                    force=True,
+                                )
+                                # Save any text content that preceded the truncated calls
+                                partial_content = assistant_message.content or ""
+                                if partial_content:
+                                    truncated_response_prefix += partial_content
+                                # Build message WITHOUT tool_calls
+                                assistant_message.tool_calls = None
+                                interim_msg = self._build_assistant_message(assistant_message, finish_reason)
+                                messages.append(interim_msg)
+
+                                truncation_nudge = (
+                                    'Your previous response was truncated due to context length limits. '
+                                    'The tool calls were discarded. Please summarize your progress so '
+                                    'far and continue with a shorter response.'
+                                )
+                                messages.append({"role": "user", "content": truncation_nudge})
+
+                                # After 3 consecutive truncations, temporarily disable tools
+                                if truncated_tool_call_count >= 3:
+                                    self._vprint(
+                                        f"{self.log_prefix}⚠️  3 consecutive truncations with tool calls — "
+                                        f"temporarily disabling tools for next call",
+                                        force=True,
+                                    )
+                                    self._tools_temporarily_disabled = True
+
+                                self._session_messages = messages
+                                self._save_session_log(messages)
+                                continue
+
                             if not assistant_message.tool_calls:
                                 length_continue_retries += 1
                                 interim_msg = self._build_assistant_message(assistant_message, finish_reason)
@@ -7518,6 +7564,8 @@ class AIAgent:
                 
                 # Check for tool calls
                 if assistant_message.tool_calls:
+                    # Reset truncated tool call counter on successful (non-truncated) tool calls
+                    truncated_tool_call_count = 0
                     if not self.quiet_mode:
                         self._vprint(f"{self.log_prefix}🔧 Processing {len(assistant_message.tool_calls)} tool call(s)...")
                     
@@ -7793,11 +7841,39 @@ class AIAgent:
                             content_preview = final_response[:80] + "..." if len(final_response) > 80 else final_response
                             self._vprint(f"{self.log_prefix}   Content: '{content_preview}'")
                         
-                        if self._empty_content_retries < 3:
-                            self._vprint(f"{self.log_prefix}🔄 Retrying API call ({self._empty_content_retries}/3)...")
+                        if self._empty_content_retries < 2:
+                            self._vprint(f"{self.log_prefix}🔄 Retrying API call ({self._empty_content_retries}/2)...")
+                            # Feature: Empty response recovery (Ironclaw #1677 + #1720)
+                            # On first empty retry, check for prior meaningful output
+                            if self._empty_content_retries == 1:
+                                _has_prior_output = any(
+                                    isinstance(m, dict)
+                                    and m.get("role") == "assistant"
+                                    and m.get("content")
+                                    and self._has_content_after_think_block(m["content"])
+                                    for m in messages
+                                )
+                                if _has_prior_output:
+                                    # Model already produced output earlier; treat as completion
+                                    self._vprint(f"{self.log_prefix}ℹ️  Prior meaningful output exists — treating empty response as completion")
+                                    for m in reversed(messages):
+                                        if (isinstance(m, dict) and m.get("role") == "assistant"
+                                                and m.get("content") and self._has_content_after_think_block(m["content"])):
+                                            final_response = self._strip_think_blocks(m["content"]).strip()
+                                            break
+                                    if final_response:
+                                        self._empty_content_retries = 0
+                                        break
+                                else:
+                                    # No prior output — inject a nudge to help the model
+                                    nudge_msg = {
+                                        "role": "user",
+                                        "content": "Your previous response was empty. Please continue with the task.",
+                                    }
+                                    messages.append(nudge_msg)
                             continue
                         else:
-                            self._vprint(f"{self.log_prefix}❌ Max retries (3) for empty content exceeded.", force=True)
+                            self._vprint(f"{self.log_prefix}❌ Max retries (2) for empty content exceeded.", force=True)
                             self._empty_content_retries = 0
                             
                             # If a prior tool_calls turn had real content, salvage it:
