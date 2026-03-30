@@ -121,6 +121,13 @@ class RetainDBMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         return bool(os.environ.get("RETAINDB_API_KEY"))
 
+    def get_config_schema(self):
+        return [
+            {"key": "api_key", "description": "RetainDB API key", "secret": True, "required": True, "env_var": "RETAINDB_API_KEY", "url": "https://retaindb.com"},
+            {"key": "base_url", "description": "API endpoint", "default": "https://api.retaindb.com"},
+            {"key": "project", "description": "Project identifier", "default": "hermes"},
+        ]
+
     def _headers(self) -> dict:
         return {
             "Authorization": f"Bearer {self._api_key}",

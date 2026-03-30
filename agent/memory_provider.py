@@ -142,6 +142,24 @@ class MemoryProvider(ABC):
         messages is the list that will be summarized/discarded.
         """
 
+    def get_config_schema(self) -> List[Dict[str, Any]]:
+        """Return config fields this provider needs for setup.
+
+        Used by 'hermes memory setup' to walk the user through configuration.
+        Each field is a dict with:
+          key:         config key name (e.g. 'api_key', 'mode')
+          description: human-readable description
+          secret:      True if this should go to .env (default: False)
+          required:    True if required (default: False)
+          default:     default value (optional)
+          choices:     list of valid values (optional)
+          url:         URL where user can get this credential (optional)
+          env_var:     explicit env var name for secrets (default: auto-generated)
+
+        Return empty list if no config needed (e.g. local-only providers).
+        """
+        return []
+
     def on_memory_write(self, action: str, target: str, content: str) -> None:
         """Called when the built-in memory tool writes an entry.
 

@@ -102,6 +102,12 @@ class OpenVikingMemoryProvider(MemoryProvider):
     def name(self) -> str:
         return "openviking"
 
+    def get_config_schema(self):
+        return [
+            {"key": "endpoint", "description": "OpenViking server URL", "required": True, "default": "http://127.0.0.1:1933"},
+            {"key": "api_key", "description": "OpenViking API key (if server requires auth)", "secret": True, "env_var": "OPENVIKING_API_KEY"},
+        ]
+
     def is_available(self) -> bool:
         endpoint = os.environ.get("OPENVIKING_ENDPOINT", "")
         if not endpoint:

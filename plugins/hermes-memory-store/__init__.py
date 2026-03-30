@@ -126,6 +126,14 @@ class HolographicMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         return True  # SQLite is always available, numpy is optional
 
+    def get_config_schema(self):
+        return [
+            {"key": "db_path", "description": "SQLite database path", "default": "~/.hermes/memory_store.db"},
+            {"key": "auto_extract", "description": "Auto-extract facts at session end", "default": "false", "choices": ["true", "false"]},
+            {"key": "default_trust", "description": "Default trust score for new facts", "default": "0.5"},
+            {"key": "hrr_dim", "description": "HRR vector dimensions", "default": "1024"},
+        ]
+
     def initialize(self, session_id: str, **kwargs) -> None:
         db_path = self._config.get("db_path", "~/.hermes/memory_store.db")
         default_trust = float(self._config.get("default_trust", 0.5))

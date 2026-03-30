@@ -167,6 +167,17 @@ class HindsightMemoryProvider(MemoryProvider):
         except Exception:
             return False
 
+    def get_config_schema(self):
+        return [
+            {"key": "mode", "description": "Cloud API or local embedded mode", "default": "cloud", "choices": ["cloud", "local"]},
+            {"key": "api_key", "description": "Hindsight Cloud API key", "secret": True, "env_var": "HINDSIGHT_API_KEY", "url": "https://app.hindsight.vectorize.io"},
+            {"key": "bank_id", "description": "Memory bank identifier", "default": "hermes"},
+            {"key": "budget", "description": "Recall thoroughness", "default": "mid", "choices": ["low", "mid", "high"]},
+            {"key": "llm_provider", "description": "LLM provider for local mode", "default": "anthropic", "choices": ["anthropic", "openai", "groq", "ollama"]},
+            {"key": "llm_api_key", "description": "LLM API key for local mode", "secret": True, "env_var": "HINDSIGHT_LLM_API_KEY"},
+            {"key": "llm_model", "description": "LLM model for local mode", "default": "claude-haiku-4-5-20251001"},
+        ]
+
     def _make_client(self):
         """Create a fresh Hindsight client (thread-safe)."""
         if self._mode == "local":

@@ -4148,6 +4148,30 @@ For more help on a command:
     plugins_parser.set_defaults(func=cmd_plugins)
 
     # =========================================================================
+    # memory command
+    # =========================================================================
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Manage memory provider plugins",
+        description=(
+            "Configure which memory provider plugin is active.\n\n"
+            "Memory providers give the agent persistent recall across sessions.\n"
+            "Built-in memory (MEMORY.md / USER.md) is always active.\n"
+            "One external provider can be active at a time."
+        ),
+        formatter_class=__import__("argparse").RawDescriptionHelpFormatter,
+    )
+    memory_subparsers = memory_parser.add_subparsers(dest="memory_command")
+    memory_subparsers.add_parser("setup", help="Interactive setup wizard")
+    memory_subparsers.add_parser("status", help="Show current provider and config")
+
+    def cmd_memory(args):
+        from hermes_cli.memory_setup import memory_command
+        memory_command(args)
+
+    memory_parser.set_defaults(func=cmd_memory)
+
+    # =========================================================================
     # honcho command
     # =========================================================================
     honcho_parser = subparsers.add_parser(

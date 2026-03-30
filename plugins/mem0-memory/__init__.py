@@ -138,6 +138,14 @@ class Mem0MemoryProvider(MemoryProvider):
         cfg = _load_config()
         return bool(cfg.get("api_key"))
 
+    def get_config_schema(self):
+        return [
+            {"key": "api_key", "description": "Mem0 Platform API key", "secret": True, "required": True, "env_var": "MEM0_API_KEY", "url": "https://app.mem0.ai"},
+            {"key": "user_id", "description": "User identifier", "default": "hermes-user"},
+            {"key": "agent_id", "description": "Agent identifier", "default": "hermes"},
+            {"key": "rerank", "description": "Enable reranking for recall", "default": "true", "choices": ["true", "false"]},
+        ]
+
     def _get_client(self):
         if self._client is not None:
             return self._client

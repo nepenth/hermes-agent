@@ -143,6 +143,12 @@ class CognitiveMemoryProvider(MemoryProvider):
     def name(self) -> str:
         return "cognitive"
 
+    def get_config_schema(self):
+        return [
+            {"key": "embedding_model", "description": "Embedding model (litellm format)", "default": "text-embedding-3-small"},
+            {"key": "decay_half_life", "description": "Importance decay half-life in days (0=disabled)", "default": "30"},
+        ]
+
     def is_available(self) -> bool:
         try:
             import litellm  # noqa: F401
