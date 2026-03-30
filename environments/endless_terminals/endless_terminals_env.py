@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import Field
+from datasets import load_dataset
 
 # Ensure hermes-agent root is on path
 _repo_root = Path(__file__).resolve().parent.parent.parent
@@ -36,64 +37,16 @@ if str(_repo_root) not in sys.path:
 from atroposlib.envs.base import ScoredDataGroup, ScoredDataItem
 from atroposlib.type_definitions import Item
 
-# Monkey-patch atroposlib's ManagedServer to forward chat_template_kwargs from
-# extra_body into apply_chat_template. Should be upstreamed to atroposlib.
+# Monkey-patch ManagedServer to normalize out Qwen3's empty think prefill
+# before prefix matching. The model echoes the prefill (<think>\n\n</think>\n\n)
+# in its completion, but the chat template strips it when re-rendering prior
+# turns, causing the prefix match to fail every turn.
 def _patch_managed_server():
-    import inspect
     from atroposlib.envs.server_handling import managed_server as _ms
 
     _ManagedServer = _ms.ManagedServer
 
-    # Patch 1: add extra_template_kwargs + chat_template_kwargs forwarding
-    # Only apply if not already in the installed version
-    _needs_patch1 = "extra_template_kwargs" not in inspect.signature(_ManagedServer._convert_messages_to_prompt).parameters
-
-    if _needs_patch1:
-        def _convert_messages_to_prompt(self, messages, tools=None, extra_template_kwargs=None):
-            if tools and self._get_translator():
-                messages = self._get_translator().convert_messages_for_template(messages)
-            if self.tokenizer is None:
-                return "\n".join([f"{m['role']}: {m.get('content', '')}" for m in messages])
-            if hasattr(self.tokenizer, "apply_chat_template"):
-                add_generation_prompt = len(messages) == 0 or messages[-1].get("role") != "assistant"
-                if not self._preserve_think_blocks:
-                    messages = self._protect_think_blocks(messages)
-                template_kwargs = {"tokenize": False, "add_generation_prompt": add_generation_prompt}
-                if tools:
-                    template_kwargs["tools"] = tools
-                if extra_template_kwargs:
-                    template_kwargs.update(extra_template_kwargs)
-                prompt = self.tokenizer.apply_chat_template(messages, **template_kwargs)
-                prompt = prompt.replace(self._THINK_OPEN, "<think>")
-                prompt = prompt.replace(self._THINK_CLOSE, "</think>")
-                return prompt
-            return "\n".join([f"{m['role']}: {m.get('content', '')}" for m in messages])
-
-        _orig_chat_completion = _ManagedServer.chat_completion
-
-        async def chat_completion(self, **kwargs):
-            extra_body = kwargs.get("extra_body", {}) or {}
-            chat_template_kwargs = extra_body.get("chat_template_kwargs", None)
-            self._pending_chat_template_kwargs = chat_template_kwargs
-            try:
-                return await _orig_chat_completion(self, **kwargs)
-            finally:
-                self._pending_chat_template_kwargs = None
-
-        def _convert_messages_to_prompt_with_stash(self, messages, tools=None, extra_template_kwargs=None):
-            if extra_template_kwargs is None:
-                extra_template_kwargs = getattr(self, "_pending_chat_template_kwargs", None)
-            return _convert_messages_to_prompt(self, messages, tools=tools, extra_template_kwargs=extra_template_kwargs)
-
-        _ManagedServer._convert_messages_to_prompt = _convert_messages_to_prompt_with_stash
-        _ManagedServer.chat_completion = chat_completion
-        print("[patch] ManagedServer: support chat_template_kwargs in extra_body")
-
-    # Patch 2: fix _find_extending_node and _compute_input_ids to normalize out
-    # Qwen3's empty think prefill before prefix matching. The model echoes the
-    # prefill (<think>\n\n</think>\n\n or <think>\n</think>\n\n) in its completion,
-    # but the chat template strips it when re-rendering prior turns, causing the
-    # prefix match to fail every turn.
+    # Normalize out Qwen3's empty think prefill before prefix matching.
     import re as _re
     _EMPTY_THINK_RE = _re.compile(r"<think>\n*</think>\n\n")
 
@@ -332,12 +285,9 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             self._split_dataset()
             return
 
-        # Otherwise, load from HuggingFace
         logger.info(f"Loading dataset from HuggingFace: {self.config.dataset_name}")
 
         try:
-            from datasets import load_dataset
-
             self._dataset = await asyncio.get_event_loop().run_in_executor(
                 None,
                 lambda: load_dataset(
@@ -381,7 +331,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         random.shuffle(self._dataset_indices)
         self._current_index = 0
 
-        # Fix eval indices with a fixed seed so the same 20 tasks are used across runs
         num_eval = min(self.config.num_eval_tasks, len(self._eval_dataset))
         rng = random.Random(42)
         self._eval_indices = rng.sample(range(len(self._eval_dataset)), num_eval)
@@ -745,15 +694,12 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         task_id = str(uuid.uuid4())
         task_name = item.get("task_name", "unknown")
 
-        # Build task-specific Docker image (cached across runs)
         docker_image = await asyncio.get_event_loop().run_in_executor(
             None, self._build_task_docker_image, item
         )
 
         logger.debug(f"collect_trajectory START for {task_name}")
 
-        # Register image override for this task_id (set both docker_image and
-        # modal_image so the correct one is used regardless of backend)
         logger.debug(f"Registering Docker image: {docker_image}")
         register_task_env_overrides(task_id, {
             "docker_image": docker_image,
@@ -765,7 +711,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         logger.debug("Docker image registered")
 
         try:
-            # Get group-level tools (resolved once in collect_trajectories)
             logger.debug("Resolving tools...")
             if self._current_group_tools is None:
                 tools, valid_names = self._resolve_tools_for_group()
@@ -787,10 +732,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             async with self._container_sem:
                 if self._use_managed_server():
                     try:
-                        # No tool_call_parser — let the chat template render tool calls
-                        # natively so full_text is consistent across turns (enabling
-                        # multi-turn sequence extension). agent_loop has a fallback
-                        # to parse raw <tool_call> content.
                         managed_ctx = self.server.managed_server(
                             tokenizer=self.tokenizer,
                             preserve_think_blocks=True,
@@ -824,7 +765,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                         )
                         result = await agent.run(messages)
                 else:
-                    # Phase 1: OpenAI server
                     agent = HermesAgentLoop(
                         server=self.server,
                         tool_schemas=tools,
@@ -837,7 +777,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                     )
                     result = await agent.run(messages)
 
-            # Skip reward computation if agent produced no output
             only_system_and_user = all(
                 msg.get("role") in ("system", "user") for msg in result.messages
             )
@@ -846,10 +785,8 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                     "Agent loop produced no output (turns=%d). Skipping trajectory.",
                     result.turns_used,
                 )
-                # Return None to skip this trajectory (likely an API failure)
                 return None, []
             else:
-                # Compute reward using ToolContext
                 ctx = ToolContext(task_id)
                 try:
                     reward = await self.compute_reward(item, result, ctx)
@@ -883,23 +820,9 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
 
             self._metrics_buffer.append(task_metrics)
 
-            # ============================================================================
-            # Build ScoredDataItem from result
-            # ============================================================================
-            # Phase 2: Extract tokens/masks/logprobs from first SequenceNode
-            # Phase 1: Create placeholder tokens for OpenAI-style servers
-            # ============================================================================
-            # Build return value.
-            # The base collect_trajectories() calls this group_size times and
-            # aggregates using .append(), so we must return a ScoredDataItem
-            # (scalar scores, single token list, etc.) -- NOT a ScoredDataGroup
-            # with list-valued fields, which would cause double-wrapping and
-            # "unhashable type: list" errors in handle_send_to_api.
             nodes = (managed_state or {}).get("nodes", []) if managed_state else []
 
             if nodes:
-                # Phase 2: Use last node — ManagedServer extends the sequence each turn,
-                # carrying forward masked_tokens so all assistant turns are unmasked.
                 node = nodes[-1]
                 tokens = node.tokens
                 masks = node.masked_tokens
@@ -911,7 +834,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                     inference_logprobs = [1.0] * len(tokens)
                     logger.warning(f"Phase 2: node has no logprobs! Falling back to placeholders.")
             else:
-                # Phase 1: placeholder tokens
                 logger.warning(f"Phase 1 fallback: managed_state empty, using placeholder logprobs. IS loss will be zero!")
                 full_text = "\n".join(
                     msg.get("content", "") for msg in result.messages if msg.get("content")
@@ -939,7 +861,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             return scored_item, []
 
         finally:
-            # Clean up task overrides and sandbox
             clear_task_env_overrides(task_id)
             try:
                 cleanup_vm(task_id)
@@ -971,7 +892,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         logger.info(f"Task {task_name}: running tests in sandbox...")
 
         try:
-            # Run tests in a thread to avoid blocking the event loop
             loop = asyncio.get_event_loop()
             reward = await loop.run_in_executor(
                 None,
@@ -1018,15 +938,12 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             Float between 0.0 and 1.0 based on test pass ratio
         """
         try:
-            # Upload test file to a writable temp directory
-            # (Using /workspace fails on macOS local backend because / is read-only)
             test_content = test_file_path.read_text()
             test_dir = f"/tmp/_hermes_test_{os.getpid()}"
             test_path = f"{test_dir}/test_final_state.py"
             ctx.write_file(test_path, test_content)
             logger.debug(f"Task {task_name}: uploaded test file to {test_path}")
 
-            # Run pytest -v for per-test pass/fail details
             result = ctx.terminal(
                 f"cd {test_dir} && python3 -m pytest -v test_final_state.py 2>&1",
                 timeout=self.config.test_timeout_s,
@@ -1039,16 +956,12 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                 logger.debug(f"Task {task_name}: all tests passed")
                 return 1.0
 
-            # Parse pytest -v output for granular scoring
-            # Lines like: "test_final_state.py::test_name PASSED"
-            # or:         "test_final_state.py::test_name FAILED"
             passed = len(re.findall(r" PASSED", output))
             failed = len(re.findall(r" FAILED", output))
             errored = len(re.findall(r" ERROR", output))
             total = passed + failed + errored
 
             if total > 0:
-                # Score is fraction of tests passed
                 reward = passed / total
                 logger.info(
                     f"Task {task_name}: {passed}/{total} tests passed "
@@ -1056,8 +969,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
                 )
                 return reward
             else:
-                # Couldn't parse output — fall back to binary
-                # Also try the summary line: "X passed, Y failed"
                 summary_match = re.search(
                     r"(\d+) passed(?:.*?(\d+) failed)?", output
                 )
@@ -1100,7 +1011,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             logger.warning("Eval dataset is empty")
             return {}
 
-        # Use min of num_eval_tasks and actual eval set size
         print(f"[evaluate] running {len(self._eval_indices)} eval tasks at step {self.curr_step}")
         logger.info(f"Starting evaluation on {len(self._eval_indices)} held-out tasks...")
 
@@ -1111,8 +1021,6 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             "natural_finishes": [],
         }
 
-        # Sample from eval set (holdout)
-        import random
         eval_items = [self._build_item_from_dataset(self._eval_dataset[idx]) for idx in self._eval_indices]
         eval_items = [item for item in eval_items if item is not None]
         print(f"[evaluate] built {len(eval_items)} items from {len(self._eval_indices)} indices")
