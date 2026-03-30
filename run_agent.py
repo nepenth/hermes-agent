@@ -100,6 +100,7 @@ from agent.trajectory import (
     convert_scratchpad_to_think, has_incomplete_scratchpad,
     save_trajectory as _save_trajectory_to_file,
 )
+from agent.rate_limiter import rate_limiter as _rate_limiter
 from utils import atomic_json_write
 
 HONCHO_TOOL_NAMES = {
@@ -6515,7 +6516,7 @@ class AIAgent:
                         elif not isinstance(content_blocks, list):
                             response_invalid = True
                             error_details.append("response.content is not a list")
-                        elif len(content_blocks) == 0:
+                        elif len(content_blocks) == 0 and getattr(response, "stop_reason", None) != "sensitive":
                             response_invalid = True
                             error_details.append("response.content is empty")
                     else:
@@ -6631,10 +6632,13 @@ class AIAgent:
                         else:
                             finish_reason = "stop"
                     elif self.api_mode == "anthropic_messages":
-                        stop_reason_map = {"end_turn": "stop", "tool_use": "tool_calls", "max_tokens": "length", "stop_sequence": "stop"}
+                        stop_reason_map = {"end_turn": "stop", "tool_use": "tool_calls", "max_tokens": "length", "stop_sequence": "stop", "sensitive": "content_filter"}
                         finish_reason = stop_reason_map.get(response.stop_reason, "stop")
                     else:
                         finish_reason = response.choices[0].finish_reason
+
+                    if finish_reason == "content_filter":
+                        self._vprint(f"{self.log_prefix}⚠️  Response filtered by content policy (stop_reason='sensitive')", force=True)
 
                     if finish_reason == "length":
                         self._vprint(f"{self.log_prefix}⚠️  Response truncated (finish_reason='length') - model hit max output tokens", force=True)
@@ -7014,6 +7018,54 @@ class AIAgent:
                         if self._try_activate_fallback():
                             retry_count = 0
                             continue
+
+                    # --- Stepped rate-limit cooldown --------------------------
+                    # If we're rate-limited (and fallback either isn't available
+                    # or is already active), use the per-model stepped cooldown
+                    # instead of the generic exponential backoff.
+                    if is_rate_limited:
+                        _rl_model = getattr(self, "model", "unknown") or "unknown"
+                        _rl_cooldown = _rate_limiter.record_rate_limit(_rl_model)
+                        _rl_step = _rate_limiter.get_step(_rl_model)
+                        _rl_max_step = len(_rate_limiter._cooldown_steps)
+                        self._vprint(
+                            f"{self.log_prefix}🚦 Rate limited on {_rl_model}, "
+                            f"cooling down for {_rl_cooldown:.0f}s "
+                            f"(step {_rl_step}/{_rl_max_step})",
+                            force=True,
+                        )
+                        self._emit_status(
+                            f"🚦 Rate limited — cooling down {_rl_cooldown:.0f}s "
+                            f"(step {_rl_step}/{_rl_max_step})..."
+                        )
+                        logging.warning(
+                            "%sRate limited on %s — stepped cooldown %ss (step %s/%s)",
+                            self.log_prefix, _rl_model, _rl_cooldown,
+                            _rl_step, _rl_max_step,
+                        )
+                        # Sleep in small increments for interrupt responsiveness
+                        _rl_end = time.time() + _rl_cooldown
+                        while time.time() < _rl_end:
+                            if self._interrupt_requested:
+                                self._vprint(
+                                    f"{self.log_prefix}⚡ Interrupt during rate-limit cooldown.",
+                                    force=True,
+                                )
+                                self._persist_session(messages, conversation_history)
+                                self.clear_interrupt()
+                                return {
+                                    "final_response": (
+                                        f"Operation interrupted: rate-limit cooldown "
+                                        f"on {_rl_model} (step {_rl_step}/{_rl_max_step})."
+                                    ),
+                                    "messages": messages,
+                                    "api_calls": api_call_count,
+                                    "completed": False,
+                                    "interrupted": True,
+                                }
+                            time.sleep(0.2)
+                        continue  # retry the API call after cooldown
+                    # ----------------------------------------------------------
 
                     is_payload_too_large = (
                         status_code == 413
