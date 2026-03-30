@@ -12,7 +12,9 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 import traceback
 
 # fcntl is Unix-only; on Windows use msvcrt for file locking
@@ -293,6 +295,76 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     prompt = _build_job_prompt(job)
     origin = _resolve_origin(job)
     _cron_session_id = f"cron_{job_id}_{_hermes_now().strftime('%Y%m%d_%H%M%S')}"
+
+    # --- Script gate: run optional pre-check script before waking the agent ---
+    script_source = job.get("script")
+    if script_source:
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".sh", delete=False
+            ) as tmp:
+                tmp.write(script_source)
+                tmp_path = tmp.name
+            try:
+                script_result = subprocess.run(
+                    ["bash", tmp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+            # Parse the last non-empty line of stdout as JSON
+            stdout_lines = [
+                line for line in script_result.stdout.splitlines() if line.strip()
+            ]
+            if stdout_lines:
+                last_line = stdout_lines[-1].strip()
+                try:
+                    gate = json.loads(last_line)
+                    if isinstance(gate, dict):
+                        wake = gate.get("wakeAgent", True)
+                        if not wake:
+                            output_doc = (
+                                f"# Cron Job: {job_name}\n\n"
+                                f"**Job ID:** {job_id}\n"
+                                f"**Run Time:** {_hermes_now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                                f"**Schedule:** {job.get('schedule_display', 'N/A')}\n\n"
+                                f"## Script Gate\n\nAgent skipped by script gate.\n"
+                            )
+                            logger.info(
+                                "Job '%s': script gate returned wakeAgent=false, skipping agent",
+                                job_name,
+                            )
+                            return True, output_doc, "Script gate: agent skipped", None
+                        # wakeAgent is true — check for data to prepend
+                        data = gate.get("data")
+                        if data is not None:
+                            prompt = (
+                                f"Script pre-check data:\n{json.dumps(data)}\n\n{prompt}"
+                            )
+                except (json.JSONDecodeError, ValueError):
+                    logger.warning(
+                        "Job '%s': script gate output not valid JSON, proceeding normally: %s",
+                        job_name,
+                        last_line[:200],
+                    )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "Job '%s': script gate timed out after 30s, proceeding normally",
+                job_name,
+            )
+        except Exception as e:
+            logger.warning(
+                "Job '%s': script gate error (%s), proceeding normally",
+                job_name,
+                e,
+            )
+    # --- End script gate ---
 
     logger.info("Running job '%s' (ID: %s)", job_name, job_id)
     logger.info("Prompt: %s", prompt[:100])

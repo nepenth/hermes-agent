@@ -375,6 +375,7 @@ def create_job(
     model: Optional[str] = None,
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
+    script: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
@@ -448,6 +449,8 @@ def create_job(
         # Delivery configuration
         "deliver": deliver,
         "origin": origin,  # Tracks where job was created for "origin" delivery
+        # Script gate: optional bash script run before waking the agent
+        "script": script,
     }
 
     jobs = load_jobs()

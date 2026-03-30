@@ -135,6 +135,7 @@ def _format_job(job: Dict[str, Any]) -> Dict[str, Any]:
         "state": job.get("state", "scheduled" if job.get("enabled", True) else "paused"),
         "paused_at": job.get("paused_at"),
         "paused_reason": job.get("paused_reason"),
+        "script": job.get("script"),
     }
 
 
@@ -153,6 +154,7 @@ def cronjob(
     provider: Optional[str] = None,
     base_url: Optional[str] = None,
     reason: Optional[str] = None,
+    script: Optional[str] = None,
     task_id: str = None,
 ) -> str:
     """Unified cron job management tool."""
@@ -183,6 +185,7 @@ def cronjob(
                 model=_normalize_optional_job_value(model),
                 provider=_normalize_optional_job_value(provider),
                 base_url=_normalize_optional_job_value(base_url, strip_trailing_slash=True),
+                script=script,
             )
             return json.dumps(
                 {
@@ -265,6 +268,8 @@ def cronjob(
                 updates["provider"] = _normalize_optional_job_value(provider)
             if base_url is not None:
                 updates["base_url"] = _normalize_optional_job_value(base_url, strip_trailing_slash=True)
+            if script is not None:
+                updates["script"] = script if script else None
             if repeat is not None:
                 # Normalize: treat 0 or negative as None (infinite)
                 normalized_repeat = None if repeat <= 0 else repeat
@@ -402,6 +407,10 @@ Important safety rule: cron-run sessions should not recursively schedule more cr
             "reason": {
                 "type": "string",
                 "description": "Optional pause reason"
+            },
+            "script": {
+                "type": "string",
+                "description": "Optional bash script to run before waking the agent. Must output JSON on its last line: {\"wakeAgent\": boolean, \"data\"?: any}. If wakeAgent is false, the agent is skipped entirely. Useful for frequent schedules where you only want the agent to run when something changed."
             }
         },
         "required": ["action"]
@@ -451,6 +460,7 @@ registry.register(
         provider=args.get("provider"),
         base_url=args.get("base_url"),
         reason=args.get("reason"),
+        script=args.get("script"),
         task_id=kw.get("task_id"),
     ),
     check_fn=check_cronjob_requirements,
