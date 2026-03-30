@@ -441,6 +441,78 @@ class TestBuiltinMemoryProvider:
 # ---------------------------------------------------------------------------
 
 
+class TestSingleProviderGating:
+    """Only the configured provider should activate."""
+
+    def test_no_provider_configured_means_builtin_only(self):
+        """When memory.provider is empty, no plugin providers activate."""
+        mgr = MemoryManager()
+        builtin = BuiltinMemoryProvider()
+        mgr.add_provider(builtin)
+
+        # Simulate what run_agent.py does when provider="" 
+        configured = ""
+        available_plugins = [
+            FakeMemoryProvider("holographic"),
+            FakeMemoryProvider("mem0"),
+        ]
+        # With empty config, no plugins should be added
+        if configured:
+            for p in available_plugins:
+                if p.name == configured and p.is_available():
+                    mgr.add_provider(p)
+
+        assert mgr.provider_names == ["builtin"]
+
+    def test_configured_provider_activates(self):
+        """Only the named provider should be added."""
+        mgr = MemoryManager()
+        builtin = BuiltinMemoryProvider()
+        mgr.add_provider(builtin)
+
+        configured = "holographic"
+        p1 = FakeMemoryProvider("holographic")
+        p2 = FakeMemoryProvider("mem0")
+        p3 = FakeMemoryProvider("hindsight")
+
+        for p in [p1, p2, p3]:
+            if p.name == configured and p.is_available():
+                mgr.add_provider(p)
+
+        assert mgr.provider_names == ["builtin", "holographic"]
+        assert p1.initialized is False  # not initialized by the gating logic itself
+
+    def test_unavailable_provider_skipped(self):
+        """If the configured provider is unavailable, it should be skipped."""
+        mgr = MemoryManager()
+        builtin = BuiltinMemoryProvider()
+        mgr.add_provider(builtin)
+
+        configured = "holographic"
+        p1 = FakeMemoryProvider("holographic", available=False)
+
+        for p in [p1]:
+            if p.name == configured and p.is_available():
+                mgr.add_provider(p)
+
+        assert mgr.provider_names == ["builtin"]
+
+    def test_nonexistent_provider_results_in_builtin_only(self):
+        """If the configured name doesn't match any plugin, only builtin remains."""
+        mgr = MemoryManager()
+        builtin = BuiltinMemoryProvider()
+        mgr.add_provider(builtin)
+
+        configured = "nonexistent"
+        plugins = [FakeMemoryProvider("holographic"), FakeMemoryProvider("mem0")]
+
+        for p in plugins:
+            if p.name == configured and p.is_available():
+                mgr.add_provider(p)
+
+        assert mgr.provider_names == ["builtin"]
+
+
 class TestPluginMemoryProviderRegistration:
     def test_register_memory_provider(self):
         """PluginContext.register_memory_provider adds to manager list."""

@@ -346,6 +346,11 @@ DEFAULT_CONFIG = {
         "user_profile_enabled": True,
         "memory_char_limit": 2200,   # ~800 tokens at 2.75 chars/token
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
+        # External memory provider (plugin). At most one active at a time.
+        # Set to the provider name (e.g. "holographic", "hindsight", "mem0")
+        # or leave empty for built-in only. Auto-detected from plugins that
+        # call ctx.register_memory_provider().
+        "provider": "",
     },
 
     # Subagent delegation — override the provider:model used by delegate_task

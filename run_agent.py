@@ -1128,11 +1128,22 @@ class AIAgent:
                 logger.debug("peer %s memory_mode=honcho: local USER.md writes disabled", _hcfg.peer_name or "user")
 
         # Register plugin memory providers with the manager.
-        # Plugins call ctx.register_memory_provider() during discover_and_load().
-        if not skip_memory:
+        # At most ONE external provider is active at a time (configured via
+        # memory.provider in config.yaml). Auto-detected from plugins that
+        # called ctx.register_memory_provider() during discover_and_load().
+        _configured_provider = mem_config.get("provider", "") if not skip_memory else ""
+        if _configured_provider and not skip_memory:
             try:
                 from hermes_cli.plugins import get_plugin_memory_providers
+                _found = False
                 for plugin_provider in get_plugin_memory_providers():
+                    _pname = getattr(plugin_provider, "name", "unknown")
+                    if _pname != _configured_provider:
+                        logger.debug(
+                            "Memory provider '%s' skipped (config selects '%s')",
+                            _pname, _configured_provider,
+                        )
+                        continue
                     try:
                         if plugin_provider.is_available():
                             self._memory_manager.add_provider(plugin_provider)
@@ -1141,10 +1152,24 @@ class AIAgent:
                                 platform=self.platform,
                                 model=self.model,
                             )
+                            _found = True
+                            if not self.quiet_mode:
+                                print(f"  Memory provider: {_pname}")
+                        else:
+                            logger.warning(
+                                "Memory provider '%s' configured but not available "
+                                "(missing credentials or dependencies)", _pname,
+                            )
                     except Exception as e:
                         logger.warning(
-                            "Plugin memory provider '%s' init failed: %s",
-                            getattr(plugin_provider, "name", "unknown"), e,
+                            "Plugin memory provider '%s' init failed: %s", _pname, e,
+                        )
+                if not _found and not self.quiet_mode:
+                    _available = [getattr(p, "name", "?") for p in get_plugin_memory_providers()]
+                    if _available:
+                        logger.warning(
+                            "memory.provider='%s' not found among registered providers: %s",
+                            _configured_provider, _available,
                         )
             except Exception as e:
                 logger.debug("Plugin memory provider loading skipped: %s", e)
