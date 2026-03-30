@@ -34,7 +34,7 @@ env:
   group_size: 16
   batch_size: 64          # 4 groups × 16 rollouts per step
   total_steps: 500
-  steps_per_eval: 50
+  steps_per_eval: 5
   min_items_sent_before_logging: 1
   ensure_scores_are_not_same: true
 

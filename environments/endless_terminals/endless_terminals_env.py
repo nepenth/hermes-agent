@@ -16,6 +16,7 @@ Run:
 """
 
 import asyncio
+import contextlib
 import logging
 import os
 import random
@@ -269,6 +270,7 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         self._dataset = None
         self._train_dataset = None
         self._eval_dataset = None
+        self._eval_indices = None  # Fixed indices sampled once at setup
         self._dataset_indices = []
         self._current_index = 0
 
@@ -379,11 +381,69 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         random.shuffle(self._dataset_indices)
         self._current_index = 0
 
+        # Fix eval indices with a fixed seed so the same 20 tasks are used across runs
+        num_eval = min(self.config.num_eval_tasks, len(self._eval_dataset))
+        rng = random.Random(42)
+        self._eval_indices = rng.sample(range(len(self._eval_dataset)), num_eval)
+
         logger.info(
             f"Split dataset: {len(self._train_dataset)} train, "
             f"{len(self._eval_dataset)} eval "
             f"(ratio={self.config.eval_split_ratio:.1%})"
         )
+
+    def _build_item_from_dataset(self, task) -> Optional[Item]:
+        """Build an Item dict from a raw dataset task entry. Returns None if task is unusable."""
+        task_dir = task.get("extra_info", {}).get("task_dir")
+        if not task_dir:
+            task_dir = task.get("reward_spec", {}).get("ground_truth")
+        if not task_dir:
+            return None
+
+        task_dir_path = Path(task_dir)
+        if self.config.tasks_base_dir and not task_dir_path.exists():
+            task_dir_path = Path(os.path.expanduser(self.config.tasks_base_dir)) / Path(task_dir).name
+        if not task_dir_path.exists():
+            return None
+
+        final_test = task_dir_path / "tests" / "test_final_state.py"
+        if not final_test.exists():
+            final_test = task_dir_path / "test_final_state.py"
+        if not final_test.exists():
+            return None
+
+        container_def = task_dir_path / "environment" / "container.def"
+        if not container_def.exists():
+            container_def = task_dir_path / "container.def"
+        docker_image = self._parse_docker_image_from_def(container_def)
+
+        description = ""
+        instruction_md = task_dir_path / "instruction.md"
+        if instruction_md.exists():
+            try:
+                description = instruction_md.read_text().strip()
+            except Exception:
+                pass
+        if not description:
+            task_json = task_dir_path / "environment" / "task.json"
+            if task_json.exists():
+                try:
+                    import json
+                    task_data = json.loads(task_json.read_text())
+                    description = task_data.get("description", "") or task_data.get("instruction", "")
+                except Exception:
+                    pass
+        if not description:
+            description = f"Complete the task in {task_dir_path.name}"
+
+        return {
+            "task_id": task_dir_path.name,
+            "task_name": task_dir_path.name,
+            "description": description,
+            "task_dir": str(task_dir_path),
+            "final_test": str(final_test),
+            "docker_image": docker_image,
+        }
 
     async def get_next_item(self) -> Item:
         """Sample next task from training dataset."""
@@ -1031,6 +1091,7 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         Runs the agent on num_eval_tasks from the held-out eval set
         (never seen during training). Returns metrics for wandb logging.
         """
+        print(f"[evaluate] called at step {self.curr_step}, eval_dataset={self._eval_dataset is not None}")
         if self._eval_dataset is None:
             logger.warning("Cannot evaluate: eval dataset not loaded")
             return {}
@@ -1040,8 +1101,8 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
             return {}
 
         # Use min of num_eval_tasks and actual eval set size
-        num_tasks = min(self.config.num_eval_tasks, len(self._eval_dataset))
-        logger.info(f"Starting evaluation on {num_tasks} held-out tasks...")
+        print(f"[evaluate] running {len(self._eval_indices)} eval tasks at step {self.curr_step}")
+        logger.info(f"Starting evaluation on {len(self._eval_indices)} held-out tasks...")
 
         eval_metrics = {
             "rewards": [],
@@ -1052,117 +1113,33 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
 
         # Sample from eval set (holdout)
         import random
-        eval_indices = random.sample(range(len(self._eval_dataset)), num_tasks)
+        eval_items = [self._build_item_from_dataset(self._eval_dataset[idx]) for idx in self._eval_indices]
+        eval_items = [item for item in eval_items if item is not None]
+        print(f"[evaluate] built {len(eval_items)} items from {len(self._eval_indices)} indices")
 
-        for idx in eval_indices:
-            task = self._eval_dataset[idx]
+        # Run eval trajectories concurrently
+        tasks = [self.collect_trajectory(item, temperature=0.0) for item in eval_items]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Build item using same logic as get_next_item
-            task_dir = task.get("extra_info", {}).get("task_dir")
-            if not task_dir:
-                task_dir = task.get("reward_spec", {}).get("ground_truth")
-
-            if not task_dir:
+        print(f"[evaluate] got {len(results)} results, {sum(1 for r in results if isinstance(r, Exception))} exceptions, {sum(1 for r in results if not isinstance(r, Exception) and r[0] is None)} None items")
+        for result in results:
+            if isinstance(result, Exception):
+                import traceback
+                logger.error(f"Eval task failed: {result}\n{traceback.format_exc()}")
                 continue
-
-            task_dir_path = Path(task_dir)
-            if self.config.tasks_base_dir and not task_dir_path.exists():
-                original_path = Path(task_dir)
-                task_name = original_path.name
-                task_dir_path = Path(os.path.expanduser(self.config.tasks_base_dir)) / task_name
-
-            if not task_dir_path.exists():
+            scored_item, _ = result
+            if scored_item is None:
                 continue
-
-            # Find test file
-            final_test = task_dir_path / "tests" / "test_final_state.py"
-            if not final_test.exists():
-                final_test = task_dir_path / "test_final_state.py"
-            if not final_test.exists():
-                continue
-
-            # Parse Docker image
-            container_def = task_dir_path / "environment" / "container.def"
-            if not container_def.exists():
-                container_def = task_dir_path / "container.def"
-            docker_image = self._parse_docker_image_from_def(container_def)
-
-            # Load description
-            description = task.get("description", "")
-            instruction_md = task_dir_path / "instruction.md"
-            if not description and instruction_md.exists():
-                try:
-                    description = instruction_md.read_text().strip()
-                except Exception:
-                    pass
-
-            item = {
-                "description": description,
-                "final_test": str(final_test),
-                "docker_image": docker_image,
-            }
-
-            # Run agent on this task
-            try:
-                import uuid
-                task_id = str(uuid.uuid4())
-
-                # Register task environment
-                from model_tools import register_task_env_overrides
-                register_task_env_overrides(task_id, {"modal_image": docker_image})
-
-                # Build messages
-                messages = [
-                    {"role": "system", "content": self.config.system_prompt},
-                    {"role": "user", "content": description or "Complete the task."},
-                ]
-
-                # Get tools
-                from model_tools import get_tool_definitions
-                tools = get_tool_definitions(self.config.enabled_toolsets)
-                valid_names = {t["function"]["name"] for t in tools}
-
-                # Run agent
-                from environments.agent_loop import HermesAgentLoop
-                agent = HermesAgentLoop(
-                    server=self.server,
-                    tool_schemas=tools,
-                    valid_tool_names=valid_names,
-                    max_turns=self.config.max_agent_turns,
-                    task_id=task_id,
-                    temperature=self.config.agent_temperature,
-                    max_tokens=self.config.max_token_length,
-                    extra_body=self.config.extra_body,
-                )
-                result = await agent.run(messages)
-
-                # Compute reward
-                from environments.tool_context import ToolContext
-                ctx = ToolContext(task_id)
-                try:
-                    reward = await self.compute_reward(item, result, ctx)
-                except Exception as e:
-                    logger.warning(f"Eval reward computation failed: {e}")
-                    reward = 0.0
-                finally:
-                    ctx.cleanup()
-
-                # Track metrics
-                eval_metrics["rewards"].append(reward)
-                eval_metrics["passes"].append(1.0 if reward > 0.5 else 0.0)
-                eval_metrics["turns"].append(result.turns_used)
-                eval_metrics["natural_finishes"].append(1.0 if result.finished_naturally else 0.0)
-
-            except Exception as e:
-                logger.error(f"Eval task failed: {e}")
-                continue
-            finally:
-                # Cleanup
-                from model_tools import clear_task_env_overrides, cleanup_vm
-                clear_task_env_overrides(task_id)
-                cleanup_vm(task_id)
+            reward = scored_item["scores"]
+            messages = scored_item.get("messages", [])
+            turns = len([m for m in messages if m.get("role") == "assistant"]) if messages else 1
+            eval_metrics["rewards"].append(reward)
+            eval_metrics["passes"].append(1.0 if reward > 0.5 else 0.0)
+            eval_metrics["turns"].append(turns)
+            eval_metrics["natural_finishes"].append(1.0)
 
         # Aggregate metrics
+        print(f"[evaluate] rewards={eval_metrics['rewards']}")
         if not eval_metrics["rewards"]:
             logger.warning("No eval tasks completed successfully")
             return {}
@@ -1176,6 +1153,12 @@ class EndlessTerminalsEnv(HermesAgentBaseEnv):
         }
 
         logger.info(f"Evaluation complete: pass_rate={aggregated['eval/pass_rate']:.2%}, avg_turns={aggregated['eval/avg_turns']:.1f}")
+        print(f"[evaluate] step={self.curr_step} pass_rate={aggregated['eval/pass_rate']:.2%} avg_reward={aggregated['eval/avg_reward']:.3f} avg_turns={aggregated['eval/avg_turns']:.1f}")
+
+        if self.config.use_wandb:
+            import wandb
+            wandb.log(aggregated, step=self.curr_step)
+
         return aggregated
 
     async def wandb_log(self, wandb_metrics: Optional[Dict] = None):
