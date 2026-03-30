@@ -449,6 +449,14 @@ try:
 except Exception:
     pass  # Skin engine is optional — default skin used if unavailable
 
+# Initialize tool preview length from config
+try:
+    from agent.display import set_tool_preview_max_len
+    _tpl = CLI_CONFIG.get("display", {}).get("tool_preview_length", 0)
+    set_tool_preview_max_len(int(_tpl) if _tpl else 0)
+except Exception:
+    pass
+
 # Neuter AsyncHttpxClientWrapper.__del__ before any AsyncOpenAI clients are
 # created.  The SDK's __del__ schedules aclose() on asyncio.get_running_loop()
 # which, during CLI idle time, finds prompt_toolkit's event loop and tries to
@@ -1079,10 +1087,10 @@ class HermesCLI:
         # env vars would stomp each other.
         _model_config = CLI_CONFIG.get("model", {})
         _config_model = (_model_config.get("default") or _model_config.get("model") or "") if isinstance(_model_config, dict) else (_model_config or "")
-        _FALLBACK_MODEL = "anthropic/claude-opus-4.6"
-        self.model = model or _config_model or _FALLBACK_MODEL
-        # Auto-detect model from local server if still on fallback
-        if self.model == _FALLBACK_MODEL:
+        _DEFAULT_CONFIG_MODEL = "anthropic/claude-opus-4.6"
+        self.model = model or _config_model or _DEFAULT_CONFIG_MODEL
+        # Auto-detect model from local server if still on default
+        if self.model == _DEFAULT_CONFIG_MODEL:
             _base_url = (_model_config.get("base_url") or "") if isinstance(_model_config, dict) else ""
             if "localhost" in _base_url or "127.0.0.1" in _base_url:
                 from hermes_cli.runtime_provider import _auto_detect_local_model
@@ -1096,7 +1104,7 @@ class HermesCLI:
         # explicit choice — the user just never changed it.  But a config model
         # like "gpt-5.3-codex" IS explicit and must be preserved.
         self._model_is_default = not model and (
-            not _config_model or _config_model == _FALLBACK_MODEL
+            not _config_model or _config_model == _DEFAULT_CONFIG_MODEL
         )
 
         self._explicit_api_key = api_key
@@ -1347,6 +1355,49 @@ class HermesCLI:
 
         return snapshot
 
+    @staticmethod
+    def _status_bar_display_width(text: str) -> int:
+        """Return terminal cell width for status-bar text.
+
+        len() is not enough for prompt_toolkit layout decisions because some
+        glyphs can render wider than one Python codepoint. Keeping the status
+        bar within the real display width prevents it from wrapping onto a
+        second line and leaving behind duplicate rows.
+        """
+        try:
+            from prompt_toolkit.utils import get_cwidth
+            return get_cwidth(text or "")
+        except Exception:
+            return len(text or "")
+
+    @classmethod
+    def _trim_status_bar_text(cls, text: str, max_width: int) -> str:
+        """Trim status-bar text to a single terminal row."""
+        if max_width <= 0:
+            return ""
+        try:
+            from prompt_toolkit.utils import get_cwidth
+        except Exception:
+            get_cwidth = None
+
+        if cls._status_bar_display_width(text) <= max_width:
+            return text
+
+        ellipsis = "..."
+        ellipsis_width = cls._status_bar_display_width(ellipsis)
+        if max_width <= ellipsis_width:
+            return ellipsis[:max_width]
+
+        out = []
+        width = 0
+        for ch in text:
+            ch_width = get_cwidth(ch) if get_cwidth else len(ch)
+            if width + ch_width + ellipsis_width > max_width:
+                break
+            out.append(ch)
+            width += ch_width
+        return "".join(out).rstrip() + ellipsis
+
     def _build_status_bar_text(self, width: Optional[int] = None) -> str:
         try:
             snapshot = self._get_status_bar_snapshot()
@@ -1361,11 +1412,12 @@ class HermesCLI:
             duration_label = snapshot["duration"]
 
             if width < 52:
-                return f"⚕ {snapshot['model_short']} · {duration_label}"
+                text = f"⚕ {snapshot['model_short']} · {duration_label}"
+                return self._trim_status_bar_text(text, width)
             if width < 76:
                 parts = [f"⚕ {snapshot['model_short']}", percent_label]
                 parts.append(duration_label)
-                return " · ".join(parts)
+                return self._trim_status_bar_text(" · ".join(parts), width)
 
             if snapshot["context_length"]:
                 ctx_total = _format_context_length(snapshot["context_length"])
@@ -1376,7 +1428,7 @@ class HermesCLI:
 
             parts = [f"⚕ {snapshot['model_short']}", context_label, percent_label]
             parts.append(duration_label)
-            return " │ ".join(parts)
+            return self._trim_status_bar_text(" │ ".join(parts), width)
         except Exception:
             return f"⚕ {self.model if getattr(self, 'model', None) else 'Hermes'}"
 
@@ -1398,53 +1450,54 @@ class HermesCLI:
             duration_label = snapshot["duration"]
 
             if width < 52:
-                return [
-                    ("class:status-bar", " ⚕ "),
-                    ("class:status-bar-strong", snapshot["model_short"]),
-                    ("class:status-bar-dim", " · "),
-                    ("class:status-bar-dim", duration_label),
-                    ("class:status-bar", " "),
-                ]
-
-            percent = snapshot["context_percent"]
-            percent_label = f"{percent}%" if percent is not None else "--"
-            if width < 76:
                 frags = [
                     ("class:status-bar", " ⚕ "),
                     ("class:status-bar-strong", snapshot["model_short"]),
                     ("class:status-bar-dim", " · "),
-                    (self._status_bar_context_style(percent), percent_label),
-                ]
-                frags.extend([
-                    ("class:status-bar-dim", " · "),
                     ("class:status-bar-dim", duration_label),
                     ("class:status-bar", " "),
-                ])
-                return frags
-
-            if snapshot["context_length"]:
-                ctx_total = _format_context_length(snapshot["context_length"])
-                ctx_used = format_token_count_compact(snapshot["context_tokens"])
-                context_label = f"{ctx_used}/{ctx_total}"
+                ]
             else:
-                context_label = "ctx --"
+                percent = snapshot["context_percent"]
+                percent_label = f"{percent}%" if percent is not None else "--"
+                if width < 76:
+                    frags = [
+                        ("class:status-bar", " ⚕ "),
+                        ("class:status-bar-strong", snapshot["model_short"]),
+                        ("class:status-bar-dim", " · "),
+                        (self._status_bar_context_style(percent), percent_label),
+                        ("class:status-bar-dim", " · "),
+                        ("class:status-bar-dim", duration_label),
+                        ("class:status-bar", " "),
+                    ]
+                else:
+                    if snapshot["context_length"]:
+                        ctx_total = _format_context_length(snapshot["context_length"])
+                        ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                        context_label = f"{ctx_used}/{ctx_total}"
+                    else:
+                        context_label = "ctx --"
 
-            bar_style = self._status_bar_context_style(percent)
-            frags = [
-                ("class:status-bar", " ⚕ "),
-                ("class:status-bar-strong", snapshot["model_short"]),
-                ("class:status-bar-dim", " │ "),
-                ("class:status-bar-dim", context_label),
-                ("class:status-bar-dim", " │ "),
-                (bar_style, self._build_context_bar(percent)),
-                ("class:status-bar-dim", " "),
-                (bar_style, percent_label),
-            ]
-            frags.extend([
-                ("class:status-bar-dim", " │ "),
-                ("class:status-bar-dim", duration_label),
-                ("class:status-bar", " "),
-            ])
+                    bar_style = self._status_bar_context_style(percent)
+                    frags = [
+                        ("class:status-bar", " ⚕ "),
+                        ("class:status-bar-strong", snapshot["model_short"]),
+                        ("class:status-bar-dim", " │ "),
+                        ("class:status-bar-dim", context_label),
+                        ("class:status-bar-dim", " │ "),
+                        (bar_style, self._build_context_bar(percent)),
+                        ("class:status-bar-dim", " "),
+                        (bar_style, percent_label),
+                        ("class:status-bar-dim", " │ "),
+                        ("class:status-bar-dim", duration_label),
+                        ("class:status-bar", " "),
+                    ]
+
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
             return frags
         except Exception:
             return [("class:status-bar", f" {self._build_status_bar_text()} ")]
@@ -2736,22 +2789,12 @@ class HermesCLI:
             print(f"  MCP tool:          /tools {subcommand} github:create_issue")
             return
 
-        # Confirm session reset before applying
-        verb = "Disable" if subcommand == "disable" else "Enable"
+        # Apply the change directly — the user typing the command is implicit
+        # consent.  Do NOT use input() here; it hangs inside prompt_toolkit's
+        # TUI event loop (known pitfall).
+        verb = "Disabling" if subcommand == "disable" else "Enabling"
         label = ", ".join(names)
-        _cprint(f"{_GOLD}{verb} {label}?{_RST}")
-        _cprint(f"{_DIM}This will save to config and reset your session so the "
-                f"change takes effect cleanly.{_RST}")
-        try:
-            answer = input("  Continue? [y/N] ").strip().lower()
-        except (EOFError, KeyboardInterrupt):
-            print()
-            _cprint(f"{_DIM}Cancelled.{_RST}")
-            return
-
-        if answer not in ("y", "yes"):
-            _cprint(f"{_DIM}Cancelled.{_RST}")
-            return
+        _cprint(f"{_GOLD}{verb} {label}...{_RST}")
 
         tools_disable_enable_command(
             Namespace(tools_action=subcommand, names=names, platform="cli"))
@@ -4786,8 +4829,10 @@ class HermesCLI:
             from agent.display import get_tool_emoji
             emoji = get_tool_emoji(function_name)
             label = preview or function_name
-            if len(label) > 50:
-                label = label[:47] + "..."
+            from agent.display import get_tool_preview_max_len
+            _pl = get_tool_preview_max_len()
+            if _pl > 0 and len(label) > _pl:
+                label = label[:_pl - 3] + "..."
             self._spinner_text = f"{emoji} {label}"
             self._invalidate()
 
@@ -6159,6 +6204,11 @@ class HermesCLI:
         self._interrupt_queue = queue.Queue()   # For messages typed while agent is running
         self._should_exit = False
         self._last_ctrl_c_time = 0  # Track double Ctrl+C for force exit
+
+        # Give plugin manager a CLI reference so plugins can inject messages
+        from hermes_cli.plugins import get_plugin_manager
+        get_plugin_manager()._cli_ref = self
+
         # Config file watcher — detect mcp_servers changes and auto-reload
         from hermes_cli.config import get_config_path as _get_config_path
         _cfg_path = _get_config_path()

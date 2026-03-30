@@ -1002,10 +1002,9 @@ def setup_model_provider(config: dict):
                     min_key_ttl_seconds=5 * 60,
                     timeout_seconds=15.0,
                 )
-                nous_models = fetch_nous_models(
-                    inference_base_url=creds.get("base_url", ""),
-                    api_key=creds.get("api_key", ""),
-                )
+                # Use curated model list instead of full /models dump
+                from hermes_cli.models import _PROVIDER_MODELS
+                nous_models = _PROVIDER_MODELS.get("nous", [])
             except Exception as e:
                 logger.debug("Could not fetch Nous models after login: %s", e)
 
@@ -2710,10 +2709,38 @@ def setup_gateway(config: dict):
         if token or get_env_value("MATRIX_PASSWORD"):
             # E2EE
             print()
-            if prompt_yes_no("Enable end-to-end encryption (E2EE)?", False):
+            want_e2ee = prompt_yes_no("Enable end-to-end encryption (E2EE)?", False)
+            if want_e2ee:
                 save_env_value("MATRIX_ENCRYPTION", "true")
                 print_success("E2EE enabled")
-                print_info("   Requires: pip install 'matrix-nio[e2e]'")
+
+            # Auto-install matrix-nio
+            matrix_pkg = "matrix-nio[e2e]" if want_e2ee else "matrix-nio"
+            try:
+                __import__("nio")
+            except ImportError:
+                print_info(f"Installing {matrix_pkg}...")
+                import subprocess
+
+                uv_bin = shutil.which("uv")
+                if uv_bin:
+                    result = subprocess.run(
+                        [uv_bin, "pip", "install", "--python", sys.executable, matrix_pkg],
+                        capture_output=True,
+                        text=True,
+                    )
+                else:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", matrix_pkg],
+                        capture_output=True,
+                        text=True,
+                    )
+                if result.returncode == 0:
+                    print_success(f"{matrix_pkg} installed")
+                else:
+                    print_warning(f"Install failed — run manually: pip install '{matrix_pkg}'")
+                    if result.stderr:
+                        print_info(f"  Error: {result.stderr.strip().splitlines()[-1]}")
 
             # Allowed users
             print()

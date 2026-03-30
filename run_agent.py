@@ -1285,7 +1285,7 @@ class AIAgent:
         try:
             fn = self._print_fn or print
             fn(*args, **kwargs)
-        except OSError:
+        except (OSError, ValueError):
             pass
 
     def _vprint(self, *args, force: bool = False, **kwargs):
@@ -5183,6 +5183,8 @@ class AIAgent:
                 self._session_db.end_session(self.session_id, "compression")
                 old_session_id = self.session_id
                 self.session_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+                # Update session_log_file to point to the new session's JSON file
+                self.session_log_file = self.logs_dir / f"session_{self.session_id}.json"
                 self._session_db.create_session(
                     session_id=self.session_id,
                     source=self.platform or os.environ.get("HERMES_SESSION_SOURCE", "cli"),
@@ -5660,8 +5662,6 @@ class AIAgent:
                     face = random.choice(KawaiiSpinner.KAWAII_WAITING)
                     emoji = _get_tool_emoji(function_name)
                     preview = _build_tool_preview(function_name, function_args) or function_name
-                    if len(preview) > 30:
-                        preview = preview[:27] + "..."
                     spinner = KawaiiSpinner(f"{face} {emoji} {preview}", spinner_type='dots', print_fn=self._print_fn)
                     spinner.start()
                 _spinner_result = None
@@ -7909,7 +7909,7 @@ class AIAgent:
                 error_msg = f"Error during OpenAI-compatible API call #{api_call_count}: {str(e)}"
                 try:
                     print(f"❌ {error_msg}")
-                except OSError:
+                except (OSError, ValueError):
                     logger.error(error_msg)
                 
                 if self.verbose_logging:

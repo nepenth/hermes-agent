@@ -1085,14 +1085,20 @@ def _model_flow_nous(config, current_model=""):
         # login_nous already handles model selection + config update
         return
 
-    # Already logged in — fetch models and select
-    print("Fetching models from Nous Portal...")
+    # Already logged in — use curated model list (same as OpenRouter defaults).
+    # The live /models endpoint returns hundreds of models; the curated list
+    # shows only agentic models users recognize from OpenRouter.
+    from hermes_cli.models import _PROVIDER_MODELS
+    model_ids = _PROVIDER_MODELS.get("nous", [])
+    if not model_ids:
+        print("No curated models available for Nous Portal.")
+        return
+
+    print(f"Showing {len(model_ids)} curated models — use \"Enter custom model name\" for others.")
+
+    # Verify credentials are still valid (catches expired sessions early)
     try:
         creds = resolve_nous_runtime_credentials(min_key_ttl_seconds=5 * 60)
-        model_ids = fetch_nous_models(
-            inference_base_url=creds.get("base_url", ""),
-            api_key=creds.get("api_key", ""),
-        )
     except Exception as exc:
         relogin = isinstance(exc, AuthError) and exc.relogin_required
         msg = format_auth_error(exc) if isinstance(exc, AuthError) else str(exc)
@@ -1109,11 +1115,7 @@ def _model_flow_nous(config, current_model=""):
             except Exception as login_exc:
                 print(f"Re-login failed: {login_exc}")
             return
-        print(f"Could not fetch models: {msg}")
-        return
-
-    if not model_ids:
-        print("No models returned by the inference API.")
+        print(f"Could not verify credentials: {msg}")
         return
 
     selected = _prompt_model_selection(model_ids, current_model=current_model)
@@ -1270,7 +1272,7 @@ def _model_flow_custom(config):
             cfg["model"] = model
         model["provider"] = "custom"
         model["base_url"] = effective_url
-        model["api_mode"] = "chat_completions"
+        model.pop("api_mode", None)  # let runtime auto-detect from URL
         save_config(cfg)
         deactivate_provider()
 
@@ -2052,7 +2054,7 @@ def _model_flow_kimi(config, current_model=""):
             cfg["model"] = model
         model["provider"] = provider_id
         model["base_url"] = effective_base
-        model["api_mode"] = "chat_completions"
+        model.pop("api_mode", None)  # let runtime auto-detect from URL
         save_config(cfg)
         deactivate_provider()
 
@@ -2126,7 +2128,7 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
         api_key_for_probe = existing_key or (get_env_value(key_env) if key_env else "")
         live_models = fetch_api_models(api_key_for_probe, effective_base)
 
-    if live_models:
+    if live_models and len(live_models) >= len(curated):
         model_list = live_models
         print(f"  Found {len(model_list)} model(s) from {pconfig.name} API")
     else:
@@ -2159,7 +2161,7 @@ def _model_flow_api_key_provider(config, provider_id, current_model=""):
             cfg["model"] = model
         model["provider"] = provider_id
         model["base_url"] = effective_base
-        model["api_mode"] = "chat_completions"
+        model.pop("api_mode", None)  # let runtime auto-detect from URL
         save_config(cfg)
         deactivate_provider()
 
