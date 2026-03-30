@@ -79,6 +79,7 @@ from hermes_constants import OPENROUTER_BASE_URL
 from agent.prompt_builder import (
     DEFAULT_AGENT_IDENTITY, PLATFORM_HINTS,
     MEMORY_GUIDANCE, SESSION_SEARCH_GUIDANCE, SKILLS_GUIDANCE,
+    GEMINI_OPERATIONAL_GUIDANCE,
 )
 from agent.model_metadata import (
     fetch_model_metadata,
@@ -2602,6 +2603,10 @@ class AIAgent:
                 _inject = any(p in model_lower for p in TOOL_USE_ENFORCEMENT_MODELS)
             if _inject:
                 prompt_parts.append(TOOL_USE_ENFORCEMENT_GUIDANCE)
+                # Gemini-specific operational guidance (conciseness, absolute
+                # paths, parallel tool calls, etc.)
+                if "gemini" in (self.model or "").lower():
+                    prompt_parts.append(GEMINI_OPERATIONAL_GUIDANCE)
 
         # Honcho CLI awareness: tell Hermes about its own management commands
         # so it can refer the user to them rather than reinventing answers.
