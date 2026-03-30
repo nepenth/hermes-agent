@@ -1,10 +1,16 @@
-# Endless Terminals Env Config - Qwen3-4B-Instruct-2507
-# Training on Endless Terminals dataset
+# Endless Terminals - Qwen3-4B-Instruct-2507
+# Single config for both trainer (launch_training.py) and env (endless_terminals_env.py serve)
+#
+# Usage:
+#   Terminal 1: run-api
+#   Terminal 2: cd tinker-atropos && python launch_training.py --config ../environments/endless_terminals/tinker_qwen.yaml
+#   Terminal 3: python environments/endless_terminals/endless_terminals_env.py serve --config environments/endless_terminals/tinker_qwen.yaml
 
 env:
   # Toolsets
   enabled_toolsets: ["terminal", "file"]
 
+  # Model / tokenizer
   tokenizer_name: "Qwen/Qwen3-4B-Instruct-2507"
 
   # Agent configuration
@@ -16,6 +22,7 @@ env:
       enable_thinking: false
   tool_call_parser: "hermes"
 
+  # Terminal backend
   terminal_backend: "docker"
 
   # Dataset settings
@@ -37,6 +44,11 @@ env:
   steps_per_eval: 5
   min_items_sent_before_logging: 1
   ensure_scores_are_not_same: true
+  max_num_workers: 2048
+  worker_timeout: 3600
+  inference_weight: 1.0
+  eval_limit_ratio: 0.1
+  rollout_server_url: "http://localhost:8000"
 
   # Evaluation configuration
   num_eval_tasks: 20
@@ -56,8 +68,13 @@ env:
     rather than writing long one-liners.
 
 tinker:
+  lora_rank: 32
+  learning_rate: 0.0000005
   max_token_trainer_length: 32768
+  checkpoint_dir: "./temp/"
+  save_checkpoint_interval: 50
   wandb_project: "endless-terminals"
+  wandb_group: null
   wandb_run_name: "qwen3-4b"
   tool_call_parser: "hermes"
 
@@ -65,4 +82,10 @@ openai:
   - model_name: "Qwen/Qwen3-4B-Instruct-2507"
     base_url: "http://localhost:8001/v1"
     api_key: "x"
+    weight: 1.0
+    num_requests_for_eval: 64
+    timeout: 600
     server_type: "sglang"
+
+slurm: false
+testing: false
