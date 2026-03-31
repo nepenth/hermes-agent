@@ -167,6 +167,7 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_result = ""
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        self._sync_thread = None
 
     @property
     def name(self) -> str:
@@ -260,15 +261,23 @@ class HindsightMemoryProvider(MemoryProvider):
         self._prefetch_thread.start()
 
     def sync_turn(self, user_content: str, assistant_content: str) -> None:
+        """Retain conversation turn in background (non-blocking)."""
         combined = f"User: {user_content}\nAssistant: {assistant_content}"
-        try:
-            _run_in_thread(
-                lambda: self._make_client().retain(
-                    bank_id=self._bank_id, content=combined, context="conversation"
+
+        def _sync():
+            try:
+                _run_in_thread(
+                    lambda: self._make_client().retain(
+                        bank_id=self._bank_id, content=combined, context="conversation"
+                    )
                 )
-            )
-        except Exception as e:
-            logger.warning("Hindsight sync failed: %s", e)
+            except Exception as e:
+                logger.warning("Hindsight sync failed: %s", e)
+
+        if self._sync_thread and self._sync_thread.is_alive():
+            self._sync_thread.join(timeout=5.0)
+        self._sync_thread = threading.Thread(target=_sync, daemon=True, name="hindsight-sync")
+        self._sync_thread.start()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [RETAIN_SCHEMA, RECALL_SCHEMA, REFLECT_SCHEMA]
@@ -323,8 +332,9 @@ class HindsightMemoryProvider(MemoryProvider):
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
     def shutdown(self) -> None:
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=5.0)
+        for t in (self._prefetch_thread, self._sync_thread):
+            if t and t.is_alive():
+                t.join(timeout=5.0)
 
 
 def register(ctx) -> None:

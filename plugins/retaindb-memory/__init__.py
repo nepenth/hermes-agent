@@ -113,6 +113,7 @@ class RetainDBMemoryProvider(MemoryProvider):
         self._prefetch_result = ""
         self._prefetch_lock = threading.Lock()
         self._prefetch_thread = None
+        self._sync_thread = None
 
     @property
     def name(self) -> str:
@@ -201,18 +202,25 @@ class RetainDBMemoryProvider(MemoryProvider):
         self._prefetch_thread.start()
 
     def sync_turn(self, user_content: str, assistant_content: str) -> None:
-        try:
-            self._api("POST", "/v1/ingest", json={
-                "project": self._project,
-                "user_id": self._user_id,
-                "session_id": self._session_id,
-                "messages": [
-                    {"role": "user", "content": user_content},
-                    {"role": "assistant", "content": assistant_content},
-                ],
-            })
-        except Exception as e:
-            logger.warning("RetainDB sync failed: %s", e)
+        """Ingest conversation turn in background (non-blocking)."""
+        def _sync():
+            try:
+                self._api("POST", "/v1/ingest", json={
+                    "project": self._project,
+                    "user_id": self._user_id,
+                    "session_id": self._session_id,
+                    "messages": [
+                        {"role": "user", "content": user_content},
+                        {"role": "assistant", "content": assistant_content},
+                    ],
+                })
+            except Exception as e:
+                logger.warning("RetainDB sync failed: %s", e)
+
+        if self._sync_thread and self._sync_thread.is_alive():
+            self._sync_thread.join(timeout=5.0)
+        self._sync_thread = threading.Thread(target=_sync, daemon=True, name="retaindb-sync")
+        self._sync_thread.start()
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
         return [PROFILE_SCHEMA, SEARCH_SCHEMA, CONTEXT_SCHEMA, REMEMBER_SCHEMA, FORGET_SCHEMA]
@@ -284,8 +292,9 @@ class RetainDBMemoryProvider(MemoryProvider):
                 logger.debug("RetainDB memory bridge failed: %s", e)
 
     def shutdown(self) -> None:
-        if self._prefetch_thread and self._prefetch_thread.is_alive():
-            self._prefetch_thread.join(timeout=5.0)
+        for t in (self._prefetch_thread, self._sync_thread):
+            if t and t.is_alive():
+                t.join(timeout=5.0)
 
 
 def register(ctx) -> None:

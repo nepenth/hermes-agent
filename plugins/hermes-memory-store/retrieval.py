@@ -290,10 +290,6 @@ class FactRetriever:
             probe_key = hrr.bind(entity_vec, role_entity)
             entity_residuals.append(probe_key)
 
-        # The intersection key: bundle all probe keys, then use it to find
-        # facts that are structurally connected to ALL entities
-        intersection_key = hrr.bundle(*entity_residuals) if len(entity_residuals) > 1 else entity_residuals[0]
-
         # Get all facts with vectors
         where = "WHERE hrr_vector IS NOT NULL"
         params: list = []
@@ -316,30 +312,22 @@ class FactRetriever:
             query = " ".join(entities)
             return self.search(query, category=category, limit=limit)
 
-        # Score each fact: unbind the intersection key and check if the
-        # residual is coherent (high self-similarity = structured match)
+        # Score each fact by how much EACH entity is structurally present.
+        # A fact scores high only if ALL entities have structural presence
+        # (AND semantics via min, vs OR which would use mean/max).
+        role_content = hrr.encode_atom("__hrr_role_content__", self.hrr_dim)
+
         scored = []
         for row in rows:
             fact = dict(row)
             fact_vec = hrr.bytes_to_phases(fact.pop("hrr_vector"))
 
-            # Unbind intersection key from fact
-            residual = hrr.unbind(fact_vec, intersection_key)
-
-            # Score by how much EACH entity is present in this fact
-            # A fact scores high only if ALL entities have structural presence
             entity_scores = []
-            for entity in entities:
-                entity_vec = hrr.encode_atom(entity.lower(), self.hrr_dim)
-                probe_key = hrr.bind(entity_vec, role_entity)
-                single_residual = hrr.unbind(fact_vec, probe_key)
-                # Check residual against content role (does this entity participate?)
-                role_content = hrr.encode_atom("__hrr_role_content__", self.hrr_dim)
-                sim = hrr.similarity(single_residual, role_content)
+            for probe_key in entity_residuals:
+                residual = hrr.unbind(fact_vec, probe_key)
+                sim = hrr.similarity(residual, role_content)
                 entity_scores.append(sim)
 
-            # Use minimum score — fact must match ALL entities, not just some
-            # This is the AND semantics (vs OR which would use mean/max)
             min_sim = min(entity_scores)
             fact["score"] = (min_sim + 1.0) / 2.0 * fact["trust_score"]
             scored.append(fact)
@@ -386,6 +374,14 @@ class FactRetriever:
 
         if len(rows) < 2:
             return []
+
+        # Guard against O(n²) explosion on large fact stores.
+        # At 500 facts, that's ~125K comparisons — acceptable.
+        # Above that, only check the most recently updated facts.
+        _MAX_CONTRADICT_FACTS = 500
+        if len(rows) > _MAX_CONTRADICT_FACTS:
+            rows = sorted(rows, key=lambda r: r["updated_at"] or r["created_at"], reverse=True)
+            rows = rows[:_MAX_CONTRADICT_FACTS]
 
         # Build entity sets per fact
         fact_entities: dict[int, set[str]] = {}
