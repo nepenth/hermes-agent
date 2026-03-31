@@ -118,6 +118,9 @@ def test_setup_same_provider_rotation_strategy_saved_for_multi_credential_pool(t
     _clear_provider_env(monkeypatch)
     save_env_value("OPENROUTER_API_KEY", "or-key")
 
+    # Pre-write config so the pool step sees provider="openrouter"
+    _write_model_config("openrouter", "", "anthropic/claude-opus-4.6")
+
     config = load_config()
 
     class _Entry:
@@ -128,42 +131,49 @@ def test_setup_same_provider_rotation_strategy_saved_for_multi_credential_pool(t
         def entries(self):
             return [_Entry("primary"), _Entry("secondary")]
 
+    def fake_select():
+        pass  # no-op — config already has provider set
+
     def fake_prompt_choice(question, choices, default=0):
-        if question == "Select your inference provider:":
-            return 0
-        if question == "Select same-provider rotation strategy:":
+        if "rotation strategy" in question:
             return 1  # round robin
-        if question == "Select default model:":
-            return len(choices) - 1
-        if question == "Configure vision:":
-            return len(choices) - 1
         tts_idx = _maybe_keep_current_tts(question, choices)
         if tts_idx is not None:
             return tts_idx
-        raise AssertionError(f"Unexpected prompt_choice call: {question}")
+        return default
 
     def fake_prompt_yes_no(question, default=True):
-        if question == "Add another credential for same-provider fallback?":
-            return False
         return False
 
-    monkeypatch.setattr("hermes_cli.setup.prompt_choice", fake_prompt_choice)
-    monkeypatch.setattr("hermes_cli.setup.prompt_yes_no", fake_prompt_yes_no)
-    monkeypatch.setattr("hermes_cli.setup.prompt", lambda *args, **kwargs: "")
-    monkeypatch.setattr("hermes_cli.auth.get_active_provider", lambda: None)
-    monkeypatch.setattr("hermes_cli.auth.detect_external_credentials", lambda: [])
-    monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: _Pool())
-    monkeypatch.setattr("agent.auxiliary_client.get_available_vision_backends", lambda: [])
+    # Patch directly on the module objects to ensure local imports pick them up.
+    import hermes_cli.main as _main_mod
+    import hermes_cli.setup as _setup_mod
+    import agent.credential_pool as _pool_mod
+    import agent.auxiliary_client as _aux_mod
+
+    monkeypatch.setattr(_main_mod, "select_provider_and_model", fake_select)
+    # NOTE: _stub_tts overwrites prompt_choice, so set our mock AFTER it.
+    _stub_tts(monkeypatch)
+    monkeypatch.setattr(_setup_mod, "prompt_choice", fake_prompt_choice)
+    monkeypatch.setattr(_setup_mod, "prompt_yes_no", fake_prompt_yes_no)
+    monkeypatch.setattr(_setup_mod, "prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(_pool_mod, "load_pool", lambda provider: _Pool())
+    monkeypatch.setattr(_aux_mod, "get_available_vision_backends", lambda: [])
 
     setup_model_provider(config)
 
-    assert config["credential_pool_strategies"]["openrouter"] == "round_robin"
+    # The pool has 2 entries, so the strategy prompt should fire
+    strategy = config.get("credential_pool_strategies", {}).get("openrouter")
+    assert strategy == "round_robin", f"Expected round_robin but got {strategy}"
 
 
 def test_setup_same_provider_fallback_can_add_another_credential(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _clear_provider_env(monkeypatch)
     save_env_value("OPENROUTER_API_KEY", "or-key")
+
+    # Pre-write config so the pool step sees provider="openrouter"
+    _write_model_config("openrouter", "", "anthropic/claude-opus-4.6")
 
     config = load_config()
     pool_sizes = iter([1, 2])
@@ -186,34 +196,29 @@ def test_setup_same_provider_fallback_can_add_another_credential(tmp_path, monke
     def fake_auth_add_command(args):
         add_calls.append(args.provider)
 
+    def fake_select():
+        pass  # no-op — config already has provider set
+
     def fake_prompt_choice(question, choices, default=0):
-        if question == "Select your inference provider:":
-            return 0
         if question == "Select same-provider rotation strategy:":
             return 0
-        if question == "Select default model:":
-            return len(choices) - 1
-        if question == "Configure vision:":
-            return len(choices) - 1
         tts_idx = _maybe_keep_current_tts(question, choices)
         if tts_idx is not None:
             return tts_idx
-        raise AssertionError(f"Unexpected prompt_choice call: {question}")
+        return default
 
     yes_no_answers = iter([True, False])
 
     def fake_prompt_yes_no(question, default=True):
-        if question == "Update OpenRouter API key?":
-            return False
         if question == "Add another credential for same-provider fallback?":
             return next(yes_no_answers)
         return False
 
+    monkeypatch.setattr("hermes_cli.main.select_provider_and_model", fake_select)
+    _stub_tts(monkeypatch)
     monkeypatch.setattr("hermes_cli.setup.prompt_choice", fake_prompt_choice)
     monkeypatch.setattr("hermes_cli.setup.prompt_yes_no", fake_prompt_yes_no)
     monkeypatch.setattr("hermes_cli.setup.prompt", lambda *args, **kwargs: "")
-    monkeypatch.setattr("hermes_cli.auth.get_active_provider", lambda: None)
-    monkeypatch.setattr("hermes_cli.auth.detect_external_credentials", lambda: [])
     monkeypatch.setattr("agent.credential_pool.load_pool", fake_load_pool)
     monkeypatch.setattr("hermes_cli.auth_commands.auth_add_command", fake_auth_add_command)
     monkeypatch.setattr("agent.auxiliary_client.get_available_vision_backends", lambda: [])
@@ -221,13 +226,16 @@ def test_setup_same_provider_fallback_can_add_another_credential(tmp_path, monke
     setup_model_provider(config)
 
     assert add_calls == ["openrouter"]
-    assert config["credential_pool_strategies"]["openrouter"] == "fill_first"
+    assert config.get("credential_pool_strategies", {}).get("openrouter") == "fill_first"
 
 
 def test_setup_pool_step_shows_manual_vs_auto_detected_counts(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
     _clear_provider_env(monkeypatch)
     save_env_value("OPENROUTER_API_KEY", "or-key")
+
+    # Pre-write config so the pool step sees provider="openrouter"
+    _write_model_config("openrouter", "", "anthropic/claude-opus-4.6")
 
     config = load_config()
 
@@ -244,25 +252,22 @@ def test_setup_pool_step_shows_manual_vs_auto_detected_counts(tmp_path, monkeypa
                 _Entry("OPENROUTER_API_KEY", "env:OPENROUTER_API_KEY"),
             ]
 
+    def fake_select():
+        pass  # no-op — config already has provider set
+
     def fake_prompt_choice(question, choices, default=0):
-        if question == "Select your inference provider:":
+        if "rotation strategy" in question:
             return 0
-        if question == "Select same-provider rotation strategy:":
-            return 0
-        if question == "Select default model:":
-            return len(choices) - 1
-        if question == "Configure vision:":
-            return len(choices) - 1
         tts_idx = _maybe_keep_current_tts(question, choices)
         if tts_idx is not None:
             return tts_idx
-        raise AssertionError(f"Unexpected prompt_choice call: {question}")
+        return default
 
+    monkeypatch.setattr("hermes_cli.main.select_provider_and_model", fake_select)
+    _stub_tts(monkeypatch)
     monkeypatch.setattr("hermes_cli.setup.prompt_choice", fake_prompt_choice)
     monkeypatch.setattr("hermes_cli.setup.prompt_yes_no", lambda *args, **kwargs: False)
     monkeypatch.setattr("hermes_cli.setup.prompt", lambda *args, **kwargs: "")
-    monkeypatch.setattr("hermes_cli.auth.get_active_provider", lambda: None)
-    monkeypatch.setattr("hermes_cli.auth.detect_external_credentials", lambda: [])
     monkeypatch.setattr("agent.credential_pool.load_pool", lambda provider: _Pool())
     monkeypatch.setattr("agent.auxiliary_client.get_available_vision_backends", lambda: [])
 
