@@ -208,6 +208,10 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         except Exception as e:
             logger.warning("Instance cleanup failed: %s", e)
 
+        if hasattr(self, "_auto_ssh_key_dir"):
+            import shutil
+            shutil.rmtree(self._auto_ssh_key_dir, ignore_errors=True)
+
     def _signal_handler(self, signum, frame):
         """Handle SIGINT/SIGTERM: clean up instances, then re-raise."""
         logger.info("Signal %d received, cleaning up dojo instances...", signum)
@@ -215,10 +219,39 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
 
+    async def _ensure_ssh_key(self):
+        """Auto-generate and register an SSH key if none configured."""
+        if self.config.ssh_key and Path(self.config.ssh_key).exists():
+            return
+
+        import subprocess
+        import tempfile
+
+        key_dir = Path(tempfile.mkdtemp(prefix="hermes-ssh-"))
+        key_path = key_dir / "id_ed25519"
+
+        subprocess.run(
+            ["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", "", "-q"],
+            check=True,
+        )
+
+        pub_key = key_path.with_suffix(".pub").read_text().strip()
+        registered = await self.client.register_ssh_key(pub_key)
+        if not registered:
+            raise RuntimeError("Failed to register SSH key with dojo")
+
+        self.config.ssh_key = str(key_path)
+        os.environ["TERMINAL_SSH_KEY"] = str(key_path)
+        self._auto_ssh_key_dir = key_dir
+
+        logger.info("Auto-generated SSH key and registered with dojo")
+
     async def setup(self):
         """Load challenges from dojo and initialize SDK clients."""
         self.client = DojoRLClient(self.config.base_url)
         self.sync_client = DojoRLSyncClient(self.config.base_url)
+
+        await self._ensure_ssh_key()
 
         atexit.register(self._cleanup_instances)
         signal.signal(signal.SIGINT, self._signal_handler)
