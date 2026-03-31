@@ -174,6 +174,37 @@ def resolve_requested_provider(requested: Optional[str] = None) -> str:
     return "auto"
 
 
+def _try_resolve_from_custom_pool(
+    base_url: str,
+    provider_label: str,
+    api_mode_override: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Check if a credential pool exists for a custom endpoint and return a runtime dict if so."""
+    pool_key = get_custom_provider_pool_key(base_url)
+    if not pool_key:
+        return None
+    try:
+        pool = load_pool(pool_key)
+        if not pool.has_credentials():
+            return None
+        entry = pool.select()
+        if entry is None:
+            return None
+        pool_api_key = getattr(entry, "runtime_api_key", None) or getattr(entry, "access_token", "")
+        if not pool_api_key:
+            return None
+        return {
+            "provider": provider_label,
+            "api_mode": api_mode_override or _detect_api_mode_for_url(base_url) or "chat_completions",
+            "base_url": base_url,
+            "api_key": pool_api_key,
+            "source": f"pool:{pool_key}",
+            "credential_pool": pool,
+        }
+    except Exception:
+        return None
+
+
 def _get_named_custom_provider(requested_provider: str) -> Optional[Dict[str, Any]]:
     requested_norm = _normalize_custom_provider_name(requested_provider or "")
     if not requested_norm or requested_norm == "custom":
@@ -239,27 +270,9 @@ def _resolve_named_custom_runtime(
         return None
 
     # Check if a credential pool exists for this custom endpoint
-    pool_key = get_custom_provider_pool_key(base_url)
-    if pool_key:
-        try:
-            pool = load_pool(pool_key)
-            if pool.has_credentials():
-                entry = pool.select()
-                if entry is not None:
-                    pool_api_key = getattr(entry, "runtime_api_key", None) or getattr(entry, "access_token", "")
-                    if pool_api_key:
-                        return {
-                            "provider": "custom",
-                            "api_mode": custom_provider.get("api_mode")
-                            or _detect_api_mode_for_url(base_url)
-                            or "chat_completions",
-                            "base_url": base_url,
-                            "api_key": pool_api_key,
-                            "source": f"pool:{pool_key}",
-                            "credential_pool": pool,
-                        }
-        except Exception:
-            pass
+    pool_result = _try_resolve_from_custom_pool(base_url, "custom", custom_provider.get("api_mode"))
+    if pool_result:
+        return pool_result
 
     api_key_candidates = [
         (explicit_api_key or "").strip(),
@@ -353,27 +366,11 @@ def _resolve_openrouter_runtime(
 
     # For custom endpoints, check if a credential pool exists
     if effective_provider == "custom" and base_url:
-        pool_key = get_custom_provider_pool_key(base_url)
-        if pool_key:
-            try:
-                pool = load_pool(pool_key)
-                if pool.has_credentials():
-                    entry = pool.select()
-                    if entry is not None:
-                        pool_api_key = getattr(entry, "runtime_api_key", None) or getattr(entry, "access_token", "")
-                        if pool_api_key:
-                            return {
-                                "provider": effective_provider,
-                                "api_mode": _parse_api_mode(model_cfg.get("api_mode"))
-                                or _detect_api_mode_for_url(base_url)
-                                or "chat_completions",
-                                "base_url": base_url,
-                                "api_key": pool_api_key,
-                                "source": f"pool:{pool_key}",
-                                "credential_pool": pool,
-                            }
-            except Exception:
-                pass
+        pool_result = _try_resolve_from_custom_pool(
+            base_url, effective_provider, _parse_api_mode(model_cfg.get("api_mode")),
+        )
+        if pool_result:
+            return pool_result
 
     if effective_provider == "custom" and not api_key and not _is_openrouter_url:
         api_key = "no-key-required"

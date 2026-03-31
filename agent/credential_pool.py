@@ -31,6 +31,16 @@ from hermes_cli.auth import (
 logger = logging.getLogger(__name__)
 
 
+def _load_config_safe() -> Optional[dict]:
+    """Load config.yaml, returning None on any error."""
+    try:
+        from hermes_cli.config import load_config
+
+        return load_config()
+    except Exception:
+        return None
+
+
 # --- Status and type constants ---
 
 STATUS_OK = "ok"
@@ -64,6 +74,14 @@ EXHAUSTED_TTL_DEFAULT_SECONDS = 24 * 60 * 60 # 24 hours
 CUSTOM_POOL_PREFIX = "custom:"
 
 
+# Fields that are only round-tripped through JSON — never used for logic as attributes.
+_EXTRA_KEYS = frozenset({
+    "token_type", "scope", "client_id", "portal_base_url", "obtained_at",
+    "expires_in", "agent_key_id", "agent_key_expires_in", "agent_key_reused",
+    "agent_key_obtained_at", "tls",
+})
+
+
 @dataclass
 class PooledCredential:
     provider: str
@@ -81,26 +99,27 @@ class PooledCredential:
     expires_at: Optional[str] = None
     expires_at_ms: Optional[int] = None
     last_refresh: Optional[str] = None
-    token_type: Optional[str] = None
-    scope: Optional[str] = None
-    client_id: Optional[str] = None
-    portal_base_url: Optional[str] = None
     inference_base_url: Optional[str] = None
-    obtained_at: Optional[str] = None
-    expires_in: Optional[int] = None
     agent_key: Optional[str] = None
-    agent_key_id: Optional[str] = None
     agent_key_expires_at: Optional[str] = None
-    agent_key_expires_in: Optional[int] = None
-    agent_key_reused: Optional[bool] = None
-    agent_key_obtained_at: Optional[str] = None
-    tls: Optional[Dict[str, Any]] = None
     request_count: int = 0
+    extra: Dict[str, Any] = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.extra is None:
+            self.extra = {}
+
+    def __getattr__(self, name: str):
+        if name in _EXTRA_KEYS:
+            return self.extra.get(name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute {name!r}")
 
     @classmethod
     def from_dict(cls, provider: str, payload: Dict[str, Any]) -> "PooledCredential":
-        allowed = {f.name for f in fields(cls) if f.name != "provider"}
-        data = {k: payload.get(k) for k in allowed if k in payload}
+        field_names = {f.name for f in fields(cls) if f.name != "provider"}
+        data = {k: payload.get(k) for k in field_names if k in payload}
+        extra = {k: payload[k] for k in _EXTRA_KEYS if k in payload and payload[k] is not None}
+        data["extra"] = extra
         data.setdefault("id", uuid.uuid4().hex[:6])
         data.setdefault("label", payload.get("source", provider))
         data.setdefault("auth_type", AUTH_TYPE_API_KEY)
@@ -113,11 +132,14 @@ class PooledCredential:
         _ALWAYS_EMIT = {"last_status", "last_status_at", "last_error_code"}
         result: Dict[str, Any] = {}
         for field_def in fields(self):
-            if field_def.name == "provider":
+            if field_def.name in ("provider", "extra"):
                 continue
             value = getattr(self, field_def.name)
             if value is not None or field_def.name in _ALWAYS_EMIT:
                 result[field_def.name] = value
+        for k, v in self.extra.items():
+            if v is not None:
+                result[k] = v
         return result
 
     @property
@@ -163,6 +185,24 @@ def _normalize_custom_pool_name(name: str) -> str:
     return name.strip().lower().replace(" ", "-")
 
 
+def _iter_custom_providers(config: Optional[dict] = None):
+    """Yield (normalized_name, entry_dict) for each valid custom_providers entry."""
+    if config is None:
+        config = _load_config_safe()
+    if config is None:
+        return
+    custom_providers = config.get("custom_providers")
+    if not isinstance(custom_providers, list):
+        return
+    for entry in custom_providers:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        yield _normalize_custom_pool_name(name), entry
+
+
 def get_custom_provider_pool_key(base_url: str) -> Optional[str]:
     """Look up the custom_providers list in config.yaml and return 'custom:<name>' for a matching base_url.
 
@@ -171,26 +211,10 @@ def get_custom_provider_pool_key(base_url: str) -> Optional[str]:
     if not base_url:
         return None
     normalized_url = base_url.strip().rstrip("/")
-    try:
-        from hermes_cli.config import load_config
-
-        config = load_config()
-    except Exception:
-        return None
-
-    custom_providers = config.get("custom_providers")
-    if not isinstance(custom_providers, list):
-        return None
-
-    for entry in custom_providers:
-        if not isinstance(entry, dict):
-            continue
+    for norm_name, entry in _iter_custom_providers():
         entry_url = str(entry.get("base_url") or "").strip().rstrip("/")
-        entry_name = entry.get("name")
-        if not entry_url or not isinstance(entry_name, str):
-            continue
-        if entry_url == normalized_url:
-            return f"{CUSTOM_POOL_PREFIX}{_normalize_custom_pool_name(entry_name)}"
+        if entry_url and entry_url == normalized_url:
+            return f"{CUSTOM_POOL_PREFIX}{norm_name}"
     return None
 
 
@@ -210,35 +234,16 @@ def _get_custom_provider_config(pool_key: str) -> Optional[Dict[str, Any]]:
     if not pool_key.startswith(CUSTOM_POOL_PREFIX):
         return None
     suffix = pool_key[len(CUSTOM_POOL_PREFIX):]
-    try:
-        from hermes_cli.config import load_config
-
-        config = load_config()
-    except Exception:
-        return None
-
-    custom_providers = config.get("custom_providers")
-    if not isinstance(custom_providers, list):
-        return None
-
-    for entry in custom_providers:
-        if not isinstance(entry, dict):
-            continue
-        name = entry.get("name")
-        if not isinstance(name, str):
-            continue
-        if _normalize_custom_pool_name(name) == suffix:
+    for norm_name, entry in _iter_custom_providers():
+        if norm_name == suffix:
             return entry
     return None
 
 
 def get_pool_strategy(provider: str) -> str:
     """Return the configured selection strategy for a provider."""
-    try:
-        from hermes_cli.config import load_config
-
-        config = load_config()
-    except Exception:
+    config = _load_config_safe()
+    if config is None:
         return STRATEGY_FILL_FIRST
 
     strategies = config.get("credential_pool_strategies")
@@ -346,9 +351,16 @@ class CredentialPool:
                     force_refresh=force,
                     force_mint=force,
                 )
-                # Apply all returned fields that match dataclass fields
-                updates = {k: v for k, v in refreshed.items() if hasattr(entry, k)}
-                updated = replace(entry, **updates)
+                # Apply returned fields: dataclass fields via replace, extras via dict update
+                field_updates = {}
+                extra_updates = dict(entry.extra)
+                _field_names = {f.name for f in fields(entry)}
+                for k, v in refreshed.items():
+                    if k in _field_names:
+                        field_updates[k] = v
+                    elif k in _EXTRA_KEYS:
+                        extra_updates[k] = v
+                updated = replace(entry, extra=extra_updates, **field_updates)
             else:
                 return entry
         except Exception as exc:
@@ -395,7 +407,13 @@ class CredentialPool:
         with self._lock:
             return self._select_unlocked()
 
-    def _select_unlocked(self) -> Optional[PooledCredential]:
+    def _available_entries(self, *, clear_expired: bool = False, refresh: bool = False) -> List[PooledCredential]:
+        """Return entries not currently in exhaustion cooldown.
+
+        When *clear_expired* is True, entries whose cooldown has elapsed are
+        reset to STATUS_OK and persisted.  When *refresh* is True, entries
+        that need a token refresh are refreshed (skipped on failure).
+        """
         now = time.time()
         cleared_any = False
         available: List[PooledCredential] = []
@@ -404,19 +422,23 @@ class CredentialPool:
                 ttl = _exhausted_ttl(entry.last_error_code)
                 if entry.last_status_at and now - entry.last_status_at < ttl:
                     continue
-                cleared = replace(entry, last_status=STATUS_OK, last_status_at=None, last_error_code=None)
-                self._replace_entry(entry, cleared)
-                entry = cleared
-                cleared_any = True
-            if self._entry_needs_refresh(entry):
+                if clear_expired:
+                    cleared = replace(entry, last_status=STATUS_OK, last_status_at=None, last_error_code=None)
+                    self._replace_entry(entry, cleared)
+                    entry = cleared
+                    cleared_any = True
+            if refresh and self._entry_needs_refresh(entry):
                 refreshed = self._refresh_entry(entry, force=False)
                 if refreshed is None:
                     continue
                 entry = refreshed
             available.append(entry)
-
         if cleared_any:
             self._persist()
+        return available
+
+    def _select_unlocked(self) -> Optional[PooledCredential]:
+        available = self._available_entries(clear_expired=True, refresh=True)
         if not available:
             self._current_id = None
             return None
@@ -448,15 +470,8 @@ class CredentialPool:
         current = self.current()
         if current is not None:
             return current
-
-        now = time.time()
-        for entry in self._entries:
-            if entry.last_status == STATUS_EXHAUSTED:
-                ttl = _exhausted_ttl(entry.last_error_code)
-                if entry.last_status_at and now - entry.last_status_at < ttl:
-                    continue
-            return entry
-        return None
+        available = self._available_entries()
+        return available[0] if available else None
 
     def mark_exhausted_and_rotate(self, *, status_code: Optional[int]) -> Optional[PooledCredential]:
         with self._lock:
@@ -529,16 +544,24 @@ def _upsert_entry(entries: List[PooledCredential], provider: str, source: str, p
         return True
 
     existing = entries[existing_idx]
-    updates = {}
+    field_updates = {}
+    extra_updates = {}
+    _field_names = {f.name for f in fields(existing)}
     for key, value in payload.items():
         if key in {"id", "priority"} or value is None:
             continue
         if key == "label" and existing.label:
             continue
-        if hasattr(existing, key) and getattr(existing, key) != value:
-            updates[key] = value
-    if updates:
-        entries[existing_idx] = replace(existing, **updates)
+        if key in _field_names:
+            if getattr(existing, key) != value:
+                field_updates[key] = value
+        elif key in _EXTRA_KEYS:
+            if existing.extra.get(key) != value:
+                extra_updates[key] = value
+    if field_updates or extra_updates:
+        if extra_updates:
+            field_updates["extra"] = {**existing.extra, **extra_updates}
+        entries[existing_idx] = replace(existing, **field_updates)
         return True
     return False
 
@@ -585,38 +608,25 @@ def _seed_from_singletons(provider: str, entries: List[PooledCredential]) -> Tup
     if provider == "anthropic":
         from agent.anthropic_adapter import read_claude_code_credentials, read_hermes_oauth_credentials
 
-        hermes_creds = read_hermes_oauth_credentials()
-        if hermes_creds and hermes_creds.get("accessToken"):
-            active_sources.add("hermes_pkce")
-            changed |= _upsert_entry(
-                entries,
-                provider,
-                "hermes_pkce",
-                {
-                    "source": "hermes_pkce",
-                    "auth_type": AUTH_TYPE_OAUTH,
-                    "access_token": hermes_creds.get("accessToken", ""),
-                    "refresh_token": hermes_creds.get("refreshToken"),
-                    "expires_at_ms": hermes_creds.get("expiresAt"),
-                    "label": label_from_token(hermes_creds.get("accessToken", ""), "hermes_pkce"),
-                },
-            )
-        claude_creds = read_claude_code_credentials()
-        if claude_creds and claude_creds.get("accessToken"):
-            active_sources.add("claude_code")
-            changed |= _upsert_entry(
-                entries,
-                provider,
-                "claude_code",
-                {
-                    "source": "claude_code",
-                    "auth_type": AUTH_TYPE_OAUTH,
-                    "access_token": claude_creds.get("accessToken", ""),
-                    "refresh_token": claude_creds.get("refreshToken"),
-                    "expires_at_ms": claude_creds.get("expiresAt"),
-                    "label": label_from_token(claude_creds.get("accessToken", ""), "claude_code"),
-                },
-            )
+        for source_name, creds in (
+            ("hermes_pkce", read_hermes_oauth_credentials()),
+            ("claude_code", read_claude_code_credentials()),
+        ):
+            if creds and creds.get("accessToken"):
+                active_sources.add(source_name)
+                changed |= _upsert_entry(
+                    entries,
+                    provider,
+                    source_name,
+                    {
+                        "source": source_name,
+                        "auth_type": AUTH_TYPE_OAUTH,
+                        "access_token": creds.get("accessToken", ""),
+                        "refresh_token": creds.get("refreshToken"),
+                        "expires_at_ms": creds.get("expiresAt"),
+                        "label": label_from_token(creds.get("accessToken", ""), source_name),
+                    },
+                )
 
     elif provider == "nous":
         state = _load_provider_state(auth_store, "nous")
@@ -774,10 +784,8 @@ def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[b
 
     # Seed from model.api_key if model.provider=='custom' and model.base_url matches
     try:
-        from hermes_cli.config import load_config
-
-        config = load_config()
-        model_cfg = config.get("model")
+        config = _load_config_safe()
+        model_cfg = config.get("model") if config else None
         if isinstance(model_cfg, dict):
             model_provider = str(model_cfg.get("provider") or "").strip().lower()
             model_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")

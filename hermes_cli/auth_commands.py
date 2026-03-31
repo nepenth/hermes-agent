@@ -5,6 +5,7 @@ from __future__ import annotations
 from getpass import getpass
 import math
 import time
+from types import SimpleNamespace
 import uuid
 
 from agent.credential_pool import (
@@ -297,9 +298,7 @@ def _interactive_auth() -> None:
     print("Credential Pool Status")
     print("=" * 50)
 
-    class _ListArgs:
-        provider = None
-    auth_list_command(_ListArgs)
+    auth_list_command(SimpleNamespace(provider=None))
     print()
 
     # Main menu
@@ -370,23 +369,11 @@ def _interactive_add() -> None:
     else:
         auth_type = "api_key"
 
-    class _Args:
-        pass
-    a = _Args()
-    a.provider = provider
-    a.auth_type = auth_type
-    a.label = None
-    a.api_key = None
-    a.portal_url = None
-    a.inference_url = None
-    a.client_id = None
-    a.scope = None
-    a.no_browser = False
-    a.timeout = None
-    a.insecure = False
-    a.ca_bundle = None
-
-    auth_add_command(a)
+    auth_add_command(SimpleNamespace(
+        provider=provider, auth_type=auth_type, label=None, api_key=None,
+        portal_url=None, inference_url=None, client_id=None, scope=None,
+        no_browser=False, timeout=None, insecure=False, ca_bundle=None,
+    ))
 
 
 def _interactive_remove() -> None:
@@ -414,22 +401,13 @@ def _interactive_remove() -> None:
         print("Invalid number.")
         return
 
-    class _Args:
-        pass
-    a = _Args()
-    a.provider = provider
-    a.index = index
-    auth_remove_command(a)
+    auth_remove_command(SimpleNamespace(provider=provider, index=index))
 
 
 def _interactive_reset() -> None:
     provider = _pick_provider("Provider to reset cooldowns for")
 
-    class _Args:
-        pass
-    a = _Args()
-    a.provider = provider
-    auth_reset_command(a)
+    auth_reset_command(SimpleNamespace(provider=provider))
 
 
 def _interactive_strategy() -> None:
