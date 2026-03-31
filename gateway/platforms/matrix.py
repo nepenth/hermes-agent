@@ -14,6 +14,10 @@ Environment variables:
     MATRIX_HOME_ROOM        Room ID for cron/notification delivery
     MATRIX_REACTIONS        Set "false" to disable processing lifecycle reactions
                             (👀/✅/❌). Default: true
+    MATRIX_READ_RECEIPTS    Control when read receipts are sent:
+                            "immediate" (default) — on message arrival,
+                            "after_processing" — after the agent finishes,
+                            "disabled" — never send read receipts.
 """
 
 from __future__ import annotations
@@ -131,6 +135,14 @@ class MatrixAdapter(BasePlatformAdapter):
         self._reactions_enabled: bool = os.getenv(
             "MATRIX_REACTIONS", "true"
         ).lower() not in ("false", "0", "no")
+
+        # Read receipts: immediate (default), after_processing, or disabled.
+        self._read_receipt_mode: str = os.getenv(
+            "MATRIX_READ_RECEIPTS", "immediate"
+        ).lower().strip()
+        if self._read_receipt_mode not in ("immediate", "after_processing", "disabled"):
+            logger.warning("Matrix: invalid MATRIX_READ_RECEIPTS=%r, defaulting to immediate", self._read_receipt_mode)
+            self._read_receipt_mode = "immediate"
 
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
@@ -972,7 +984,8 @@ class MatrixAdapter(BasePlatformAdapter):
         )
 
         # Acknowledge receipt so the room shows as read (fire-and-forget).
-        self._background_read_receipt(room.room_id, event.event_id)
+        if self._read_receipt_mode == "immediate":
+            self._background_read_receipt(room.room_id, event.event_id)
 
         await self.handle_message(msg_event)
 
@@ -1108,7 +1121,8 @@ class MatrixAdapter(BasePlatformAdapter):
         )
 
         # Acknowledge receipt so the room shows as read (fire-and-forget).
-        self._background_read_receipt(room.room_id, event.event_id)
+        if self._read_receipt_mode == "immediate":
+            self._background_read_receipt(room.room_id, event.event_id)
 
         await self.handle_message(msg_event)
 
@@ -1209,6 +1223,10 @@ class MatrixAdapter(BasePlatformAdapter):
         await self._send_reaction(
             room_id, msg_id, "✅" if success else "❌",
         )
+
+        # Deferred read receipt: acknowledge after processing completes.
+        if self._read_receipt_mode == "after_processing":
+            self._background_read_receipt(room_id, msg_id)
 
     async def _on_reaction(self, room: Any, event: Any) -> None:
         """Handle incoming reaction events."""
