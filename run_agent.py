@@ -1020,8 +1020,10 @@ class AIAgent:
             try:
                 _mem_provider_name = mem_config.get("provider", "") if mem_config else ""
 
-                # Migration notice for users with Honcho configured but not migrated
-                if not _mem_provider_name and not self.quiet_mode:
+                # Auto-migrate: if Honcho was configured but memory.provider
+                # is not set, activate the honcho plugin automatically.
+                # The plugin reads the same config files — zero data loss.
+                if not _mem_provider_name:
                     try:
                         from hermes_constants import get_hermes_home as _ghh2
                         _honcho_paths = [
@@ -1029,10 +1031,18 @@ class AIAgent:
                             Path.home() / ".honcho" / "config.json",
                         ]
                         if any(p.exists() for p in _honcho_paths):
-                            print("  ℹ️  Detected existing Honcho configuration.")
-                            print("     Honcho is now a memory provider plugin.")
-                            print("     Run 'hermes memory setup' to activate it.")
-                            print()
+                            _mem_provider_name = "honcho"
+                            # Persist so this only auto-migrates once
+                            try:
+                                from hermes_cli.config import load_config as _lc, save_config as _sc
+                                _cfg = _lc()
+                                _cfg.setdefault("memory", {})["provider"] = "honcho"
+                                _sc(_cfg)
+                            except Exception:
+                                pass
+                            if not self.quiet_mode:
+                                print("  ✓ Auto-migrated Honcho to memory provider plugin.")
+                                print("    Your config and data are preserved.\n")
                     except Exception:
                         pass
 
