@@ -1,7 +1,7 @@
 name: openviking-memory
-version: 1.0.0
-description: >
-  Read-only memory via OpenViking — semantic search, URI-based content
-  reading, and filesystem browsing over a self-hosted knowledge server.
+version: 2.0.0
+description: "OpenViking context database — session-managed memory with automatic extraction, tiered retrieval, and filesystem-style knowledge browsing."
 requires_env:
   - OPENVIKING_ENDPOINT
+hooks:
+  - on_session_end
