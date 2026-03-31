@@ -1,17 +1,19 @@
-"""MemoryManager — orchestrates multiple memory providers.
+"""MemoryManager — orchestrates the built-in memory provider plus at most
+ONE external plugin memory provider.
 
 Single integration point in run_agent.py. Replaces scattered per-backend
-code with one manager that delegates to all registered providers.
+code with one manager that delegates to registered providers.
 
 The BuiltinMemoryProvider is always registered first and cannot be removed.
-External providers are additive — they never disable the built-in store.
+Only ONE external (non-builtin) provider is allowed at a time — attempting
+to register a second external provider is rejected with a warning.  This
+prevents tool schema bloat and conflicting memory backends.
 
 Usage in run_agent.py:
     self._memory_manager = MemoryManager()
     self._memory_manager.add_provider(BuiltinMemoryProvider(...))
-    if honcho_configured:
-        self._memory_manager.add_provider(HonchoProvider(...))
-    # Plugin providers are added via register_memory_provider()
+    # Only ONE of these:
+    self._memory_manager.add_provider(plugin_provider)
 
     # System prompt
     prompt_parts.append(self._memory_manager.build_system_prompt())
@@ -36,24 +38,43 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryManager:
-    """Orchestrates multiple memory providers.
+    """Orchestrates the built-in provider plus at most one external provider.
 
-    Providers are called in registration order. The builtin provider
-    is always first. Failures in one provider never block others.
+    The builtin provider is always first. Only one non-builtin (external)
+    provider is allowed.  Failures in one provider never block the other.
     """
 
     def __init__(self) -> None:
         self._providers: List[MemoryProvider] = []
         self._tool_to_provider: Dict[str, MemoryProvider] = {}
+        self._has_external: bool = False  # True once a non-builtin provider is added
 
     # -- Registration --------------------------------------------------------
 
     def add_provider(self, provider: MemoryProvider) -> None:
         """Register a memory provider.
 
-        Providers are called in registration order for all operations.
-        Tool name conflicts are resolved first-registered-wins.
+        Built-in provider (name ``"builtin"``) is always accepted.
+        Only **one** external (non-builtin) provider is allowed — a second
+        attempt is rejected with a warning.
         """
+        is_builtin = provider.name == "builtin"
+
+        if not is_builtin:
+            if self._has_external:
+                existing = next(
+                    (p.name for p in self._providers if p.name != "builtin"), "unknown"
+                )
+                logger.warning(
+                    "Rejected memory provider '%s' — external provider '%s' is "
+                    "already registered. Only one external memory provider is "
+                    "allowed at a time. Configure which one via memory.provider "
+                    "in config.yaml.",
+                    provider.name, existing,
+                )
+                return
+            self._has_external = True
+
         self._providers.append(provider)
 
         # Index tool names → provider for routing

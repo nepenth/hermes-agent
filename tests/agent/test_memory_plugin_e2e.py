@@ -239,8 +239,8 @@ class TestSQLiteMemoryPlugin:
         assert mgr.has_tool("sqlite_recall")
         assert not mgr.has_tool("memory")  # builtin doesn't register this
 
-    def test_multiple_plugins_coexist(self):
-        """Two plugin providers can run simultaneously."""
+    def test_second_external_plugin_rejected(self):
+        """Only one external memory provider is allowed at a time."""
         mgr = MemoryManager()
         p1 = SQLiteMemoryProvider()
         p2 = SQLiteMemoryProvider()
@@ -250,64 +250,34 @@ class TestSQLiteMemoryPlugin:
         type(p2).name = property(lambda self: getattr(self, '_name_override', 'sqlite_memory'))
 
         mgr.add_provider(p1)
-        mgr.add_provider(p2)
-        mgr.initialize_all(session_id="test-3")
+        mgr.add_provider(p2)  # should be rejected
 
-        # Store in p1
-        p1._conn.execute(
-            "INSERT INTO memories (content, context, session_id) VALUES (?, ?, ?)",
-            ("fact from p1", "test", "test-3"),
-        )
-        p1._conn.commit()
-
-        # Store in p2
-        p2._conn.execute(
-            "INSERT INTO memories (content, context, session_id) VALUES (?, ?, ?)",
-            ("fact from p2", "test", "test-3"),
-        )
-        p2._conn.commit()
-
-        # Prefetch merges both
-        result = mgr.prefetch_all("fact")
-        assert "fact from p1" in result
-        assert "fact from p2" in result
-
-        # Sync goes to both
-        mgr.sync_all("user msg", "assistant msg")
-        count1 = p1._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        count2 = p2._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        assert count1 == 2  # 1 explicit + 1 synced
-        assert count2 == 2
+        # Only p1 was accepted
+        assert len(mgr.providers) == 1
+        assert mgr.provider_names == ["sqlite_memory"]
 
         # Restore class
         type(p2).name = original_name
         mgr.shutdown_all()
 
     def test_provider_failure_isolation(self):
-        """Failing provider doesn't break others."""
-        mgr = MemoryManager()
-        good = SQLiteMemoryProvider()
-        bad = SQLiteMemoryProvider()
+        """Failing external provider doesn't break builtin."""
+        from agent.builtin_memory_provider import BuiltinMemoryProvider
 
-        mgr.add_provider(good)
-        mgr.add_provider(bad)
+        mgr = MemoryManager()
+        builtin = BuiltinMemoryProvider()  # name="builtin", always accepted
+        ext = SQLiteMemoryProvider()
+
+        mgr.add_provider(builtin)
+        mgr.add_provider(ext)
         mgr.initialize_all(session_id="test-4")
 
-        # Break bad provider's connection
-        bad._conn.close()
-        bad._conn = None
+        # Break external provider's connection
+        ext._conn.close()
+        ext._conn = None
 
-        # Good provider still works
-        good._conn.execute(
-            "INSERT INTO memories (content, context, session_id) VALUES (?, ?, ?)",
-            ("still works", "test", "test-4"),
-        )
-        good._conn.commit()
-
-        # Sync — bad fails silently, good succeeds
-        mgr.sync_all("user", "assistant")
-        count = good._conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        assert count == 2
+        # Sync — external fails silently, builtin (no-op sync) succeeds
+        mgr.sync_all("user", "assistant")  # should not raise
 
         mgr.shutdown_all()
 

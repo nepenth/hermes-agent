@@ -137,32 +137,44 @@ class TestMemoryManager:
         assert mgr.get_provider("test1") is p
         assert mgr.get_provider("nonexistent") is None
 
-    def test_multiple_providers(self):
+    def test_builtin_plus_external(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
-        p2 = FakeMemoryProvider("p2")
+        p1 = FakeMemoryProvider("builtin")
+        p2 = FakeMemoryProvider("external")
         mgr.add_provider(p1)
         mgr.add_provider(p2)
-        assert mgr.provider_names == ["p1", "p2"]
+        assert mgr.provider_names == ["builtin", "external"]
+
+    def test_second_external_rejected(self):
+        """Only one non-builtin provider is allowed."""
+        mgr = MemoryManager()
+        builtin = FakeMemoryProvider("builtin")
+        ext1 = FakeMemoryProvider("mem0")
+        ext2 = FakeMemoryProvider("hindsight")
+        mgr.add_provider(builtin)
+        mgr.add_provider(ext1)
+        mgr.add_provider(ext2)  # should be rejected
+        assert mgr.provider_names == ["builtin", "mem0"]
+        assert len(mgr.providers) == 2
 
     def test_system_prompt_merges_blocks(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
-        p1._prompt_block = "Block from p1"
-        p2 = FakeMemoryProvider("p2")
-        p2._prompt_block = "Block from p2"
+        p1 = FakeMemoryProvider("builtin")
+        p1._prompt_block = "Block from builtin"
+        p2 = FakeMemoryProvider("external")
+        p2._prompt_block = "Block from external"
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
         result = mgr.build_system_prompt()
-        assert "Block from p1" in result
-        assert "Block from p2" in result
+        assert "Block from builtin" in result
+        assert "Block from external" in result
 
     def test_system_prompt_skips_empty(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
+        p1 = FakeMemoryProvider("builtin")
         p1._prompt_block = "Has content"
-        p2 = FakeMemoryProvider("p2")
+        p2 = FakeMemoryProvider("external")
         p2._prompt_block = ""
         mgr.add_provider(p1)
         mgr.add_provider(p2)
@@ -172,24 +184,24 @@ class TestMemoryManager:
 
     def test_prefetch_merges_results(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
-        p1._prefetch_result = "Memory from p1"
-        p2 = FakeMemoryProvider("p2")
-        p2._prefetch_result = "Memory from p2"
+        p1 = FakeMemoryProvider("builtin")
+        p1._prefetch_result = "Memory from builtin"
+        p2 = FakeMemoryProvider("external")
+        p2._prefetch_result = "Memory from external"
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
         result = mgr.prefetch_all("what do you know?")
-        assert "Memory from p1" in result
-        assert "Memory from p2" in result
+        assert "Memory from builtin" in result
+        assert "Memory from external" in result
         assert p1.prefetch_queries == ["what do you know?"]
         assert p2.prefetch_queries == ["what do you know?"]
 
     def test_prefetch_skips_empty(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
+        p1 = FakeMemoryProvider("builtin")
         p1._prefetch_result = "Has memories"
-        p2 = FakeMemoryProvider("p2")
+        p2 = FakeMemoryProvider("external")
         p2._prefetch_result = ""
         mgr.add_provider(p1)
         mgr.add_provider(p2)
@@ -199,8 +211,8 @@ class TestMemoryManager:
 
     def test_queue_prefetch_all(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
-        p2 = FakeMemoryProvider("p2")
+        p1 = FakeMemoryProvider("builtin")
+        p2 = FakeMemoryProvider("external")
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
@@ -210,8 +222,8 @@ class TestMemoryManager:
 
     def test_sync_all(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
-        p2 = FakeMemoryProvider("p2")
+        p1 = FakeMemoryProvider("builtin")
+        p2 = FakeMemoryProvider("external")
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
@@ -222,9 +234,9 @@ class TestMemoryManager:
     def test_sync_failure_doesnt_block_others(self):
         """If one provider's sync fails, others still run."""
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
+        p1 = FakeMemoryProvider("builtin")
         p1.sync_turn = MagicMock(side_effect=RuntimeError("boom"))
-        p2 = FakeMemoryProvider("p2")
+        p2 = FakeMemoryProvider("external")
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
@@ -236,26 +248,26 @@ class TestMemoryManager:
 
     def test_tool_schemas_collected(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1", tools=[
-            {"name": "recall_p1", "description": "P1 recall", "parameters": {}}
+        p1 = FakeMemoryProvider("builtin", tools=[
+            {"name": "recall_builtin", "description": "Builtin recall", "parameters": {}}
         ])
-        p2 = FakeMemoryProvider("p2", tools=[
-            {"name": "recall_p2", "description": "P2 recall", "parameters": {}}
+        p2 = FakeMemoryProvider("external", tools=[
+            {"name": "recall_ext", "description": "External recall", "parameters": {}}
         ])
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
         schemas = mgr.get_all_tool_schemas()
         names = {s["name"] for s in schemas}
-        assert names == {"recall_p1", "recall_p2"}
+        assert names == {"recall_builtin", "recall_ext"}
 
     def test_tool_name_conflict_first_wins(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1", tools=[
-            {"name": "shared_tool", "description": "From P1", "parameters": {}}
+        p1 = FakeMemoryProvider("builtin", tools=[
+            {"name": "shared_tool", "description": "From builtin", "parameters": {}}
         ])
-        p2 = FakeMemoryProvider("p2", tools=[
-            {"name": "shared_tool", "description": "From P2", "parameters": {}}
+        p2 = FakeMemoryProvider("external", tools=[
+            {"name": "shared_tool", "description": "From external", "parameters": {}}
         ])
         mgr.add_provider(p1)
         mgr.add_provider(p2)
@@ -272,19 +284,19 @@ class TestMemoryManager:
 
     def test_tool_routing(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1", tools=[
-            {"name": "p1_tool", "description": "P1", "parameters": {}}
+        p1 = FakeMemoryProvider("builtin", tools=[
+            {"name": "builtin_tool", "description": "Builtin", "parameters": {}}
         ])
-        p2 = FakeMemoryProvider("p2", tools=[
-            {"name": "p2_tool", "description": "P2", "parameters": {}}
+        p2 = FakeMemoryProvider("external", tools=[
+            {"name": "ext_tool", "description": "External", "parameters": {}}
         ])
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
-        r1 = json.loads(mgr.handle_tool_call("p1_tool", {"a": 1}))
-        assert r1["handled"] == "p1_tool"
-        r2 = json.loads(mgr.handle_tool_call("p2_tool", {"b": 2}))
-        assert r2["handled"] == "p2_tool"
+        r1 = json.loads(mgr.handle_tool_call("builtin_tool", {"a": 1}))
+        assert r1["handled"] == "builtin_tool"
+        r2 = json.loads(mgr.handle_tool_call("ext_tool", {"b": 2}))
+        assert r2["handled"] == "ext_tool"
 
     # -- Lifecycle hooks -----------------------------------------------------
 
@@ -323,20 +335,20 @@ class TestMemoryManager:
     def test_shutdown_all_reverse_order(self):
         mgr = MemoryManager()
         order = []
-        p1 = FakeMemoryProvider("p1")
-        p1.shutdown = lambda: order.append("p1")
-        p2 = FakeMemoryProvider("p2")
-        p2.shutdown = lambda: order.append("p2")
+        p1 = FakeMemoryProvider("builtin")
+        p1.shutdown = lambda: order.append("builtin")
+        p2 = FakeMemoryProvider("external")
+        p2.shutdown = lambda: order.append("external")
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
         mgr.shutdown_all()
-        assert order == ["p2", "p1"]  # reverse order
+        assert order == ["external", "builtin"]  # reverse order
 
     def test_initialize_all(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
-        p2 = FakeMemoryProvider("p2")
+        p1 = FakeMemoryProvider("builtin")
+        p2 = FakeMemoryProvider("external")
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
@@ -350,21 +362,21 @@ class TestMemoryManager:
 
     def test_prefetch_failure_doesnt_block(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
+        p1 = FakeMemoryProvider("builtin")
         p1.prefetch = MagicMock(side_effect=RuntimeError("network error"))
-        p2 = FakeMemoryProvider("p2")
-        p2._prefetch_result = "p2 memory"
+        p2 = FakeMemoryProvider("external")
+        p2._prefetch_result = "external memory"
         mgr.add_provider(p1)
         mgr.add_provider(p2)
 
         result = mgr.prefetch_all("query")
-        assert "p2 memory" in result
+        assert "external memory" in result
 
     def test_system_prompt_failure_doesnt_block(self):
         mgr = MemoryManager()
-        p1 = FakeMemoryProvider("p1")
+        p1 = FakeMemoryProvider("builtin")
         p1.system_prompt_block = MagicMock(side_effect=RuntimeError("broken"))
-        p2 = FakeMemoryProvider("p2")
+        p2 = FakeMemoryProvider("external")
         p2._prompt_block = "works fine"
         mgr.add_provider(p1)
         mgr.add_provider(p2)
