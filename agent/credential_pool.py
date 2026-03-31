@@ -58,6 +58,11 @@ SUPPORTED_POOL_STRATEGIES = {
 EXHAUSTED_TTL_429_SECONDS = 60 * 60          # 1 hour
 EXHAUSTED_TTL_DEFAULT_SECONDS = 24 * 60 * 60 # 24 hours
 
+# Pool key prefix for custom OpenAI-compatible endpoints.
+# Custom endpoints all share provider='custom' but are keyed by their
+# custom_providers name: 'custom:<normalized_name>'.
+CUSTOM_POOL_PREFIX = "custom:"
+
 
 @dataclass
 class PooledCredential:
@@ -151,6 +156,80 @@ def _exhausted_ttl(error_code: Optional[int]) -> int:
     if error_code == 429:
         return EXHAUSTED_TTL_429_SECONDS
     return EXHAUSTED_TTL_DEFAULT_SECONDS
+
+
+def _normalize_custom_pool_name(name: str) -> str:
+    """Normalize a custom provider name for use as a pool key suffix."""
+    return name.strip().lower().replace(" ", "-")
+
+
+def get_custom_provider_pool_key(base_url: str) -> Optional[str]:
+    """Look up the custom_providers list in config.yaml and return 'custom:<name>' for a matching base_url.
+
+    Returns None if no match is found.
+    """
+    if not base_url:
+        return None
+    normalized_url = base_url.strip().rstrip("/")
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+    except Exception:
+        return None
+
+    custom_providers = config.get("custom_providers")
+    if not isinstance(custom_providers, list):
+        return None
+
+    for entry in custom_providers:
+        if not isinstance(entry, dict):
+            continue
+        entry_url = str(entry.get("base_url") or "").strip().rstrip("/")
+        entry_name = entry.get("name")
+        if not entry_url or not isinstance(entry_name, str):
+            continue
+        if entry_url == normalized_url:
+            return f"{CUSTOM_POOL_PREFIX}{_normalize_custom_pool_name(entry_name)}"
+    return None
+
+
+def list_custom_pool_providers() -> List[str]:
+    """Return all 'custom:*' pool keys that have entries in auth.json."""
+    pool_data = read_credential_pool(None)
+    return sorted(
+        key for key in pool_data
+        if key.startswith(CUSTOM_POOL_PREFIX)
+        and isinstance(pool_data.get(key), list)
+        and pool_data[key]
+    )
+
+
+def _get_custom_provider_config(pool_key: str) -> Optional[Dict[str, Any]]:
+    """Return the custom_providers config entry matching a pool key like 'custom:together.ai'."""
+    if not pool_key.startswith(CUSTOM_POOL_PREFIX):
+        return None
+    suffix = pool_key[len(CUSTOM_POOL_PREFIX):]
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+    except Exception:
+        return None
+
+    custom_providers = config.get("custom_providers")
+    if not isinstance(custom_providers, list):
+        return None
+
+    for entry in custom_providers:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str):
+            continue
+        if _normalize_custom_pool_name(name) == suffix:
+            return entry
+    return None
 
 
 def get_pool_strategy(provider: str) -> str:
@@ -666,15 +745,89 @@ def _prune_stale_seeded_entries(entries: List[PooledCredential], active_sources:
     return True
 
 
+def _seed_custom_pool(pool_key: str, entries: List[PooledCredential]) -> Tuple[bool, Set[str]]:
+    """Seed a custom endpoint pool from custom_providers config and model config."""
+    changed = False
+    active_sources: Set[str] = set()
+
+    # Seed from the custom_providers config entry's api_key field
+    cp_config = _get_custom_provider_config(pool_key)
+    if cp_config:
+        api_key = str(cp_config.get("api_key") or "").strip()
+        base_url = str(cp_config.get("base_url") or "").strip().rstrip("/")
+        name = str(cp_config.get("name") or "").strip()
+        if api_key:
+            source = f"config:{name}"
+            active_sources.add(source)
+            changed |= _upsert_entry(
+                entries,
+                pool_key,
+                source,
+                {
+                    "source": source,
+                    "auth_type": AUTH_TYPE_API_KEY,
+                    "access_token": api_key,
+                    "base_url": base_url,
+                    "label": name or source,
+                },
+            )
+
+    # Seed from model.api_key if model.provider=='custom' and model.base_url matches
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+        model_cfg = config.get("model")
+        if isinstance(model_cfg, dict):
+            model_provider = str(model_cfg.get("provider") or "").strip().lower()
+            model_base_url = str(model_cfg.get("base_url") or "").strip().rstrip("/")
+            model_api_key = ""
+            for k in ("api_key", "api"):
+                v = model_cfg.get(k)
+                if isinstance(v, str) and v.strip():
+                    model_api_key = v.strip()
+                    break
+            if model_provider == "custom" and model_base_url and model_api_key:
+                # Check if this model's base_url matches our custom provider
+                matched_key = get_custom_provider_pool_key(model_base_url)
+                if matched_key == pool_key:
+                    source = "model_config"
+                    active_sources.add(source)
+                    changed |= _upsert_entry(
+                        entries,
+                        pool_key,
+                        source,
+                        {
+                            "source": source,
+                            "auth_type": AUTH_TYPE_API_KEY,
+                            "access_token": model_api_key,
+                            "base_url": model_base_url,
+                            "label": "model_config",
+                        },
+                    )
+    except Exception:
+        pass
+
+    return changed, active_sources
+
+
 def load_pool(provider: str) -> CredentialPool:
     provider = (provider or "").strip().lower()
     raw_entries = read_credential_pool(provider)
     entries = [PooledCredential.from_dict(provider, payload) for payload in raw_entries]
-    singleton_changed, singleton_sources = _seed_from_singletons(provider, entries)
-    env_changed, env_sources = _seed_from_env(provider, entries)
-    changed = singleton_changed or env_changed
-    changed |= _prune_stale_seeded_entries(entries, singleton_sources | env_sources)
-    changed |= _normalize_pool_priorities(provider, entries)
+
+    if provider.startswith(CUSTOM_POOL_PREFIX):
+        # Custom endpoint pool — seed from custom_providers config and model config
+        custom_changed, custom_sources = _seed_custom_pool(provider, entries)
+        changed = custom_changed
+        changed |= _prune_stale_seeded_entries(entries, custom_sources)
+    else:
+        singleton_changed, singleton_sources = _seed_from_singletons(provider, entries)
+        env_changed, env_sources = _seed_from_env(provider, entries)
+        changed = singleton_changed or env_changed
+        changed |= _prune_stale_seeded_entries(entries, singleton_sources | env_sources)
+        changed |= _normalize_pool_priorities(provider, entries)
+
     if changed:
         write_credential_pool(
             provider,

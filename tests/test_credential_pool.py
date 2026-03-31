@@ -741,3 +741,209 @@ def test_thread_safety_concurrent_select(tmp_path, monkeypatch):
 
     assert not errors, f"Thread errors: {errors}"
     assert len(results) == 80  # 4 threads * 20 selects
+
+
+def test_custom_endpoint_pool_keyed_by_name(tmp_path, monkeypatch):
+    """Verify load_pool('custom:together.ai') works and returns entries from auth.json."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    # Disable seeding so we only test stored entries
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_custom_pool",
+        lambda pool_key, entries: (False, set()),
+    )
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "custom:together.ai": [
+                    {
+                        "id": "cred-1",
+                        "label": "together-key",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "sk-together-xxx",
+                        "base_url": "https://api.together.ai/v1",
+                    },
+                    {
+                        "id": "cred-2",
+                        "label": "together-key-2",
+                        "auth_type": "api_key",
+                        "priority": 1,
+                        "source": "manual",
+                        "access_token": "sk-together-yyy",
+                        "base_url": "https://api.together.ai/v1",
+                    },
+                ]
+            },
+        },
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("custom:together.ai")
+    assert pool.has_credentials()
+    entries = pool.entries()
+    assert len(entries) == 2
+    assert entries[0].access_token == "sk-together-xxx"
+    assert entries[1].access_token == "sk-together-yyy"
+
+    # Select should return the first entry (fill_first default)
+    entry = pool.select()
+    assert entry is not None
+    assert entry.id == "cred-1"
+
+
+def test_custom_endpoint_pool_seeds_from_config(tmp_path, monkeypatch):
+    """Verify seeding from custom_providers api_key in config.yaml."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1})
+
+    # Write config.yaml with a custom_providers entry
+    config_path = tmp_path / "hermes" / "config.yaml"
+    import yaml
+    config_path.write_text(yaml.dump({
+        "custom_providers": [
+            {
+                "name": "Together.ai",
+                "base_url": "https://api.together.ai/v1",
+                "api_key": "sk-config-seeded",
+            }
+        ]
+    }))
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("custom:together.ai")
+    assert pool.has_credentials()
+    entries = pool.entries()
+    assert len(entries) == 1
+    assert entries[0].access_token == "sk-config-seeded"
+    assert entries[0].source == "config:Together.ai"
+
+
+def test_custom_endpoint_pool_seeds_from_model_config(tmp_path, monkeypatch):
+    """Verify seeding from model.api_key when model.provider=='custom' and base_url matches."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(tmp_path, {"version": 1})
+
+    import yaml
+    config_path = tmp_path / "hermes" / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "custom_providers": [
+            {
+                "name": "Together.ai",
+                "base_url": "https://api.together.ai/v1",
+            }
+        ],
+        "model": {
+            "provider": "custom",
+            "base_url": "https://api.together.ai/v1",
+            "api_key": "sk-model-key",
+        },
+    }))
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("custom:together.ai")
+    assert pool.has_credentials()
+    entries = pool.entries()
+    # Should have the model_config entry
+    model_entries = [e for e in entries if e.source == "model_config"]
+    assert len(model_entries) == 1
+    assert model_entries[0].access_token == "sk-model-key"
+
+
+def test_custom_pool_does_not_break_existing_providers(tmp_path, monkeypatch):
+    """Existing registry providers work exactly as before with custom pool support."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    _write_auth_store(tmp_path, {"version": 1, "providers": {}})
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("openrouter")
+    entry = pool.select()
+    assert entry is not None
+    assert entry.source == "env:OPENROUTER_API_KEY"
+    assert entry.access_token == "sk-or-test"
+
+
+def test_get_custom_provider_pool_key(tmp_path, monkeypatch):
+    """get_custom_provider_pool_key maps base_url to custom:<name> pool key."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    (tmp_path / "hermes").mkdir(parents=True, exist_ok=True)
+    import yaml
+    config_path = tmp_path / "hermes" / "config.yaml"
+    config_path.write_text(yaml.dump({
+        "custom_providers": [
+            {
+                "name": "Together.ai",
+                "base_url": "https://api.together.ai/v1",
+                "api_key": "sk-xxx",
+            },
+            {
+                "name": "My Local Server",
+                "base_url": "http://localhost:8080/v1",
+            },
+        ]
+    }))
+
+    from agent.credential_pool import get_custom_provider_pool_key
+
+    assert get_custom_provider_pool_key("https://api.together.ai/v1") == "custom:together.ai"
+    assert get_custom_provider_pool_key("https://api.together.ai/v1/") == "custom:together.ai"
+    assert get_custom_provider_pool_key("http://localhost:8080/v1") == "custom:my-local-server"
+    assert get_custom_provider_pool_key("https://unknown.example.com/v1") is None
+    assert get_custom_provider_pool_key("") is None
+
+
+def test_list_custom_pool_providers(tmp_path, monkeypatch):
+    """list_custom_pool_providers returns custom: pool keys from auth.json."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "anthropic": [
+                    {
+                        "id": "a1",
+                        "label": "test",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "sk-ant-xxx",
+                    }
+                ],
+                "custom:together.ai": [
+                    {
+                        "id": "c1",
+                        "label": "together",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "sk-tog-xxx",
+                    }
+                ],
+                "custom:fireworks": [
+                    {
+                        "id": "c2",
+                        "label": "fireworks",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "sk-fw-xxx",
+                    }
+                ],
+                "custom:empty": [],
+            },
+        },
+    )
+
+    from agent.credential_pool import list_custom_pool_providers
+
+    result = list_custom_pool_providers()
+    assert result == ["custom:fireworks", "custom:together.ai"]
+    # "custom:empty" not included because it's empty

@@ -10,6 +10,7 @@ import uuid
 from agent.credential_pool import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_OAUTH,
+    CUSTOM_POOL_PREFIX,
     SOURCE_MANUAL,
     STATUS_EXHAUSTED,
     STRATEGY_FILL_FIRST,
@@ -18,8 +19,10 @@ from agent.credential_pool import (
     STRATEGY_LEAST_USED,
     SUPPORTED_POOL_STRATEGIES,
     PooledCredential,
+    _normalize_custom_pool_name,
     get_pool_strategy,
     label_from_token,
+    list_custom_pool_providers,
     load_pool,
     _exhausted_ttl,
 )
@@ -32,16 +35,64 @@ from hermes_constants import OPENROUTER_BASE_URL
 _OAUTH_CAPABLE_PROVIDERS = {"anthropic", "nous", "openai-codex"}
 
 
+def _get_custom_provider_names() -> list:
+    """Return list of (display_name, pool_key) tuples for custom_providers in config."""
+    try:
+        from hermes_cli.config import load_config
+
+        config = load_config()
+    except Exception:
+        return []
+    custom_providers = config.get("custom_providers")
+    if not isinstance(custom_providers, list):
+        return []
+    result = []
+    for entry in custom_providers:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("name")
+        if not isinstance(name, str) or not name.strip():
+            continue
+        pool_key = f"{CUSTOM_POOL_PREFIX}{_normalize_custom_pool_name(name)}"
+        result.append((name.strip(), pool_key))
+    return result
+
+
+def _resolve_custom_provider_input(raw: str) -> str | None:
+    """If raw input matches a custom_providers entry name (case-insensitive), return its pool key."""
+    normalized = (raw or "").strip().lower().replace(" ", "-")
+    if not normalized:
+        return None
+    # Direct match on 'custom:name' format
+    if normalized.startswith(CUSTOM_POOL_PREFIX):
+        return normalized
+    for display_name, pool_key in _get_custom_provider_names():
+        if _normalize_custom_pool_name(display_name) == normalized:
+            return pool_key
+    return None
+
+
 def _normalize_provider(provider: str) -> str:
     normalized = (provider or "").strip().lower()
     if normalized in {"or", "open-router"}:
         return "openrouter"
+    # Check if it matches a custom provider name
+    custom_key = _resolve_custom_provider_input(normalized)
+    if custom_key:
+        return custom_key
     return normalized
 
 
 def _provider_base_url(provider: str) -> str:
     if provider == "openrouter":
         return OPENROUTER_BASE_URL
+    if provider.startswith(CUSTOM_POOL_PREFIX):
+        from agent.credential_pool import _get_custom_provider_config
+
+        cp_config = _get_custom_provider_config(provider)
+        if cp_config:
+            return str(cp_config.get("base_url") or "").strip()
+        return ""
     pconfig = PROVIDER_REGISTRY.get(provider)
     return pconfig.inference_base_url if pconfig else ""
 
@@ -80,14 +131,17 @@ def _format_exhausted_status(entry) -> str:
 
 def auth_add_command(args) -> None:
     provider = _normalize_provider(getattr(args, "provider", ""))
-    if provider not in PROVIDER_REGISTRY and provider != "openrouter":
+    if provider not in PROVIDER_REGISTRY and provider != "openrouter" and not provider.startswith(CUSTOM_POOL_PREFIX):
         raise SystemExit(f"Unknown provider: {provider}")
 
     requested_type = str(getattr(args, "auth_type", "") or "").strip().lower()
     if requested_type in {AUTH_TYPE_API_KEY, "api-key"}:
         requested_type = AUTH_TYPE_API_KEY
     if not requested_type:
-        requested_type = AUTH_TYPE_OAUTH if provider in {"anthropic", "nous", "openai-codex"} else AUTH_TYPE_API_KEY
+        if provider.startswith(CUSTOM_POOL_PREFIX):
+            requested_type = AUTH_TYPE_API_KEY
+        else:
+            requested_type = AUTH_TYPE_OAUTH if provider in {"anthropic", "nous", "openai-codex"} else AUTH_TYPE_API_KEY
 
     pool = load_pool(provider)
 
@@ -195,10 +249,14 @@ def auth_add_command(args) -> None:
 
 def auth_list_command(args) -> None:
     provider_filter = _normalize_provider(getattr(args, "provider", "") or "")
-    providers = [provider_filter] if provider_filter else sorted({
-        *PROVIDER_REGISTRY.keys(),
-        "openrouter",
-    })
+    if provider_filter:
+        providers = [provider_filter]
+    else:
+        providers = sorted({
+            *PROVIDER_REGISTRY.keys(),
+            "openrouter",
+            *list_custom_pool_providers(),
+        })
     for provider in providers:
         pool = load_pool(provider)
         entries = pool.entries()
@@ -277,7 +335,13 @@ def _interactive_auth() -> None:
 def _pick_provider(prompt: str = "Provider") -> str:
     """Prompt for a provider name with auto-complete hints."""
     known = sorted(set(list(PROVIDER_REGISTRY.keys()) + ["openrouter"]))
-    print(f"\nKnown providers: {', '.join(known)}")
+    custom_names = _get_custom_provider_names()
+    if custom_names:
+        custom_display = [name for name, _key in custom_names]
+        print(f"\nKnown providers: {', '.join(known)}")
+        print(f"Custom endpoints: {', '.join(custom_display)}")
+    else:
+        print(f"\nKnown providers: {', '.join(known)}")
     try:
         raw = input(f"{prompt}: ").strip()
     except (EOFError, KeyboardInterrupt):
@@ -287,7 +351,7 @@ def _pick_provider(prompt: str = "Provider") -> str:
 
 def _interactive_add() -> None:
     provider = _pick_provider("Provider to add credential for")
-    if provider not in PROVIDER_REGISTRY and provider != "openrouter":
+    if provider not in PROVIDER_REGISTRY and provider != "openrouter" and not provider.startswith(CUSTOM_POOL_PREFIX):
         raise SystemExit(f"Unknown provider: {provider}")
 
     # For OAuth-capable providers, ask which type

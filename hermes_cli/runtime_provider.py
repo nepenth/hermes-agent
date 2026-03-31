@@ -6,7 +6,7 @@ import os
 from typing import Any, Dict, Optional
 
 from hermes_cli import auth as auth_mod
-from agent.credential_pool import CredentialPool, PooledCredential, load_pool
+from agent.credential_pool import CredentialPool, PooledCredential, get_custom_provider_pool_key, load_pool
 from hermes_cli.auth import (
     AuthError,
     DEFAULT_CODEX_BASE_URL,
@@ -238,6 +238,29 @@ def _resolve_named_custom_runtime(
     if not base_url:
         return None
 
+    # Check if a credential pool exists for this custom endpoint
+    pool_key = get_custom_provider_pool_key(base_url)
+    if pool_key:
+        try:
+            pool = load_pool(pool_key)
+            if pool.has_credentials():
+                entry = pool.select()
+                if entry is not None:
+                    pool_api_key = getattr(entry, "runtime_api_key", None) or getattr(entry, "access_token", "")
+                    if pool_api_key:
+                        return {
+                            "provider": "custom",
+                            "api_mode": custom_provider.get("api_mode")
+                            or _detect_api_mode_for_url(base_url)
+                            or "chat_completions",
+                            "base_url": base_url,
+                            "api_key": pool_api_key,
+                            "source": f"pool:{pool_key}",
+                            "credential_pool": pool,
+                        }
+        except Exception:
+            pass
+
     api_key_candidates = [
         (explicit_api_key or "").strip(),
         str(custom_provider.get("api_key", "") or "").strip(),
@@ -327,6 +350,31 @@ def _resolve_openrouter_runtime(
     # Also provide a placeholder API key for local servers that don't require
     # authentication — the OpenAI SDK requires a non-empty api_key string.
     effective_provider = "custom" if requested_norm == "custom" else "openrouter"
+
+    # For custom endpoints, check if a credential pool exists
+    if effective_provider == "custom" and base_url:
+        pool_key = get_custom_provider_pool_key(base_url)
+        if pool_key:
+            try:
+                pool = load_pool(pool_key)
+                if pool.has_credentials():
+                    entry = pool.select()
+                    if entry is not None:
+                        pool_api_key = getattr(entry, "runtime_api_key", None) or getattr(entry, "access_token", "")
+                        if pool_api_key:
+                            return {
+                                "provider": effective_provider,
+                                "api_mode": _parse_api_mode(model_cfg.get("api_mode"))
+                                or _detect_api_mode_for_url(base_url)
+                                or "chat_completions",
+                                "base_url": base_url,
+                                "api_key": pool_api_key,
+                                "source": f"pool:{pool_key}",
+                                "credential_pool": pool,
+                            }
+            except Exception:
+                pass
+
     if effective_provider == "custom" and not api_key and not _is_openrouter_url:
         api_key = "no-key-required"
 
