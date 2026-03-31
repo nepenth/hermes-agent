@@ -12,6 +12,8 @@ Environment variables:
     MATRIX_ENCRYPTION       Set "true" to enable E2EE
     MATRIX_ALLOWED_USERS    Comma-separated Matrix user IDs (@user:server)
     MATRIX_HOME_ROOM        Room ID for cron/notification delivery
+    MATRIX_REACTIONS        Set "false" to disable processing lifecycle reactions
+                            (👀/✅/❌). Default: true
 """
 
 from __future__ import annotations
