@@ -17,13 +17,14 @@ env:
   terminal_timeout: 120
   terminal_lifetime: 3600
   disable_command_guards: true
+  disable_secret_redaction: true
   tool_call_parser: hermes
 
   # Dojo connection
   base_url: http://100.120.55.25:8080
   ssh_host: 100.120.55.25
   ssh_port: 2222
-  ssh_key:
+  ssh_key: ""
 
   # No filters = all challenges
   challenge: hello/hello

@@ -185,6 +185,12 @@ class HermesAgentEnvConfig(BaseEnvConfig):
         "and needs unrestricted command execution (e.g., pwn.college challenges "
         "that require inline Python, raw sockets, binary exploitation, etc.).",
     )
+    disable_secret_redaction: bool = Field(
+        default=False,
+        description="Disable secret/password redaction in tool output. Enable this "
+        "for RL environments where the agent needs to read source code containing "
+        "password fields (e.g. Flask apps in web-security challenges).",
+    )
 
 
 class HermesAgentBaseEnv(BaseEnv):
@@ -234,6 +240,9 @@ class HermesAgentBaseEnv(BaseEnv):
         if config.disable_command_guards:
             os.environ["HERMES_YOLO_MODE"] = "1"
             print("🔓 Command guards disabled (disable_command_guards=true)")
+        if config.disable_secret_redaction:
+            os.environ["HERMES_REDACT_SECRETS"] = "false"
+            print("🔓 Secret redaction disabled (disable_secret_redaction=true)")
         print(
             f"🖥️  Terminal: backend={config.terminal_backend}, "
             f"timeout={config.terminal_timeout}s, lifetime={config.terminal_lifetime}s"
