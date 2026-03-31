@@ -346,16 +346,19 @@ def test_openai_key_used_when_no_openrouter_key(monkeypatch):
 
 
 def test_custom_endpoint_prefers_openai_key(monkeypatch):
-    """Custom endpoint should use OPENAI_API_KEY, not OPENROUTER_API_KEY.
+    """Custom endpoint should use config api_key over OPENROUTER_API_KEY.
 
-    Regression test for #560: when base_url is a non-OpenRouter endpoint,
-    OPENROUTER_API_KEY was being sent as the auth header instead of OPENAI_API_KEY.
+    Updated for #4165: config.yaml is now the source of truth for endpoint URLs,
+    OPENAI_BASE_URL env var is no longer consulted.
     """
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "openrouter")
-    monkeypatch.setattr(rp, "_get_model_config", lambda: {})
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://api.z.ai/api/coding/paas/v4")
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {
+        "provider": "custom",
+        "base_url": "https://api.z.ai/api/coding/paas/v4",
+        "api_key": "zai-key",
+    })
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "zai-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-key")
 
     resolved = rp.resolve_runtime_provider(requested="custom")
@@ -431,19 +434,22 @@ def test_custom_endpoint_uses_config_api_field_when_no_api_key(monkeypatch):
     assert resolved["api_key"] == "config-api-field"
 
 
-def test_custom_endpoint_auto_provider_prefers_openai_key(monkeypatch):
-    """Auto provider with non-OpenRouter base_url should prefer OPENAI_API_KEY.
+def test_custom_endpoint_explicit_custom_prefers_config_key(monkeypatch):
+    """Explicit 'custom' provider with config base_url+api_key should use them.
 
-    Same as #560 but via 'hermes model' flow which sets provider to 'auto'.
+    Updated for #4165: config.yaml is the source of truth, not OPENAI_BASE_URL.
     """
     monkeypatch.setattr(rp, "resolve_provider", lambda *a, **k: "openrouter")
-    monkeypatch.setattr(rp, "_get_model_config", lambda: {})
-    monkeypatch.setenv("OPENAI_BASE_URL", "https://my-vllm-server.example.com/v1")
+    monkeypatch.setattr(rp, "_get_model_config", lambda: {
+        "provider": "custom",
+        "base_url": "https://my-vllm-server.example.com/v1",
+        "api_key": "sk-vllm-key",
+    })
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENROUTER_BASE_URL", raising=False)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-vllm-key")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-...leak")
 
-    resolved = rp.resolve_runtime_provider(requested="auto")
+    resolved = rp.resolve_runtime_provider(requested="custom")
 
     assert resolved["base_url"] == "https://my-vllm-server.example.com/v1"
     assert resolved["api_key"] == "sk-vllm-key"
