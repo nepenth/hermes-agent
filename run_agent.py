@@ -1020,17 +1020,16 @@ class AIAgent:
             try:
                 _mem_provider_name = mem_config.get("provider", "") if mem_config else ""
 
-                # Auto-migrate: if Honcho was configured but memory.provider
-                # is not set, activate the honcho plugin automatically.
-                # The plugin reads the same config files — zero data loss.
+                # Auto-migrate: if Honcho was actively configured (enabled +
+                # credentials) but memory.provider is not set, activate the
+                # honcho plugin automatically.  Just having the config file
+                # is not enough — the user may have disabled Honcho or the
+                # file may be from a different tool.
                 if not _mem_provider_name:
                     try:
-                        from hermes_constants import get_hermes_home as _ghh2
-                        _honcho_paths = [
-                            _ghh2() / "honcho.json",
-                            Path.home() / ".honcho" / "config.json",
-                        ]
-                        if any(p.exists() for p in _honcho_paths):
+                        from honcho_integration.client import HonchoClientConfig as _HCC
+                        _hcfg = _HCC.from_global_config()
+                        if _hcfg.enabled and (_hcfg.api_key or _hcfg.base_url):
                             _mem_provider_name = "honcho"
                             # Persist so this only auto-migrates once
                             try:
