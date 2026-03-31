@@ -1128,6 +1128,44 @@ class AIAgent:
                 self._user_profile_enabled = False
                 logger.debug("peer %s memory_mode=honcho: local USER.md writes disabled", _hcfg.peer_name or "user")
 
+        # Memory provider plugin (external — one at a time, alongside built-in)
+        # Reads memory.provider from config to select which plugin to activate.
+        self._memory_manager = None
+        if not skip_memory:
+            try:
+                _mem_provider_name = mem_config.get("provider", "") if mem_config else ""
+                if _mem_provider_name:
+                    from agent.memory_manager import MemoryManager as _MemoryManager
+                    from hermes_cli.plugins import get_plugin_memory_providers as _get_mem_providers
+                    self._memory_manager = _MemoryManager()
+                    for _mp in _get_mem_providers():
+                        if _mp.name == _mem_provider_name and _mp.is_available():
+                            self._memory_manager.add_provider(_mp)
+                            break
+                    if self._memory_manager.providers:
+                        from hermes_constants import get_hermes_home as _ghh
+                        self._memory_manager.initialize_all(
+                            session_id=self.session_id,
+                            platform=platform or "cli",
+                            hermes_home=str(_ghh()),
+                        )
+                        logger.info("Memory provider '%s' activated", _mem_provider_name)
+                    else:
+                        logger.debug("Memory provider '%s' not found or not available", _mem_provider_name)
+                        self._memory_manager = None
+            except Exception as _mpe:
+                logger.warning("Memory provider plugin init failed: %s", _mpe)
+                self._memory_manager = None
+
+        # Inject memory provider tool schemas into the tool surface
+        if self._memory_manager and self.tools is not None:
+            for _schema in self._memory_manager.get_all_tool_schemas():
+                _wrapped = {"type": "function", "function": _schema}
+                self.tools.append(_wrapped)
+                _tname = _schema.get("name", "")
+                if _tname:
+                    self.valid_tool_names.add(_tname)
+
         # Skills config: nudge interval for skill creation reminders
         self._skill_nudge_interval = 10
         try:
@@ -2672,6 +2710,15 @@ class AIAgent:
                 user_block = self._memory_store.format_for_system_prompt("user")
                 if user_block:
                     prompt_parts.append(user_block)
+
+        # External memory provider system prompt block (additive to built-in)
+        if self._memory_manager:
+            try:
+                _ext_mem_block = self._memory_manager.build_system_prompt()
+                if _ext_mem_block:
+                    prompt_parts.append(_ext_mem_block)
+            except Exception:
+                pass
 
         has_skills_tools = any(name in self.valid_tool_names for name in ['skills_list', 'skill_view', 'skill_manage'])
         if has_skills_tools:
@@ -5183,6 +5230,13 @@ class AIAgent:
         # Pre-compression memory flush: let the model save memories before they're lost
         self.flush_memories(messages, min_turns=0)
 
+        # Notify external memory provider before compression discards context
+        if self._memory_manager:
+            try:
+                self._memory_manager.on_pre_compress(messages)
+            except Exception:
+                pass
+
         compressed = self.context_compressor.compress(messages, current_tokens=approx_tokens)
 
         todo_snapshot = self._todo_store.format_for_injection()
@@ -5303,7 +5357,19 @@ class AIAgent:
             # Also send user observations to Honcho when active
             if self._honcho and target == "user" and function_args.get("action") == "add":
                 self._honcho_save_user_observation(function_args.get("content", ""))
+            # Bridge: notify external memory provider of built-in memory writes
+            if self._memory_manager and function_args.get("action") in ("add", "replace"):
+                try:
+                    self._memory_manager.on_memory_write(
+                        function_args.get("action", ""),
+                        target,
+                        function_args.get("content", ""),
+                    )
+                except Exception:
+                    pass
             return result
+        elif self._memory_manager and self._memory_manager.has_tool(function_name):
+            return self._memory_manager.handle_tool_call(function_name, function_args)
         elif function_name == "clarify":
             from tools.clarify_tool import clarify_tool as _clarify_tool
             return _clarify_tool(
@@ -6351,6 +6417,19 @@ class AIAgent:
                     api_msg["content"] = _inject_honcho_turn_context(
                         api_msg.get("content", ""), self._honcho_turn_context
                     )
+
+                # External memory provider prefetch: inject alongside Honcho context
+                if idx == current_turn_user_idx and msg.get("role") == "user" and self._memory_manager:
+                    try:
+                        _ext_prefetch = self._memory_manager.prefetch_all(
+                            api_msg.get("content", "") if isinstance(api_msg.get("content"), str) else ""
+                        )
+                        if _ext_prefetch:
+                            _base = api_msg.get("content", "")
+                            if isinstance(_base, str):
+                                api_msg["content"] = _base + "\n\n" + _ext_prefetch
+                    except Exception:
+                        pass
 
                 # For ALL assistant messages, pass reasoning back to the API
                 # This ensures multi-turn reasoning context is preserved
@@ -8078,6 +8157,14 @@ class AIAgent:
             _should_review_skills = True
             self._iters_since_skill = 0
 
+        # External memory provider: sync the completed turn + queue next prefetch
+        if self._memory_manager and final_response and user_message:
+            try:
+                self._memory_manager.sync_all(user_message, final_response)
+                self._memory_manager.queue_prefetch_all(user_message)
+            except Exception:
+                pass
+
         # Background memory/skill review — runs AFTER the response is delivered
         # so it never competes with the user's task for model attention.
         if final_response and not interrupted and (_should_review_memory or _should_review_skills):
@@ -8089,6 +8176,14 @@ class AIAgent:
                 )
             except Exception:
                 pass  # Background review is best-effort
+
+        # Memory provider: session end + shutdown
+        if self._memory_manager:
+            try:
+                self._memory_manager.on_session_end(messages)
+                self._memory_manager.shutdown_all()
+            except Exception:
+                pass
 
         # Plugin hook: on_session_end
         # Fired at the very end of every run_conversation call.
