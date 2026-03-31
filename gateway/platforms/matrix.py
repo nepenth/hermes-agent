@@ -27,6 +27,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
+from html import escape as _html_escape
+
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import (
     BasePlatformAdapter,
@@ -1189,29 +1191,158 @@ class MatrixAdapter(BasePlatformAdapter):
         return f"{self._homeserver}/_matrix/client/v1/media/download/{parts}"
 
     def _markdown_to_html(self, text: str) -> str:
-        """Convert Markdown to Matrix-compatible HTML.
+        """Convert Markdown to Matrix-compatible HTML (org.matrix.custom.html).
 
-        Uses a simple conversion for common patterns.  For full fidelity
-        a markdown-it style library could be used, but this covers the
-        common cases without an extra dependency.
+        Uses the ``markdown`` library when available (installed with the
+        ``matrix`` extra).  Falls back to a comprehensive regex converter
+        that handles fenced code blocks, inline code, headers, bold,
+        italic, strikethrough, links, blockquotes, lists, and horizontal
+        rules — everything the Matrix HTML spec allows.
         """
         try:
-            import markdown
-            html = markdown.markdown(
+            import markdown as _md
+
+            html = _md.markdown(
                 text,
-                extensions=["fenced_code", "tables", "nl2br"],
+                extensions=["fenced_code", "tables", "nl2br", "sane_lists"],
             )
-            # Strip wrapping <p> tags for single-paragraph messages.
+            # Strip wrapping <p> tags for single-paragraph messages so
+            # clients don't add extra spacing around short replies.
             if html.count("<p>") == 1:
                 html = html.replace("<p>", "").replace("</p>", "")
             return html
         except ImportError:
             pass
 
-        # Minimal fallback: just handle bold, italic, code.
-        html = text
-        html = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", html)
-        html = re.sub(r"\*(.+?)\*", r"<em>\1</em>", html)
-        html = re.sub(r"`([^`]+)`", r"<code>\1</code>", html)
-        html = re.sub(r"\n", r"<br>", html)
-        return html
+        return self._markdown_to_html_fallback(text)
+
+    # ------------------------------------------------------------------
+    # Regex-based Markdown → HTML (no extra dependencies)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _markdown_to_html_fallback(text: str) -> str:
+        """Comprehensive regex Markdown-to-HTML for Matrix.
+
+        Handles fenced code blocks, inline code, headers, bold, italic,
+        strikethrough, links, blockquotes, ordered/unordered lists, and
+        horizontal rules.  Code regions are extracted first to prevent
+        inner transformations from mangling them.
+        """
+        # ── Phase 1: extract protected regions (code) ─────────────
+        placeholders: list[str] = []
+
+        def _protect(m: re.Match) -> str:
+            idx = len(placeholders)
+            placeholders.append(m.group(0))
+            return f"\x00PROTECTED{idx}\x00"
+
+        # Fenced code blocks: ```lang\n...\n```
+        result = re.sub(
+            r"```(\w*)\n(.*?)```",
+            lambda m: _protect(
+                type(
+                    "M",
+                    (),
+                    {
+                        "group": lambda self, _=None: (
+                            f'<pre><code class="language-{m.group(1)}">'
+                            f"{_html_escape(m.group(2))}</code></pre>"
+                            if m.group(1)
+                            else f"<pre><code>{_html_escape(m.group(2))}</code></pre>"
+                        )
+                    },
+                )()
+            ),
+            text,
+            flags=re.DOTALL,
+        )
+
+        # Inline code: `code`  (but not inside fenced blocks — already extracted)
+        result = re.sub(
+            r"`([^`\n]+)`",
+            lambda m: _protect(
+                type("M", (), {"group": lambda self, _=None: f"<code>{_html_escape(m.group(1))}</code>"})()
+            ),
+            result,
+        )
+
+        # ── Phase 2: block-level transforms (line-oriented) ───────
+        lines = result.split("\n")
+        out_lines: list[str] = []
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # Horizontal rule: --- or *** or ___ (3+ chars, possibly spaced)
+            if re.match(r"^[\s]*([-*_])\s*\1\s*\1[\s\-*_]*$", line):
+                out_lines.append("<hr>")
+                i += 1
+                continue
+
+            # Headers: # through ######
+            hdr = re.match(r"^(#{1,6})\s+(.+)$", line)
+            if hdr:
+                level = len(hdr.group(1))
+                out_lines.append(f"<h{level}>{hdr.group(2).strip()}</h{level}>")
+                i += 1
+                continue
+
+            # Blockquote: > text (collect consecutive lines)
+            if line.startswith("> ") or line == ">":
+                bq_lines = []
+                while i < len(lines) and (lines[i].startswith("> ") or lines[i] == ">"):
+                    bq_lines.append(lines[i][2:] if lines[i].startswith("> ") else "")
+                    i += 1
+                out_lines.append(f"<blockquote>{('<br>').join(bq_lines)}</blockquote>")
+                continue
+
+            # Unordered list: - item or * item (collect consecutive)
+            ul_match = re.match(r"^[\s]*[-*+]\s+(.+)$", line)
+            if ul_match:
+                items = []
+                while i < len(lines) and re.match(r"^[\s]*[-*+]\s+(.+)$", lines[i]):
+                    items.append(re.match(r"^[\s]*[-*+]\s+(.+)$", lines[i]).group(1))
+                    i += 1
+                li = "".join(f"<li>{item}</li>" for item in items)
+                out_lines.append(f"<ul>{li}</ul>")
+                continue
+
+            # Ordered list: 1. item (collect consecutive)
+            ol_match = re.match(r"^[\s]*\d+[.)]\s+(.+)$", line)
+            if ol_match:
+                items = []
+                while i < len(lines) and re.match(r"^[\s]*\d+[.)]\s+(.+)$", lines[i]):
+                    items.append(re.match(r"^[\s]*\d+[.)]\s+(.+)$", lines[i]).group(1))
+                    i += 1
+                li = "".join(f"<li>{item}</li>" for item in items)
+                out_lines.append(f"<ol>{li}</ol>")
+                continue
+
+            out_lines.append(line)
+            i += 1
+
+        result = "\n".join(out_lines)
+
+        # ── Phase 3: inline transforms ────────────────────────────
+        # Bold: **text** or __text__
+        result = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", result, flags=re.DOTALL)
+        result = re.sub(r"__(.+?)__", r"<strong>\1</strong>", result, flags=re.DOTALL)
+        # Italic: *text* or _text_ (but not inside words for underscores)
+        result = re.sub(r"\*(.+?)\*", r"<em>\1</em>", result, flags=re.DOTALL)
+        result = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"<em>\1</em>", result, flags=re.DOTALL)
+        # Strikethrough: ~~text~~
+        result = re.sub(r"~~(.+?)~~", r"<del>\1</del>", result, flags=re.DOTALL)
+        # Links: [text](url)
+        result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', result)
+        # Newlines → <br> (but not adjacent to block elements)
+        result = re.sub(r"\n", "<br>\n", result)
+        # Clean up excessive <br> around block elements
+        result = re.sub(r"<br>\n(</?(?:pre|blockquote|h[1-6]|ul|ol|li|hr))", r"\n\1", result)
+        result = re.sub(r"(</(?:pre|blockquote|h[1-6]|ul|ol|li)>)<br>", r"\1", result)
+
+        # ── Phase 4: restore protected regions ────────────────────
+        for idx, original in enumerate(placeholders):
+            result = result.replace(f"\x00PROTECTED{idx}\x00", original)
+
+        return result
