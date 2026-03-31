@@ -1256,6 +1256,9 @@ class MatrixAdapter(BasePlatformAdapter):
             return
         if source.get("sender") == self._user_id:
             return
+        event_id = source.get("event_id", "")
+        if self._is_duplicate_event(event_id):
+            return
         logger.info(
             "Matrix: reaction %s from %s on %s in %s",
             relates_to.get("key", "?"),
