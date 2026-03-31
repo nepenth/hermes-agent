@@ -464,7 +464,7 @@ class PwnCollegeEnv(HermesAgentBaseEnv):
         else:
             eval_challenges = [
                 c for c in all_challenges
-                if (self.config.eval_dojo is None or c.dojo_id == self.config.eval_dojo)
+                if (self.config.eval_dojo is None or c.dojo_id == self.config.eval_dojo or c.dojo_id.startswith(self.config.eval_dojo))
                 and (self.config.eval_module is None or c.module_id == self.config.eval_module)
                 and c.dojo_id not in self.config.eval_exclude_dojos
                 and c.module_id not in self.config.eval_exclude_modules
