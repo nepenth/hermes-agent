@@ -569,3 +569,175 @@ def test_load_pool_prefers_anthropic_env_token_over_file_backed_oauth(tmp_path, 
     assert entry is not None
     assert entry.source == "env:ANTHROPIC_TOKEN"
     assert entry.access_token == "env-override-token"
+
+
+def test_least_used_strategy_selects_lowest_count(tmp_path, monkeypatch):
+    """least_used strategy should select the credential with the lowest request_count."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setattr(
+        "agent.credential_pool.get_pool_strategy",
+        lambda _provider: "least_used",
+    )
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_from_singletons",
+        lambda provider, entries: (False, set()),
+    )
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_from_env",
+        lambda provider, entries: (False, set()),
+    )
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "openrouter": [
+                    {
+                        "id": "key-a",
+                        "label": "heavy",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "sk-or-heavy",
+                        "request_count": 100,
+                    },
+                    {
+                        "id": "key-b",
+                        "label": "light",
+                        "auth_type": "api_key",
+                        "priority": 1,
+                        "source": "manual",
+                        "access_token": "sk-or-light",
+                        "request_count": 10,
+                    },
+                    {
+                        "id": "key-c",
+                        "label": "medium",
+                        "auth_type": "api_key",
+                        "priority": 2,
+                        "source": "manual",
+                        "access_token": "sk-or-medium",
+                        "request_count": 50,
+                    },
+                ]
+            },
+        },
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("openrouter")
+    entry = pool.select()
+    assert entry is not None
+    assert entry.id == "key-b"
+    assert entry.access_token == "sk-or-light"
+
+
+def test_mark_used_increments_request_count(tmp_path, monkeypatch):
+    """mark_used should increment the request_count of the current entry."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setattr(
+        "agent.credential_pool.get_pool_strategy",
+        lambda _provider: "fill_first",
+    )
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_from_singletons",
+        lambda provider, entries: (False, set()),
+    )
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_from_env",
+        lambda provider, entries: (False, set()),
+    )
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "openrouter": [
+                    {
+                        "id": "key-a",
+                        "label": "test",
+                        "auth_type": "api_key",
+                        "priority": 0,
+                        "source": "manual",
+                        "access_token": "sk-or-test",
+                        "request_count": 5,
+                    },
+                ]
+            },
+        },
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("openrouter")
+    entry = pool.select()
+    assert entry is not None
+    assert entry.request_count == 5
+    pool.mark_used()
+    updated = pool.current()
+    assert updated is not None
+    assert updated.request_count == 6
+
+
+def test_thread_safety_concurrent_select(tmp_path, monkeypatch):
+    """Concurrent select() calls should not corrupt pool state."""
+    import threading as _threading
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setattr(
+        "agent.credential_pool.get_pool_strategy",
+        lambda _provider: "round_robin",
+    )
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_from_singletons",
+        lambda provider, entries: (False, set()),
+    )
+    monkeypatch.setattr(
+        "agent.credential_pool._seed_from_env",
+        lambda provider, entries: (False, set()),
+    )
+    _write_auth_store(
+        tmp_path,
+        {
+            "version": 1,
+            "credential_pool": {
+                "openrouter": [
+                    {
+                        "id": f"key-{i}",
+                        "label": f"key-{i}",
+                        "auth_type": "api_key",
+                        "priority": i,
+                        "source": "manual",
+                        "access_token": f"sk-or-{i}",
+                    }
+                    for i in range(5)
+                ]
+            },
+        },
+    )
+
+    from agent.credential_pool import load_pool
+
+    pool = load_pool("openrouter")
+    results = []
+    errors = []
+
+    def worker():
+        try:
+            for _ in range(20):
+                entry = pool.select()
+                if entry:
+                    results.append(entry.id)
+                    pool.mark_used(entry.id)
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [_threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"Thread errors: {errors}"
+    assert len(results) == 80  # 4 threads * 20 selects

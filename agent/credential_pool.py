@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 import uuid
 import os
@@ -43,10 +44,12 @@ SOURCE_MANUAL = "manual"
 STRATEGY_FILL_FIRST = "fill_first"
 STRATEGY_ROUND_ROBIN = "round_robin"
 STRATEGY_RANDOM = "random"
+STRATEGY_LEAST_USED = "least_used"
 SUPPORTED_POOL_STRATEGIES = {
     STRATEGY_FILL_FIRST,
     STRATEGY_ROUND_ROBIN,
     STRATEGY_RANDOM,
+    STRATEGY_LEAST_USED,
 }
 
 # Cooldown before retrying an exhausted credential.
@@ -87,6 +90,7 @@ class PooledCredential:
     agent_key_reused: Optional[bool] = None
     agent_key_obtained_at: Optional[str] = None
     tls: Optional[Dict[str, Any]] = None
+    request_count: int = 0
 
     @classmethod
     def from_dict(cls, provider: str, payload: Dict[str, Any]) -> "PooledCredential":
@@ -174,6 +178,7 @@ class CredentialPool:
         self._entries = sorted(entries, key=lambda entry: entry.priority)
         self._current_id: Optional[str] = None
         self._strategy = get_pool_strategy(provider)
+        self._lock = threading.Lock()
 
     def has_credentials(self) -> bool:
         return bool(self._entries)
@@ -296,7 +301,22 @@ class CredentialPool:
             return False
         return False
 
+    def mark_used(self, entry_id: Optional[str] = None) -> None:
+        """Increment request_count for tracking. Used by least_used strategy."""
+        target_id = entry_id or self._current_id
+        if not target_id:
+            return
+        with self._lock:
+            for idx, entry in enumerate(self._entries):
+                if entry.id == target_id:
+                    self._entries[idx] = replace(entry, request_count=entry.request_count + 1)
+                    return
+
     def select(self) -> Optional[PooledCredential]:
+        with self._lock:
+            return self._select_unlocked()
+
+    def _select_unlocked(self) -> Optional[PooledCredential]:
         now = time.time()
         cleared_any = False
         available: List[PooledCredential] = []
@@ -324,6 +344,11 @@ class CredentialPool:
 
         if self._strategy == STRATEGY_RANDOM:
             entry = random.choice(available)
+            self._current_id = entry.id
+            return entry
+
+        if self._strategy == STRATEGY_LEAST_USED and len(available) > 1:
+            entry = min(available, key=lambda e: e.request_count)
             self._current_id = entry.id
             return entry
 
@@ -355,14 +380,19 @@ class CredentialPool:
         return None
 
     def mark_exhausted_and_rotate(self, *, status_code: Optional[int]) -> Optional[PooledCredential]:
-        entry = self.current() or self.select()
-        if entry is None:
-            return None
-        self._mark_exhausted(entry, status_code)
-        self._current_id = None
-        return self.select()
+        with self._lock:
+            entry = self.current() or self._select_unlocked()
+            if entry is None:
+                return None
+            self._mark_exhausted(entry, status_code)
+            self._current_id = None
+            return self._select_unlocked()
 
     def try_refresh_current(self) -> Optional[PooledCredential]:
+        with self._lock:
+            return self._try_refresh_current_unlocked()
+
+    def _try_refresh_current_unlocked(self) -> Optional[PooledCredential]:
         entry = self.current()
         if entry is None:
             return None
