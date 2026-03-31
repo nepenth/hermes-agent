@@ -55,7 +55,7 @@ def _has_provider_env_config(content: str) -> bool:
 def _honcho_is_configured_for_doctor() -> bool:
     """Return True when Honcho is configured, even if this process has no active session."""
     try:
-        from honcho_integration.client import HonchoClientConfig
+        from plugins.memory.honcho.client import HonchoClientConfig
 
         cfg = HonchoClientConfig.from_global_config()
         return bool(cfg.enabled and (cfg.api_key or cfg.base_url))
@@ -709,7 +709,7 @@ def run_doctor(args):
     print(color("◆ Honcho Memory", Colors.CYAN, Colors.BOLD))
 
     try:
-        from honcho_integration.client import HonchoClientConfig, resolve_config_path
+        from plugins.memory.honcho.client import HonchoClientConfig, resolve_config_path
         hcfg = HonchoClientConfig.from_global_config()
         _honcho_cfg_path = resolve_config_path()
 
@@ -721,7 +721,7 @@ def run_doctor(args):
             check_fail("Honcho API key or base URL not set", "run: hermes honcho setup")
             issues.append("No Honcho API key — run 'hermes honcho setup'")
         else:
-            from honcho_integration.client import get_honcho_client, reset_honcho_client
+            from plugins.memory.honcho.client import get_honcho_client, reset_honcho_client
             reset_honcho_client()
             try:
                 get_honcho_client(hcfg)

@@ -1027,7 +1027,7 @@ class AIAgent:
                 # file may be from a different tool.
                 if not _mem_provider_name:
                     try:
-                        from honcho_integration.client import HonchoClientConfig as _HCC
+                        from plugins.memory.honcho.client import HonchoClientConfig as _HCC
                         _hcfg = _HCC.from_global_config()
                         if _hcfg.enabled and (_hcfg.api_key or _hcfg.base_url):
                             _mem_provider_name = "honcho"

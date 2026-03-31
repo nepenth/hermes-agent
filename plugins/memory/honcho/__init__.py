@@ -1,12 +1,11 @@
-"""Honcho memory plugin — MemoryProvider adapter for the existing honcho_integration.
+"""Honcho memory plugin — MemoryProvider for Honcho AI-native memory.
 
-Wraps the existing HonchoSessionManager and honcho_integration package
-as a MemoryProvider plugin. Honcho provides AI-native cross-session user
+Provides cross-session user modeling with dialectic Q&A, semantic search,
+peer cards, and persistent conclusions via the Honcho SDK. Honcho provides AI-native cross-session user
 modeling with dialectic Q&A, semantic search, peer cards, and conclusions.
 
-This plugin delegates to the existing honcho_integration/ code — it does
-NOT reimplement any Honcho logic. The 4 tools (profile, search, context,
-conclude) move from the normal tool registry to the MemoryProvider interface.
+The 4 tools (profile, search, context, conclude) are exposed through
+the MemoryProvider interface.
 
 Config: Uses the existing Honcho config chain:
   1. $HERMES_HOME/honcho.json (profile-scoped)
@@ -114,10 +113,7 @@ CONCLUDE_SCHEMA = {
 # ---------------------------------------------------------------------------
 
 class HonchoMemoryProvider(MemoryProvider):
-    """Honcho AI-native memory via the existing honcho_integration package.
-
-    Thin adapter that delegates all work to HonchoSessionManager.
-    """
+    """Honcho AI-native memory with dialectic Q&A and persistent user modeling."""
 
     def __init__(self):
         self._manager = None   # HonchoSessionManager
@@ -135,7 +131,7 @@ class HonchoMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         """Check if Honcho is configured. No network calls."""
         try:
-            from honcho_integration.client import HonchoClientConfig
+            from plugins.memory.honcho.client import HonchoClientConfig
             cfg = HonchoClientConfig.from_global_config()
             return cfg.enabled and bool(cfg.api_key or cfg.base_url)
         except Exception:
@@ -162,14 +158,10 @@ class HonchoMemoryProvider(MemoryProvider):
         ]
 
     def initialize(self, session_id: str, **kwargs) -> None:
-        """Initialize Honcho session manager.
-
-        Uses the existing honcho_integration package for client creation
-        and session management.
-        """
+        """Initialize Honcho session manager."""
         try:
-            from honcho_integration.client import HonchoClientConfig, get_honcho_client
-            from honcho_integration.session import HonchoSessionManager
+            from plugins.memory.honcho.client import HonchoClientConfig, get_honcho_client
+            from plugins.memory.honcho.session import HonchoSessionManager
 
             cfg = HonchoClientConfig.from_global_config()
             if not cfg.enabled or not (cfg.api_key or cfg.base_url):

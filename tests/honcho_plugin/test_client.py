@@ -1,4 +1,4 @@
-"""Tests for honcho_integration/client.py — Honcho client configuration."""
+"""Tests for plugins/memory/honcho/client.py — Honcho client configuration."""
 
 import json
 import os
@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from honcho_integration.client import (
+from plugins.memory.honcho.client import (
     HonchoClientConfig,
     get_honcho_client,
     reset_honcho_client,
@@ -374,7 +374,7 @@ class TestResolveConfigPath:
 
 class TestResetHonchoClient:
     def test_reset_clears_singleton(self):
-        import honcho_integration.client as mod
+        import plugins.memory.honcho.client as mod
         mod._honcho_client = MagicMock()
         assert mod._honcho_client is not None
         reset_honcho_client()

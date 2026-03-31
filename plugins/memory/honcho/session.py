@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TYPE_CHECKING
 
-from honcho_integration.client import get_honcho_client
+from plugins.memory.honcho.client import get_honcho_client
 
 if TYPE_CHECKING:
     from honcho import Honcho
