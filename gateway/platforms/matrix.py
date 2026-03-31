@@ -962,8 +962,8 @@ class MatrixAdapter(BasePlatformAdapter):
             reply_to_message_id=reply_to,
         )
 
-        # Acknowledge receipt so the room shows as read.
-        asyncio.ensure_future(self.send_read_receipt(room.room_id, event.event_id))
+        # Acknowledge receipt so the room shows as read (fire-and-forget).
+        self._background_read_receipt(room.room_id, event.event_id)
 
         await self.handle_message(msg_event)
 
@@ -1098,8 +1098,8 @@ class MatrixAdapter(BasePlatformAdapter):
             media_types=media_types,
         )
 
-        # Acknowledge receipt so the room shows as read.
-        asyncio.ensure_future(self.send_read_receipt(room.room_id, event.event_id))
+        # Acknowledge receipt so the room shows as read (fire-and-forget).
+        self._background_read_receipt(room.room_id, event.event_id)
 
         await self.handle_message(msg_event)
 
@@ -1240,6 +1240,15 @@ class MatrixAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
     # Read receipts
     # ------------------------------------------------------------------
+
+    def _background_read_receipt(self, room_id: str, event_id: str) -> None:
+        """Fire-and-forget read receipt with error logging."""
+        async def _send() -> None:
+            try:
+                await self.send_read_receipt(room_id, event_id)
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.debug("Matrix: background read receipt failed: %s", exc)
+        asyncio.ensure_future(_send())
 
     async def send_read_receipt(self, room_id: str, event_id: str) -> bool:
         """Send a read receipt (m.read) for an event.
@@ -1410,6 +1419,8 @@ class MatrixAdapter(BasePlatformAdapter):
     # Presence
     # ------------------------------------------------------------------
 
+    _VALID_PRESENCE_STATES = frozenset(("online", "offline", "unavailable"))
+
     async def set_presence(self, state: str = "online", status_msg: str = "") -> bool:
         """Set the bot's presence status.
 
@@ -1418,6 +1429,9 @@ class MatrixAdapter(BasePlatformAdapter):
             status_msg: Optional human-readable status message.
         """
         if not self._client:
+            return False
+        if state not in self._VALID_PRESENCE_STATES:
+            logger.warning("Matrix: invalid presence state %r, must be one of %s", state, self._VALID_PRESENCE_STATES)
             return False
         try:
             if hasattr(self._client, "set_presence"):
@@ -1576,10 +1590,23 @@ class MatrixAdapter(BasePlatformAdapter):
         try:
             import markdown as _md
 
-            html = _md.markdown(
-                text,
+            # Use output_format="html" (default) and explicitly escape
+            # raw HTML in the source via the html_replacement_text option.
+            # The Python-Markdown library passes through raw HTML by
+            # default which could allow injection if the input contains
+            # malicious tags.  We disable that by installing a tree
+            # processor that strips any raw HTML blocks/inlines.
+            md = _md.Markdown(
                 extensions=["fenced_code", "tables", "nl2br", "sane_lists"],
             )
+            # Remove the raw HTML preprocessor so <script> etc. in the
+            # source are escaped rather than passed through.
+            if "html_block" in md.preprocessors:
+                md.preprocessors.deregister("html_block")
+
+            html = md.convert(text)
+            md.reset()
+
             # Strip wrapping <p> tags for single-paragraph messages so
             # clients don't add extra spacing around short replies.
             if html.count("<p>") == 1:
@@ -1595,6 +1622,20 @@ class MatrixAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _sanitize_link_url(url: str) -> str:
+        """Sanitize a URL for use in an href attribute.
+
+        Rejects dangerous URI schemes (javascript:, data:, vbscript:) and
+        escapes double-quotes to prevent attribute breakout.
+        """
+        stripped = url.strip()
+        scheme = stripped.split(":", 1)[0].lower().strip() if ":" in stripped else ""
+        if scheme in ("javascript", "data", "vbscript"):
+            return ""
+        # Escape double quotes to prevent href attribute breakout.
+        return stripped.replace('"', "&quot;")
+
+    @staticmethod
     def _markdown_to_html_fallback(text: str) -> str:
         """Comprehensive regex Markdown-to-HTML for Matrix.
 
@@ -1602,31 +1643,28 @@ class MatrixAdapter(BasePlatformAdapter):
         strikethrough, links, blockquotes, ordered/unordered lists, and
         horizontal rules.  Code regions are extracted first to prevent
         inner transformations from mangling them.
+
+        Security: all non-code text is HTML-escaped before markdown
+        transforms to prevent HTML injection via crafted input.  Link
+        URLs are sanitized against dangerous URI schemes.
         """
         # ── Phase 1: extract protected regions (code) ─────────────
         placeholders: list[str] = []
 
-        def _protect(m: re.Match) -> str:
+        def _protect_html(html_fragment: str) -> str:
+            """Store an already-built HTML fragment and return a placeholder."""
             idx = len(placeholders)
-            placeholders.append(m.group(0))
+            placeholders.append(html_fragment)
             return f"\x00PROTECTED{idx}\x00"
 
         # Fenced code blocks: ```lang\n...\n```
         result = re.sub(
             r"```(\w*)\n(.*?)```",
-            lambda m: _protect(
-                type(
-                    "M",
-                    (),
-                    {
-                        "group": lambda self, _=None: (
-                            f'<pre><code class="language-{m.group(1)}">'
-                            f"{_html_escape(m.group(2))}</code></pre>"
-                            if m.group(1)
-                            else f"<pre><code>{_html_escape(m.group(2))}</code></pre>"
-                        )
-                    },
-                )()
+            lambda m: _protect_html(
+                f'<pre><code class="language-{_html_escape(m.group(1))}">'
+                f"{_html_escape(m.group(2))}</code></pre>"
+                if m.group(1)
+                else f"<pre><code>{_html_escape(m.group(2))}</code></pre>"
             ),
             text,
             flags=re.DOTALL,
@@ -1635,13 +1673,41 @@ class MatrixAdapter(BasePlatformAdapter):
         # Inline code: `code`  (but not inside fenced blocks — already extracted)
         result = re.sub(
             r"`([^`\n]+)`",
-            lambda m: _protect(
-                type("M", (), {"group": lambda self, _=None: f"<code>{_html_escape(m.group(1))}</code>"})()
+            lambda m: _protect_html(
+                f"<code>{_html_escape(m.group(1))}</code>"
             ),
             result,
         )
 
+        # Also extract and protect markdown links BEFORE escaping, so the
+        # []() syntax isn't destroyed by escaping the brackets.
+        # We'll build the <a> tag now with sanitised URL and escaped text.
+        result = re.sub(
+            r"\[([^\]]+)\]\(([^)]+)\)",
+            lambda m: _protect_html(
+                '<a href="{}">{}</a>'.format(
+                    MatrixAdapter._sanitize_link_url(m.group(2)),
+                    _html_escape(m.group(1)),
+                )
+            ),
+            result,
+        )
+
+        # ── Phase 1b: HTML-escape remaining text ──────────────────
+        # This neutralises any HTML tags in the source (e.g. <script>,
+        # <img onerror=...>) while leaving our \x00PROTECTEDN\x00
+        # placeholders intact.
+        parts = re.split(r"(\x00PROTECTED\d+\x00)", result)
+        for idx, part in enumerate(parts):
+            if not part.startswith("\x00PROTECTED"):
+                parts[idx] = _html_escape(part)
+        result = "".join(parts)
+
         # ── Phase 2: block-level transforms (line-oriented) ───────
+        # After escaping, markdown syntax chars (&gt; for >, etc.) need
+        # adjustment.  Headers (#), lists (- * +), HR (---) are NOT
+        # affected because #, -, *, + are not escaped by html.escape().
+        # Blockquotes use ">" which IS escaped to "&gt;".
         lines = result.split("\n")
         out_lines: list[str] = []
         i = 0
@@ -1663,12 +1729,22 @@ class MatrixAdapter(BasePlatformAdapter):
                 continue
 
             # Blockquote: > text (collect consecutive lines)
-            if line.startswith("> ") or line == ">":
+            # After HTML-escaping, ">" becomes "&gt;" so match both forms.
+            if line.startswith("&gt; ") or line == "&gt;" or line.startswith("> ") or line == ">":
                 bq_lines = []
-                while i < len(lines) and (lines[i].startswith("> ") or lines[i] == ">"):
-                    bq_lines.append(lines[i][2:] if lines[i].startswith("> ") else "")
+                while i < len(lines) and (
+                    lines[i].startswith("&gt; ") or lines[i] == "&gt;"
+                    or lines[i].startswith("> ") or lines[i] == ">"
+                ):
+                    ln = lines[i]
+                    if ln.startswith("&gt; "):
+                        bq_lines.append(ln[5:])
+                    elif ln.startswith("> "):
+                        bq_lines.append(ln[2:])
+                    else:
+                        bq_lines.append("")
                     i += 1
-                out_lines.append(f"<blockquote>{('<br>').join(bq_lines)}</blockquote>")
+                out_lines.append(f"<blockquote>{'<br>'.join(bq_lines)}</blockquote>")
                 continue
 
             # Unordered list: - item or * item (collect consecutive)
@@ -1699,6 +1775,8 @@ class MatrixAdapter(BasePlatformAdapter):
         result = "\n".join(out_lines)
 
         # ── Phase 3: inline transforms ────────────────────────────
+        # After HTML escaping, ** * __ _ ~~ are all preserved (not
+        # escaped), so these regex patterns still match correctly.
         # Bold: **text** or __text__
         result = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", result, flags=re.DOTALL)
         result = re.sub(r"__(.+?)__", r"<strong>\1</strong>", result, flags=re.DOTALL)
@@ -1707,8 +1785,7 @@ class MatrixAdapter(BasePlatformAdapter):
         result = re.sub(r"(?<!\w)_(.+?)_(?!\w)", r"<em>\1</em>", result, flags=re.DOTALL)
         # Strikethrough: ~~text~~
         result = re.sub(r"~~(.+?)~~", r"<del>\1</del>", result, flags=re.DOTALL)
-        # Links: [text](url)
-        result = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', result)
+        # Note: links were already extracted and protected in Phase 1.
         # Newlines → <br> (but not adjacent to block elements)
         result = re.sub(r"\n", "<br>\n", result)
         # Clean up excessive <br> around block elements
