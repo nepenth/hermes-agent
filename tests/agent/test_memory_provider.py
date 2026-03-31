@@ -525,38 +525,25 @@ class TestSingleProviderGating:
         assert mgr.provider_names == ["builtin"]
 
 
-class TestPluginMemoryProviderRegistration:
-    def test_register_memory_provider(self):
-        """PluginContext.register_memory_provider adds to manager list."""
-        from hermes_cli.plugins import PluginManager, PluginContext, PluginManifest
+class TestPluginMemoryDiscovery:
+    """Memory providers are discovered from plugins/memory/ directory."""
 
-        manager = PluginManager()
-        manifest = PluginManifest(
-            name="test-plugin",
-            version="1.0.0",
-            description="Test",
-            source="test",
-        )
-        ctx = PluginContext(manifest, manager)
+    def test_discover_finds_providers(self):
+        """discover_memory_providers returns available providers."""
+        from plugins.memory import discover_memory_providers
+        providers = discover_memory_providers()
+        names = [name for name, _, _ in providers]
+        assert "holographic" in names  # always available (no external deps)
 
-        fake_provider = FakeMemoryProvider("test-mem")
-        ctx.register_memory_provider(fake_provider)
+    def test_load_provider_by_name(self):
+        """load_memory_provider returns a working provider instance."""
+        from plugins.memory import load_memory_provider
+        p = load_memory_provider("holographic")
+        assert p is not None
+        assert p.name == "holographic"
+        assert p.is_available()
 
-        assert len(manager._memory_providers) == 1
-        assert manager._memory_providers[0] is fake_provider
-
-    def test_get_plugin_memory_providers(self):
-        """get_plugin_memory_providers returns registered providers."""
-        from hermes_cli.plugins import PluginManager, get_plugin_memory_providers
-
-        with patch("hermes_cli.plugins.get_plugin_manager") as mock_get:
-            mgr = PluginManager()
-            p1 = FakeMemoryProvider("p1")
-            p2 = FakeMemoryProvider("p2")
-            mgr._memory_providers = [p1, p2]
-            mock_get.return_value = mgr
-
-            result = get_plugin_memory_providers()
-            assert len(result) == 2
-            assert result[0] is p1
-            assert result[1] is p2
+    def test_load_nonexistent_returns_none(self):
+        """load_memory_provider returns None for unknown names."""
+        from plugins.memory import load_memory_provider
+        assert load_memory_provider("nonexistent_provider") is None

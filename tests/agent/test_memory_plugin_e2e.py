@@ -282,27 +282,15 @@ class TestSQLiteMemoryPlugin:
         mgr.shutdown_all()
 
     def test_plugin_registration_flow(self):
-        """Simulate the full plugin registration → agent init path."""
-        from hermes_cli.plugins import PluginManager, PluginContext, PluginManifest
-
-        # Simulate plugin discovery
-        manager = PluginManager()
-        manifest = PluginManifest(name="sqlite-memory", source="test")
-        ctx = PluginContext(manifest, manager)
-
-        # Plugin registers its provider
+        """Simulate the full plugin load → agent init path."""
+        # Simulate what AIAgent.__init__ does via plugins/memory/ discovery
         provider = SQLiteMemoryProvider()
-        ctx.register_memory_provider(provider)
 
-        assert len(manager._memory_providers) == 1
-
-        # Simulate what AIAgent.__init__ does
         mem_mgr = MemoryManager()
         mem_mgr.add_provider(BuiltinMemoryProvider())
-        for plugin_provider in manager._memory_providers:
-            if plugin_provider.is_available():
-                mem_mgr.add_provider(plugin_provider)
-                plugin_provider.initialize(session_id="agent-session")
+        if provider.is_available():
+            mem_mgr.add_provider(provider)
+        mem_mgr.initialize_all(session_id="agent-session")
 
         assert len(mem_mgr.providers) == 2
         assert mem_mgr.provider_names == ["builtin", "sqlite_memory"]

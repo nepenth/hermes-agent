@@ -7,10 +7,9 @@ Built-in memory (MEMORY.md / USER.md) is always active as the first provider.
 External providers (Honcho, Hindsight, Mem0, etc.) are additive — they never
 disable the built-in store.
 
-Three registration paths:
+Registration:
   1. Built-in: BuiltinMemoryProvider — always present, not removable.
-  2. First-party: Ship with the repo, activated by config (e.g. Honcho).
-  3. Plugin: External packages register via ctx.register_memory_provider().
+  2. Plugins: Ship in plugins/memory/<name>/, activated by memory.provider config.
 
 Lifecycle (called by MemoryManager, wired in run_agent.py):
   initialize()          — connect, create resources, warm up
