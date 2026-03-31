@@ -1019,14 +1019,30 @@ class AIAgent:
         if not skip_memory:
             try:
                 _mem_provider_name = mem_config.get("provider", "") if mem_config else ""
+
+                # Migration notice for users with Honcho configured but not migrated
+                if not _mem_provider_name and not self.quiet_mode:
+                    try:
+                        from hermes_constants import get_hermes_home as _ghh2
+                        _honcho_paths = [
+                            _ghh2() / "honcho.json",
+                            Path.home() / ".honcho" / "config.json",
+                        ]
+                        if any(p.exists() for p in _honcho_paths):
+                            print("  ℹ️  Detected existing Honcho configuration.")
+                            print("     Honcho is now a memory provider plugin.")
+                            print("     Run 'hermes memory setup' to activate it.")
+                            print()
+                    except Exception:
+                        pass
+
                 if _mem_provider_name:
                     from agent.memory_manager import MemoryManager as _MemoryManager
-                    from hermes_cli.plugins import get_plugin_memory_providers as _get_mem_providers
+                    from plugins.memory import load_memory_provider as _load_mem
                     self._memory_manager = _MemoryManager()
-                    for _mp in _get_mem_providers():
-                        if _mp.name == _mem_provider_name and _mp.is_available():
-                            self._memory_manager.add_provider(_mp)
-                            break
+                    _mp = _load_mem(_mem_provider_name)
+                    if _mp and _mp.is_available():
+                        self._memory_manager.add_provider(_mp)
                     if self._memory_manager.providers:
                         from hermes_constants import get_hermes_home as _ghh
                         self._memory_manager.initialize_all(
@@ -4694,8 +4710,6 @@ class AIAgent:
         if self._memory_flush_min_turns == 0 and min_turns is None:
             return
         if "memory" not in self.valid_tool_names or not self._memory_store:
-            return
-        if False:  # placeholder
             return
         effective_min = min_turns if min_turns is not None else self._memory_flush_min_turns
         if self._user_turn_count < effective_min:

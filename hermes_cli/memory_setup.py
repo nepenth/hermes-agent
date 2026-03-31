@@ -126,28 +126,34 @@ def _prompt(label: str, default: str | None = None, secret: bool = False) -> str
 # ---------------------------------------------------------------------------
 
 def _get_available_providers() -> list:
-    """Discover memory providers from installed plugins.
+    """Discover memory providers from plugins/memory/.
 
     Returns list of (name, description, provider_instance) tuples.
     """
     try:
-        from hermes_cli.plugins import get_plugin_memory_providers
-        providers = get_plugin_memory_providers()
+        from plugins.memory import discover_memory_providers, load_memory_provider
+        raw = discover_memory_providers()
     except Exception:
-        providers = []
+        raw = []
 
     results = []
-    for p in providers:
-        name = getattr(p, "name", "unknown")
-        schema = p.get_config_schema() if hasattr(p, "get_config_schema") else []
+    for name, desc, available in raw:
+        try:
+            provider = load_memory_provider(name)
+            if not provider:
+                continue
+        except Exception:
+            continue
+        # Override description with setup hint
+        schema = provider.get_config_schema() if hasattr(provider, "get_config_schema") else []
         has_secrets = any(f.get("secret") for f in schema)
         if has_secrets:
-            desc = "requires API key"
+            setup_hint = "requires API key"
         elif not schema:
-            desc = "no setup needed"
+            setup_hint = "no setup needed"
         else:
-            desc = "local"
-        results.append((name, desc, p))
+            setup_hint = "local"
+        results.append((name, setup_hint, provider))
     return results
 
 

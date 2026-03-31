@@ -4294,10 +4294,50 @@ For more help on a command:
     )
 
     def cmd_honcho(args):
-        from honcho_integration.cli import honcho_command
-        honcho_command(args)
+        print("\n  ⚠️  The 'hermes honcho' command has been replaced.")
+        print("  Honcho is now a memory provider plugin.\n")
+        print("  To set up Honcho as your memory provider:")
+        print("    hermes memory setup\n")
+        print("  Your existing Honcho configuration and data are preserved.")
+        print("  Just select 'honcho' in the memory setup wizard.\n")
 
     honcho_parser.set_defaults(func=cmd_honcho)
+
+    # =========================================================================
+    # memory command
+    # =========================================================================
+    memory_parser = subparsers.add_parser(
+        "memory",
+        help="Configure external memory provider",
+        description=(
+            "Set up and manage external memory provider plugins.\n\n"
+            "Available providers: honcho, openviking, mem0, hindsight,\n"
+            "holographic, retaindb, byterover.\n\n"
+            "Only one external provider can be active at a time.\n"
+            "Built-in memory (MEMORY.md/USER.md) is always active."
+        ),
+    )
+    memory_sub = memory_parser.add_subparsers(dest="memory_command")
+    memory_sub.add_parser("setup", help="Interactive provider selection and configuration")
+    memory_sub.add_parser("status", help="Show current memory provider config")
+    memory_off_p = memory_sub.add_parser("off", help="Disable external provider (built-in only)")
+
+    def cmd_memory(args):
+        sub = getattr(args, "memory_command", None)
+        if sub == "off":
+            from hermes_cli.config import load_config, save_config
+            config = load_config()
+            if not isinstance(config.get("memory"), dict):
+                config["memory"] = {}
+            config["memory"]["provider"] = ""
+            save_config(config)
+            print("\n  ✓ Memory provider: built-in only")
+            print("  Saved to config.yaml\n")
+        else:
+            from hermes_cli.memory_setup import memory_command
+            memory_command(args)
+
+    memory_parser.set_defaults(func=cmd_memory)
 
     # =========================================================================
     # tools command
