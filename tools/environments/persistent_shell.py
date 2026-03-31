@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 _SENTINEL_PREFIX = "__HERMES_DONE_"
 _SENTINEL_SUFFIX = "__"
 
+from tools.ansi_strip import strip_ansi
+
 
 class PersistentShellMixin:
     """Mixin that adds persistent shell capability to any BaseEnvironment.
@@ -80,7 +82,11 @@ class PersistentShellMixin:
         init_script = (
             # Disable echo so sentinel markers aren't duplicated in stdout
             f"stty -echo 2>/dev/null\n"
-            f"export TERM=${{TERM:-dumb}}\n"
+            # Disable history recording — IPC scaffolding pollutes it.
+            # Agent commands are added explicitly via `history -s` below.
+            f"set +o history\n"
+            f"export HISTFILE=/dev/null\n"
+            f"export TERM=dumb\n"
             f"touch {self._pshell_stdout} {self._pshell_stderr} "
             f"{self._pshell_status} {self._pshell_cwd} {self._pshell_pid_file}\n"
             f"echo $$ > {self._pshell_pid_file}\n"
@@ -99,21 +105,28 @@ class PersistentShellMixin:
         else:
             logger.warning("Persistent shell init sentinel not received")
 
-        pid_str, reported_cwd = self._read_temp_files(
-            self._pshell_pid_file, self._pshell_cwd,
-        )
-        pid_str = pid_str.strip()
-        if pid_str.isdigit():
-            self._shell_pid = int(pid_str)
+        # Retry reading PID file — temp files may not be flushed yet
+        self._shell_pid = None
+        reported_cwd = ""
+        for _ in range(5):
+            time.sleep(0.2)
+            pid_str, reported_cwd = self._read_temp_files(
+                self._pshell_pid_file, self._pshell_cwd,
+            )
+            pid_str = pid_str.strip()
+            if pid_str.isdigit():
+                self._shell_pid = int(pid_str)
+                break
+
+        if self._shell_pid:
             logger.info(
                 "Persistent shell started (session=%s, pid=%d)",
                 self._session_id, self._shell_pid,
             )
         else:
             logger.warning("Could not read persistent shell PID")
-            self._shell_pid = None
 
-        reported_cwd = reported_cwd.strip()
+        reported_cwd = (reported_cwd or "").strip()
         if reported_cwd:
             self.cwd = reported_cwd
 
@@ -166,14 +179,10 @@ class PersistentShellMixin:
     def _drain_shell_output(self):
         try:
             for line in self._shell_proc.stdout:
-                stripped = line.rstrip('\r\n')
-                if (
-                    stripped.startswith(_SENTINEL_PREFIX)
-                    and stripped.endswith(_SENTINEL_SUFFIX)
-                ):
-                    inner = stripped[len(_SENTINEL_PREFIX):-len(_SENTINEL_SUFFIX)]
-                    if inner == self._sentinel_cmd_id:
-                        self._sentinel_event.set()
+                clean = strip_ansi(line).strip('\r\n\x00')
+                expected = f"{_SENTINEL_PREFIX}{self._sentinel_cmd_id}{_SENTINEL_SUFFIX}"
+                if clean.endswith(expected):
+                    self._sentinel_event.set()
         except Exception:
             pass
         self._shell_alive = False
@@ -240,6 +249,7 @@ class PersistentShellMixin:
 
         ipc_script = (
             f"cd {shlex.quote(work_dir)}\n"
+            f"history -s {shlex.quote(command)}\n"
             f"eval '{escaped}' < /dev/null > {self._pshell_stdout} 2> {self._pshell_stderr}\n"
             f"__EC=$?\n"
             f"pwd > {self._pshell_cwd}\n"

@@ -57,7 +57,7 @@ env:
   eval_exclude_dojos:
     - archive
   eval_module: hello
-  eval_concurrency: 2
+  eval_concurrency: 3
 openai:
   - timeout: 1200
     num_max_requests_at_once: 512

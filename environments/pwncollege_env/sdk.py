@@ -236,6 +236,15 @@ class DojoRLClient:
             raise RuntimeError(f"No flag available for slot {slot}")
         return instance.flag
 
+    # ── SSH Key Management ────────────────────────────────────────────────────
+
+    async def register_ssh_key(self, public_key: str) -> bool:
+        result = await self._post("/ssh_key", json={"public_key": public_key})
+        return result.get("success", False)
+
+    async def get_ssh_key(self) -> dict[str, Any]:
+        return await self._get("/ssh_key")
+
     # ── Challenge Discovery ───────────────────────────────────────────────────
 
     async def list_challenges(self) -> list[RLChallenge]:
@@ -368,6 +377,12 @@ class DojoRLSyncClient:
 
     def list_challenges(self) -> list[RLChallenge]:
         return self._run(self._async.list_challenges())
+
+    def register_ssh_key(self, public_key: str) -> bool:
+        return self._run(self._async.register_ssh_key(public_key))
+
+    def get_ssh_key(self) -> dict[str, Any]:
+        return self._run(self._async.get_ssh_key())
 
     def admin_login(self, username: str = "admin", password: str = "admin") -> None:
         return self._run(self._async.admin_login(username, password))

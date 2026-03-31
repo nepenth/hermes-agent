@@ -65,7 +65,7 @@ openai:
     rolling_buffer_length: 1000
     server_type: openai
     tokenizer_name: none
-    api_key: ${OPENROUTER_API_KEY}
+    api_key: ""
     base_url: https://openrouter.ai/api/v1
     n_kwarg_is_ignored: false
     health_check: false

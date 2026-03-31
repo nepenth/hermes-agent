@@ -68,12 +68,15 @@ class SSHEnvironment(PersistentShellMixin, BaseEnvironment):
         cmd.extend(["-o", "ControlMaster=auto"])
         cmd.extend(["-o", "ControlPersist=300"])
         cmd.extend(["-o", "BatchMode=yes"])
-        cmd.extend(["-o", "StrictHostKeyChecking=accept-new"])
+        cmd.extend(["-o", "StrictHostKeyChecking=no"])
+        cmd.extend(["-o", "UserKnownHostsFile=/dev/null"])
+        cmd.extend(["-o", "LogLevel=ERROR"])
         cmd.extend(["-o", "ConnectTimeout=10"])
         if self.port != 22:
             cmd.extend(["-p", str(self.port)])
         if self.key_path:
             cmd.extend(["-i", self.key_path])
+            cmd.extend(["-o", "IdentitiesOnly=yes"])
         if extra_args:
             cmd.extend(extra_args)
         cmd.append(f"{self.user}@{self.host}")

@@ -18,7 +18,7 @@ import logging
 import os
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from model_tools import handle_function_call
 
@@ -138,6 +138,7 @@ class HermesAgentLoop:
         temperature: float = 1.0,
         max_tokens: Optional[int] = None,
         extra_body: Optional[Dict[str, Any]] = None,
+        early_stop_check: Optional[Callable[[List[Dict[str, Any]]], bool]] = None,
     ):
         """
         Initialize the agent loop.
@@ -154,6 +155,9 @@ class HermesAgentLoop:
             extra_body: Extra parameters passed to the OpenAI client's create() call.
                         Used for OpenRouter provider preferences, transforms, etc.
                         e.g. {"provider": {"ignore": ["DeepInfra"]}}
+            early_stop_check: Optional callback that inspects messages after each tool
+                        turn. If it returns True, the loop ends with finished_naturally=True.
+                        Used for environment-level completion signals (e.g., flag accepted).
         """
         self.server = server
         self.tool_schemas = tool_schemas
@@ -163,6 +167,7 @@ class HermesAgentLoop:
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.extra_body = extra_body
+        self.early_stop_check = early_stop_check
 
     async def run(self, messages: List[Dict[str, Any]]) -> AgentResult:
         """
@@ -454,6 +459,23 @@ class HermesAgentLoop:
                             "tool_call_id": tc_id,
                             "content": tool_result,
                         }
+                    )
+
+                # Check if environment signals early stop (e.g., flag accepted)
+                if self.early_stop_check and self.early_stop_check(messages):
+                    turn_elapsed = _time.monotonic() - turn_start
+                    logger.info(
+                        "[%s] turn %d: early stop triggered after %d tools (%.1fs)",
+                        self.task_id[:8], turn + 1,
+                        len(assistant_msg.tool_calls), turn_elapsed,
+                    )
+                    return AgentResult(
+                        messages=messages,
+                        managed_state=self._get_managed_state(),
+                        turns_used=turn + 1,
+                        finished_naturally=True,
+                        reasoning_per_turn=reasoning_per_turn,
+                        tool_errors=tool_errors,
                     )
 
                 turn_elapsed = _time.monotonic() - turn_start
