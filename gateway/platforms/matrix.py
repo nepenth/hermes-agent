@@ -125,6 +125,11 @@ class MatrixAdapter(BasePlatformAdapter):
         # Each entry: (room, event, timestamp)
         self._pending_megolm: list = []
 
+        # Reactions: configurable via MATRIX_REACTIONS (default: true).
+        self._reactions_enabled: bool = os.getenv(
+            "MATRIX_REACTIONS", "true"
+        ).lower() not in ("false", "0", "no")
+
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
         if not event_id:
@@ -269,6 +274,13 @@ class MatrixAdapter(BasePlatformAdapter):
         client.add_event_callback(self._on_room_message_media, nio.RoomMessageVideo)
         client.add_event_callback(self._on_room_message_media, nio.RoomMessageFile)
         client.add_event_callback(self._on_invite, nio.InviteMemberEvent)
+
+        # Reaction events (m.reaction).
+        if hasattr(nio, "ReactionEvent"):
+            client.add_event_callback(self._on_reaction, nio.ReactionEvent)
+        else:
+            # Older matrix-nio versions: use UnknownEvent fallback.
+            client.add_event_callback(self._on_unknown_event, nio.UnknownEvent)
 
         # If E2EE: handle encrypted events.
         if self._encryption and hasattr(client, "olm"):
@@ -948,6 +960,9 @@ class MatrixAdapter(BasePlatformAdapter):
             reply_to_message_id=reply_to,
         )
 
+        # Acknowledge receipt so the room shows as read.
+        asyncio.ensure_future(self.send_read_receipt(room.room_id, event.event_id))
+
         await self.handle_message(msg_event)
 
     async def _on_room_message_media(self, room: Any, event: Any) -> None:
@@ -1081,6 +1096,9 @@ class MatrixAdapter(BasePlatformAdapter):
             media_types=media_types,
         )
 
+        # Acknowledge receipt so the room shows as read.
+        asyncio.ensure_future(self.send_read_receipt(room.room_id, event.event_id))
+
         await self.handle_message(msg_event)
 
     async def _on_invite(self, room: Any, event: Any) -> None:
@@ -1115,6 +1133,360 @@ class MatrixAdapter(BasePlatformAdapter):
                 )
         except Exception as exc:
             logger.warning("Matrix: error joining %s: %s", room.room_id, exc)
+
+    # ------------------------------------------------------------------
+    # Reactions (send, receive, processing lifecycle)
+    # ------------------------------------------------------------------
+
+    async def _send_reaction(
+        self, room_id: str, event_id: str, emoji: str,
+    ) -> bool:
+        """Send an emoji reaction to a message in a room."""
+        import nio
+
+        if not self._client:
+            return False
+        content = {
+            "m.relates_to": {
+                "rel_type": "m.annotation",
+                "event_id": event_id,
+                "key": emoji,
+            }
+        }
+        try:
+            resp = await self._client.room_send(
+                room_id, "m.reaction", content,
+                ignore_unverified_devices=True,
+            )
+            if isinstance(resp, nio.RoomSendResponse):
+                logger.debug("Matrix: sent reaction %s to %s", emoji, event_id)
+                return True
+            logger.debug("Matrix: reaction send failed: %s", resp)
+            return False
+        except Exception as exc:
+            logger.debug("Matrix: reaction send error: %s", exc)
+            return False
+
+    async def _redact_reaction(
+        self, room_id: str, reaction_event_id: str, reason: str = "",
+    ) -> bool:
+        """Remove a reaction by redacting its event."""
+        return await self.redact_message(room_id, reaction_event_id, reason)
+
+    async def on_processing_start(self, event: MessageEvent) -> None:
+        """Add 👀 reaction when the agent starts processing a message."""
+        if not self._reactions_enabled:
+            return
+        msg_id = event.message_id
+        room_id = event.source.chat_id
+        if msg_id and room_id:
+            await self._send_reaction(room_id, msg_id, "👀")
+
+    async def on_processing_complete(
+        self, event: MessageEvent, success: bool,
+    ) -> None:
+        """Replace 👀 with ✅ (success) or ❌ (failure)."""
+        if not self._reactions_enabled:
+            return
+        msg_id = event.message_id
+        room_id = event.source.chat_id
+        if not msg_id or not room_id:
+            return
+        # Note: Matrix doesn't support removing a specific reaction easily
+        # without tracking the reaction event_id. We send the new reaction;
+        # the 👀 stays (acceptable UX — both are visible).
+        await self._send_reaction(
+            room_id, msg_id, "✅" if success else "❌",
+        )
+
+    async def _on_reaction(self, room: Any, event: Any) -> None:
+        """Handle incoming reaction events."""
+        if event.sender == self._user_id:
+            return
+        if self._is_duplicate_event(getattr(event, "event_id", None)):
+            return
+        # Log for now; future: trigger agent actions based on emoji.
+        reacts_to = getattr(event, "reacts_to", "")
+        key = getattr(event, "key", "")
+        logger.info(
+            "Matrix: reaction %s from %s on %s in %s",
+            key, event.sender, reacts_to, room.room_id,
+        )
+
+    async def _on_unknown_event(self, room: Any, event: Any) -> None:
+        """Fallback handler for events not natively parsed by matrix-nio.
+
+        Catches m.reaction on older nio versions that lack ReactionEvent.
+        """
+        source = getattr(event, "source", {})
+        if source.get("type") != "m.reaction":
+            return
+        content = source.get("content", {})
+        relates_to = content.get("m.relates_to", {})
+        if relates_to.get("rel_type") != "m.annotation":
+            return
+        if source.get("sender") == self._user_id:
+            return
+        logger.info(
+            "Matrix: reaction %s from %s on %s in %s",
+            relates_to.get("key", "?"),
+            source.get("sender", "?"),
+            relates_to.get("event_id", "?"),
+            room.room_id,
+        )
+
+    # ------------------------------------------------------------------
+    # Read receipts
+    # ------------------------------------------------------------------
+
+    async def send_read_receipt(self, room_id: str, event_id: str) -> bool:
+        """Send a read receipt (m.read) for an event.
+
+        Also sets the fully-read marker so the room is marked as read
+        in all clients.
+        """
+        if not self._client:
+            return False
+        try:
+            if hasattr(self._client, "room_read_markers"):
+                resp = await self._client.room_read_markers(
+                    room_id,
+                    fully_read_event=event_id,
+                    read_event=event_id,
+                )
+            else:
+                # Fallback for older matrix-nio.
+                resp = await self._client.room_send(
+                    room_id, "m.receipt", {"event_id": event_id},
+                )
+            logger.debug("Matrix: sent read receipt for %s in %s", event_id, room_id)
+            return True
+        except Exception as exc:
+            logger.debug("Matrix: read receipt failed: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Message redaction
+    # ------------------------------------------------------------------
+
+    async def redact_message(
+        self, room_id: str, event_id: str, reason: str = "",
+    ) -> bool:
+        """Redact (delete) a message or event from a room."""
+        import nio
+
+        if not self._client:
+            return False
+        try:
+            resp = await self._client.room_redact(
+                room_id, event_id, reason=reason,
+            )
+            if isinstance(resp, nio.RoomRedactResponse):
+                logger.info("Matrix: redacted %s in %s", event_id, room_id)
+                return True
+            logger.warning("Matrix: redact failed: %s", resp)
+            return False
+        except Exception as exc:
+            logger.warning("Matrix: redact error: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Room history
+    # ------------------------------------------------------------------
+
+    async def fetch_room_history(
+        self,
+        room_id: str,
+        limit: int = 50,
+        start: str = "",
+    ) -> list:
+        """Fetch recent messages from a room.
+
+        Returns a list of dicts with keys: event_id, sender, body,
+        timestamp, type.  Uses the ``room_messages()`` API.
+        """
+        import nio
+
+        if not self._client:
+            return []
+        try:
+            resp = await self._client.room_messages(
+                room_id,
+                start=start or "",
+                limit=limit,
+                direction=nio.Api.MessageDirection.back
+                if hasattr(nio.Api, "MessageDirection")
+                else "b",
+            )
+        except Exception as exc:
+            logger.warning("Matrix: room_messages failed for %s: %s", room_id, exc)
+            return []
+
+        if not isinstance(resp, nio.RoomMessagesResponse):
+            logger.warning("Matrix: room_messages returned %s", type(resp).__name__)
+            return []
+
+        messages = []
+        for event in reversed(resp.chunk):
+            body = getattr(event, "body", "") or ""
+            messages.append({
+                "event_id": getattr(event, "event_id", ""),
+                "sender": getattr(event, "sender", ""),
+                "body": body,
+                "timestamp": getattr(event, "server_timestamp", 0),
+                "type": type(event).__name__,
+            })
+        return messages
+
+    # ------------------------------------------------------------------
+    # Room creation & management
+    # ------------------------------------------------------------------
+
+    async def create_room(
+        self,
+        name: str = "",
+        topic: str = "",
+        invite: Optional[list] = None,
+        is_direct: bool = False,
+        preset: str = "private_chat",
+    ) -> Optional[str]:
+        """Create a new Matrix room.
+
+        Args:
+            name: Human-readable room name.
+            topic: Room topic.
+            invite: List of user IDs to invite.
+            is_direct: Mark as a DM room.
+            preset: One of private_chat, public_chat, trusted_private_chat.
+
+        Returns the room_id on success, None on failure.
+        """
+        import nio
+
+        if not self._client:
+            return None
+        try:
+            resp = await self._client.room_create(
+                name=name or None,
+                topic=topic or None,
+                invite=invite or [],
+                is_direct=is_direct,
+                preset=getattr(
+                    nio.Api.RoomPreset if hasattr(nio.Api, "RoomPreset") else type("", (), {}),
+                    preset, None,
+                ) or preset,
+            )
+            if isinstance(resp, nio.RoomCreateResponse):
+                room_id = resp.room_id
+                self._joined_rooms.add(room_id)
+                logger.info("Matrix: created room %s (%s)", room_id, name or "unnamed")
+                return room_id
+            logger.warning("Matrix: room_create failed: %s", resp)
+            return None
+        except Exception as exc:
+            logger.warning("Matrix: room_create error: %s", exc)
+            return None
+
+    async def invite_user(self, room_id: str, user_id: str) -> bool:
+        """Invite a user to a room."""
+        import nio
+
+        if not self._client:
+            return False
+        try:
+            resp = await self._client.room_invite(room_id, user_id)
+            if isinstance(resp, nio.RoomInviteResponse):
+                logger.info("Matrix: invited %s to %s", user_id, room_id)
+                return True
+            logger.warning("Matrix: invite failed: %s", resp)
+            return False
+        except Exception as exc:
+            logger.warning("Matrix: invite error: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # Presence
+    # ------------------------------------------------------------------
+
+    async def set_presence(self, state: str = "online", status_msg: str = "") -> bool:
+        """Set the bot's presence status.
+
+        Args:
+            state: One of 'online', 'offline', 'unavailable'.
+            status_msg: Optional human-readable status message.
+        """
+        if not self._client:
+            return False
+        try:
+            if hasattr(self._client, "set_presence"):
+                await self._client.set_presence(state, status_msg=status_msg or None)
+                logger.debug("Matrix: presence set to %s", state)
+                return True
+        except Exception as exc:
+            logger.debug("Matrix: set_presence failed: %s", exc)
+        return False
+
+    # ------------------------------------------------------------------
+    # Emote & notice message types
+    # ------------------------------------------------------------------
+
+    async def send_emote(
+        self, chat_id: str, text: str, metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send an emote message (/me style action)."""
+        import nio
+
+        if not self._client or not text:
+            return SendResult(success=False, error="No client or empty text")
+
+        msg_content: Dict[str, Any] = {
+            "msgtype": "m.emote",
+            "body": text,
+        }
+        html = self._markdown_to_html(text)
+        if html and html != text:
+            msg_content["format"] = "org.matrix.custom.html"
+            msg_content["formatted_body"] = html
+
+        try:
+            resp = await self._client.room_send(
+                chat_id, "m.room.message", msg_content,
+                ignore_unverified_devices=True,
+            )
+            if isinstance(resp, nio.RoomSendResponse):
+                return SendResult(success=True, message_id=resp.event_id)
+            return SendResult(success=False, error=str(resp))
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
+
+    async def send_notice(
+        self, chat_id: str, text: str, metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send a notice message (bot-appropriate, non-alerting)."""
+        import nio
+
+        if not self._client or not text:
+            return SendResult(success=False, error="No client or empty text")
+
+        msg_content: Dict[str, Any] = {
+            "msgtype": "m.notice",
+            "body": text,
+        }
+        html = self._markdown_to_html(text)
+        if html and html != text:
+            msg_content["format"] = "org.matrix.custom.html"
+            msg_content["formatted_body"] = html
+
+        try:
+            resp = await self._client.room_send(
+                chat_id, "m.room.message", msg_content,
+                ignore_unverified_devices=True,
+            )
+            if isinstance(resp, nio.RoomSendResponse):
+                return SendResult(success=True, message_id=resp.event_id)
+            return SendResult(success=False, error=str(resp))
+        except Exception as exc:
+            return SendResult(success=False, error=str(exc))
 
     # ------------------------------------------------------------------
     # Helpers
