@@ -141,6 +141,20 @@ class HonchoMemoryProvider(MemoryProvider):
         except Exception:
             return False
 
+    def save_config(self, values, hermes_home):
+        """Write config to $HERMES_HOME/honcho.json (Honcho SDK native format)."""
+        import json
+        from pathlib import Path
+        config_path = Path(hermes_home) / "honcho.json"
+        existing = {}
+        if config_path.exists():
+            try:
+                existing = json.loads(config_path.read_text())
+            except Exception:
+                pass
+        existing.update(values)
+        config_path.write_text(json.dumps(existing, indent=2))
+
     def get_config_schema(self):
         return [
             {"key": "api_key", "description": "Honcho API key", "secret": True, "env_var": "HONCHO_API_KEY", "url": "https://app.honcho.dev"},

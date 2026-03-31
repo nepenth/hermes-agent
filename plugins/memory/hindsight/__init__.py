@@ -185,6 +185,22 @@ class HindsightMemoryProvider(MemoryProvider):
         except Exception:
             return False
 
+    def save_config(self, values, hermes_home):
+        """Write config to $HERMES_HOME/hindsight/config.json."""
+        import json
+        from pathlib import Path
+        config_dir = Path(hermes_home) / "hindsight"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / "config.json"
+        existing = {}
+        if config_path.exists():
+            try:
+                existing = json.loads(config_path.read_text())
+            except Exception:
+                pass
+        existing.update(values)
+        config_path.write_text(json.dumps(existing, indent=2))
+
     def get_config_schema(self):
         return [
             {"key": "mode", "description": "Cloud API or local embedded mode", "default": "cloud", "choices": ["cloud", "local"]},

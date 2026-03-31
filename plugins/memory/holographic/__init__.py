@@ -127,6 +127,23 @@ class HolographicMemoryProvider(MemoryProvider):
     def is_available(self) -> bool:
         return True  # SQLite is always available, numpy is optional
 
+    def save_config(self, values, hermes_home):
+        """Write config to config.yaml under plugins.hermes-memory-store."""
+        from pathlib import Path
+        config_path = Path(hermes_home) / "config.yaml"
+        try:
+            import yaml
+            existing = {}
+            if config_path.exists():
+                with open(config_path) as f:
+                    existing = yaml.safe_load(f) or {}
+            existing.setdefault("plugins", {})
+            existing["plugins"]["hermes-memory-store"] = values
+            with open(config_path, "w") as f:
+                yaml.dump(existing, f, default_flow_style=False)
+        except Exception:
+            pass
+
     def get_config_schema(self):
         from hermes_constants import display_hermes_home
         _default_db = f"{display_hermes_home()}/memory_store.db"

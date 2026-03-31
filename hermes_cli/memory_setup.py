@@ -246,17 +246,26 @@ def cmd_setup(args) -> None:
                 if val:
                     provider_config[key] = val
 
-    # Write config
+    # Write activation key to config.yaml
     config["memory"]["provider"] = name
-    config["memory"][name] = provider_config
     save_config(config)
+
+    # Write non-secret config to provider's native location
+    hermes_home = str(Path(os.environ.get("HERMES_HOME", os.path.expanduser("~/.hermes"))))
+    if provider_config and hasattr(provider, "save_config"):
+        try:
+            provider.save_config(provider_config, hermes_home)
+        except Exception as e:
+            print(f"  ⚠ Failed to write provider config: {e}")
 
     # Write secrets to .env
     if env_writes:
         _write_env_vars(env_path, env_writes)
 
     print(f"\n  ✓ Memory provider: {name}")
-    print(f"  ✓ Config saved to config.yaml")
+    print(f"  ✓ Activation saved to config.yaml")
+    if provider_config:
+        print(f"  ✓ Provider config saved")
     if env_writes:
         print(f"  ✓ API keys saved to .env")
     print(f"\n  Start a new session to activate.\n")

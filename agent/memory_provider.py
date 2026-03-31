@@ -164,6 +164,23 @@ class MemoryProvider(ABC):
         """
         return []
 
+    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+        """Write non-secret config to the provider's native location.
+
+        Called by 'hermes memory setup' after collecting user inputs.
+        ``values`` contains only non-secret fields (secrets go to .env).
+        ``hermes_home`` is the active HERMES_HOME directory path.
+
+        Providers with native config files (JSON, YAML) should override
+        this to write to their expected location. Providers that use only
+        env vars can leave the default (no-op).
+
+        All new memory provider plugins MUST implement either:
+        - save_config() for native config file formats, OR
+        - use only env vars (in which case get_config_schema() fields
+          should all have ``env_var`` set and this method stays no-op).
+        """
+
     def on_memory_write(self, action: str, target: str, content: str) -> None:
         """Called when the built-in memory tool writes an entry.
 
