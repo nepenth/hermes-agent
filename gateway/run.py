@@ -5401,7 +5401,13 @@ class GatewayRunner:
             or os.getenv("HERMES_TOOL_PROGRESS_MODE")
             or "all"
         )
-        tool_progress_enabled = progress_mode != "off"
+        _matrix_adapter = self.adapters.get(source.platform)
+        _matrix_thinking_active = bool(
+            source.platform == Platform.MATRIX
+            and _matrix_adapter
+            and getattr(_matrix_adapter, "_thinking_enabled", False)
+        )
+        tool_progress_enabled = progress_mode != "off" and not _matrix_thinking_active
         
         # Queue for progress messages (thread-safe)
         progress_queue = queue.Queue() if tool_progress_enabled else None
@@ -5585,11 +5591,34 @@ class GatewayRunner:
         _status_adapter = self.adapters.get(source.platform)
         _status_chat_id = source.chat_id
         _status_thread_metadata = {"thread_id": _progress_thread_id} if _progress_thread_id else None
+        _thinking_started = [False]
+        _thinking_task_id = session_key or session_id or ""
 
         def _status_callback_sync(event_type: str, message: str) -> None:
             if not _status_adapter:
                 return
             try:
+                if _matrix_thinking_active:
+                    if message and not _thinking_started[0]:
+                        _thinking_started[0] = True
+                        asyncio.run_coroutine_threadsafe(
+                            _status_adapter.start_thinking(
+                                _status_chat_id,
+                                _thinking_task_id,
+                                message,
+                            ),
+                            _loop_for_step,
+                        )
+                    elif message:
+                        asyncio.run_coroutine_threadsafe(
+                            _status_adapter.update_thinking(
+                                _thinking_task_id,
+                                message,
+                                "",
+                            ),
+                            _loop_for_step,
+                        )
+                    return
                 asyncio.run_coroutine_threadsafe(
                     _status_adapter.send(
                         _status_chat_id,
@@ -5736,8 +5765,6 @@ class GatewayRunner:
             # These bridge the sync agent thread → async Matrix adapter via
             # run_coroutine_threadsafe, matching the pattern of _step_callback_sync.
             _thinking_adapter = self.adapters.get(source.platform)
-            _thinking_task_id = session_key or session_id or ""
-            _thinking_started = [False]
 
             if (
                 source.platform == Platform.MATRIX

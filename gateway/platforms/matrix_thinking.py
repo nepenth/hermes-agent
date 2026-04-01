@@ -305,12 +305,13 @@ class ThinkingManager:
         if len(content_html.encode("utf-8")) > _MAX_BODY_SIZE:
             content_html = content_html[: _MAX_BODY_SIZE] + "\n… (truncated)"
 
+        details_body = f"<pre><code>{content_html}</code></pre>" if content_html else ""
         result = (
             f"<details{open_attr}>"
             f"<summary>🤔 <strong>Hermes Agent</strong> "
             f"({step_info}{elapsed_info} • {timestamp}) — "
             f"{html.escape(summary)}</summary>"
-            f"<pre><code>{content_html}</code></pre>"
+            f"{details_body}"
             f"</details>"
         )
         return result
