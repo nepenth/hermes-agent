@@ -123,6 +123,14 @@ class MatrixAdapter(BasePlatformAdapter):
         # Each entry: (room, event, timestamp)
         self._pending_megolm: list = []
 
+        # Thinking / agentic collapsible fields
+        self._thinking_enabled: bool = config.extra.get(
+            "thinking_fields_enabled",
+            os.getenv("MATRIX_THINKING_FIELDS_ENABLED", "true").lower()
+            in ("true", "1", "yes"),
+        )
+        self._thinking_manager: Optional[Any] = None  # Lazy init after connect
+
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
         if not event_id:
@@ -483,6 +491,51 @@ class MatrixAdapter(BasePlatformAdapter):
         if isinstance(resp, nio.RoomSendResponse):
             return SendResult(success=True, message_id=resp.event_id)
         return SendResult(success=False, error=getattr(resp, "message", str(resp)))
+
+    # ------------------------------------------------------------------
+    # Thinking fields — collapsible <details> blocks for agentic tasks
+    # ------------------------------------------------------------------
+
+    def _get_thinking_manager(self):
+        """Lazy-init the ThinkingManager (requires connected client)."""
+        if self._thinking_manager is None and self._client:
+            from gateway.platforms.matrix_thinking import ThinkingManager
+
+            self._thinking_manager = ThinkingManager(self)
+        return self._thinking_manager
+
+    async def start_thinking(
+        self, room_id: str, task_id: str, initial_summary: str = "Processing request..."
+    ) -> Optional[str]:
+        """Start a collapsible thinking field.  Returns event_id or None."""
+        if not self._thinking_enabled or not self._client:
+            return None
+        mgr = self._get_thinking_manager()
+        if not mgr:
+            return None
+        return await mgr.start(room_id, task_id, initial_summary)
+
+    async def update_thinking(
+        self, task_id: str, step_info: str, content_md: str = ""
+    ) -> None:
+        """Live-update thinking field (rate-limited)."""
+        if not self._thinking_enabled or not self._thinking_manager:
+            return
+        await self._thinking_manager.update(task_id, step_info, content_md)
+
+    async def finalize_thinking(
+        self, task_id: str, final_summary: str = "Task complete", collapse: bool = True
+    ) -> None:
+        """Finalize and optionally collapse thinking field."""
+        if not self._thinking_enabled or not self._thinking_manager:
+            return
+        await self._thinking_manager.finalize(task_id, final_summary, collapse)
+
+    async def abort_thinking(self, task_id: str, reason: str = "Aborted") -> None:
+        """Abort a thinking session on error/timeout."""
+        if not self._thinking_manager:
+            return
+        await self._thinking_manager.abort(task_id, reason)
 
     async def send_image(
         self,

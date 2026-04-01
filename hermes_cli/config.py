@@ -962,6 +962,14 @@ OPTIONAL_ENV_VARS = {
         "password": False,
         "category": "messaging",
     },
+    "MATRIX_THINKING_FIELDS_ENABLED": {
+        "description": "Enable collapsible thinking fields in Matrix rooms (default: true). Shows live-updating <details> blocks during agent reasoning.",
+        "prompt": "Enable Matrix thinking fields (true/false)",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
     "GATEWAY_ALLOW_ALL_USERS": {
         "description": "Allow all users to interact with messaging bots (true/false). Default: false.",
         "prompt": "Allow all users (true/false)",

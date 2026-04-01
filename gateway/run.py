@@ -5732,6 +5732,64 @@ class GatewayRunner:
             agent.status_callback = _status_callback_sync
             agent.reasoning_config = reasoning_config
 
+            # Wire thinking field callbacks for Matrix (collapsible <details> blocks).
+            # These bridge the sync agent thread → async Matrix adapter via
+            # run_coroutine_threadsafe, matching the pattern of _step_callback_sync.
+            _thinking_adapter = self.adapters.get(source.platform)
+            _thinking_task_id = session_key or session_id or ""
+            _thinking_started = [False]
+
+            if (
+                source.platform == Platform.MATRIX
+                and _thinking_adapter
+                and getattr(_thinking_adapter, "_thinking_enabled", False)
+            ):
+                def _thinking_callback_sync(text: str) -> None:
+                    """Called by agent when thinking state changes."""
+                    try:
+                        if text and not _thinking_started[0]:
+                            # Start thinking session on first thinking signal
+                            _thinking_started[0] = True
+                            asyncio.run_coroutine_threadsafe(
+                                _thinking_adapter.start_thinking(
+                                    source.chat_id,
+                                    _thinking_task_id,
+                                    "Processing…",
+                                ),
+                                _loop_for_step,
+                            )
+                        elif text and _thinking_started[0]:
+                            # Update with thinking text
+                            asyncio.run_coroutine_threadsafe(
+                                _thinking_adapter.update_thinking(
+                                    _thinking_task_id,
+                                    "Reasoning…",
+                                    text,
+                                ),
+                                _loop_for_step,
+                            )
+                    except Exception as _e:
+                        logger.debug("thinking_callback error: %s", _e)
+
+                def _reasoning_callback_sync(text: str) -> None:
+                    """Called by agent with reasoning trace deltas."""
+                    if not _thinking_started[0] or not text:
+                        return
+                    try:
+                        asyncio.run_coroutine_threadsafe(
+                            _thinking_adapter.update_thinking(
+                                _thinking_task_id,
+                                "Reasoning…",
+                                text,
+                            ),
+                            _loop_for_step,
+                        )
+                    except Exception as _e:
+                        logger.debug("reasoning_callback error: %s", _e)
+
+                agent.thinking_callback = _thinking_callback_sync
+                agent.reasoning_callback = _reasoning_callback_sync
+
             # Background review delivery — send "💾 Memory updated" etc. to user
             def _bg_review_send(message: str) -> None:
                 if not _status_adapter:
@@ -5827,6 +5885,31 @@ class GatewayRunner:
             # Signal the stream consumer that the agent is done
             if _stream_consumer is not None:
                 _stream_consumer.finish()
+
+            # Finalize thinking field (collapse the <details> block)
+            if _thinking_started[0]:
+                _is_error = result.get("failed") or result.get("error")
+                try:
+                    if _is_error:
+                        asyncio.run_coroutine_threadsafe(
+                            _thinking_adapter.abort_thinking(
+                                _thinking_task_id,
+                                str(result.get("error", "Agent error")),
+                            ),
+                            _loop_for_step,
+                        ).result(timeout=10)
+                    else:
+                        _steps = result.get("api_calls", 0)
+                        asyncio.run_coroutine_threadsafe(
+                            _thinking_adapter.finalize_thinking(
+                                _thinking_task_id,
+                                f"Complete ({_steps} API calls)",
+                                collapse=True,
+                            ),
+                            _loop_for_step,
+                        ).result(timeout=10)
+                except Exception as _e:
+                    logger.debug("thinking finalize error: %s", _e)
             
             # Return final response, or a message if something went wrong
             final_response = result.get("final_response")
