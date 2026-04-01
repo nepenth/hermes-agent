@@ -5652,6 +5652,7 @@ class GatewayRunner:
                     provider_require_parameters=pr.get("require_parameters", False),
                     provider_data_collection=pr.get("data_collection"),
                     session_id=session_id,
+                    session_key=session_key,
                     platform=platform_key,
                     honcho_session_key=session_key,
                     honcho_manager=honcho_manager,
@@ -5951,11 +5952,22 @@ class GatewayRunner:
             if _agent is not None and hasattr(_agent, 'model'):
                 _cfg_model = _resolve_gateway_model()
                 if _agent.model != _cfg_model:
+                    from agent.circuit_breaker import ProviderCircuitBreaker
+
                     self._effective_model = _agent.model
                     self._effective_provider = getattr(_agent, 'provider', None)
-                    # Fallback activated — evict cached agent so the next
-                    # message starts fresh and retries the primary model.
-                    self._evict_cached_agent(session_key)
+                    _cb = ProviderCircuitBreaker.get_instance()
+                    _primary_provider = turn_route.get("runtime", {}).get("provider") or getattr(_agent, 'provider', '')
+                    if _cb.should_use_fallback(_primary_provider, session_key=session_key):
+                        logger.info(
+                            "Keeping fallback agent cached for session %s because circuit breaker is open for %s",
+                            session_key,
+                            _primary_provider,
+                        )
+                    else:
+                        # Primary recovered — evict cached fallback agent so the
+                        # next message retries the configured primary route.
+                        self._evict_cached_agent(session_key)
                 else:
                     # Primary model worked — clear any stale fallback state
                     self._effective_model = None
