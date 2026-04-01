@@ -1,11 +1,9 @@
-"""Matrix thinking / tool-use collapsible field manager.
+"""Matrix collapsible introspection fields for agent reasoning and tool activity.
 
-Provides live-updating <details> blocks for agentic workflows in Matrix rooms.
-Uses only stable, spec-compliant primitives:
+Lossless, reviewable, rate-limited live introspection for Matrix agent runs.
+Uses stable Matrix primitives only:
   - m.room.message with org.matrix.custom.html + <details><summary>
   - Live message edits via m.replace relation + m.new_content
-
-No server changes, no matrix-nio forks, no new dependencies.
 """
 
 from __future__ import annotations
@@ -22,16 +20,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Rate limit: minimum seconds between edit updates
 _MIN_EDIT_INTERVAL = 3.0
-
-# Maximum HTML body size (bytes) to prevent oversized events
 _MAX_BODY_SIZE = 60_000
 
 
 @dataclass
 class ThinkingSession:
-    """Tracks one active thinking field per task."""
+    """Tracks one active introspection field per task/kind."""
 
     room_id: str
     event_id: str
@@ -41,12 +36,20 @@ class ThinkingSession:
     step_count: int = 0
     content_lines: list = field(default_factory=list)
     finalized: bool = False
+    field_kind: str = "thinking"
+    title: str = "Hermes Agent"
+    summary: str = ""
+    model_label: str = ""
+    dirty: bool = False
+    flush_task: Optional[asyncio.Task] = None
 
 
 class ThinkingManager:
-    """Manages collapsible thinking fields for the Matrix adapter.
+    """Manages buffered Matrix introspection fields.
 
-    Thread-safe via asyncio.Lock.  One thinking session per task_id.
+    Supports two lossless buffered field types:
+      - thinking
+      - tools
     """
 
     def __init__(self, adapter: "MatrixAdapter"):
@@ -63,19 +66,39 @@ class ThinkingManager:
         room_id: str,
         task_id: str,
         initial_summary: str = "Processing request...",
+        *,
+        field_kind: str = "thinking",
+        model_label: str = "",
+        initial_content_md: str = "",
     ) -> Optional[str]:
-        """Send initial thinking block and return event_id, or None on failure."""
+        """Send initial field and return event_id, or None on failure."""
         import nio
 
+        key = self._session_key(task_id, field_kind)
+        async with self._lock:
+            _, existing = self._lookup_session_locked(task_id, field_kind)
+            if existing and not existing.finalized:
+                if model_label:
+                    existing.model_label = model_label
+                if initial_content_md:
+                    existing.content_lines.append(initial_content_md)
+                    existing.dirty = True
+                    self._ensure_flush_locked(key, existing, 0.0)
+                return existing.event_id
+
         now = time.time()
+        title = self._field_title(field_kind)
+        initial_lines = [initial_content_md] if initial_content_md else []
         html_body = self._build_html(
             summary=initial_summary,
             step=0,
             ts=now,
-            content_html="<em>Thinking…</em>",
+            content_html=self._lines_to_html(initial_lines),
             open_tag=True,
+            field_kind=field_kind,
+            model_label=model_label,
         )
-        plaintext = f"🤔 Hermes Agent is thinking — {initial_summary} (expand for details)"
+        plaintext = self._plaintext_summary(title, initial_summary, model_label=model_label)
         content = self._msg_content(html_body, plaintext)
 
         try:
@@ -89,122 +112,261 @@ class ThinkingManager:
                 timeout=30,
             )
         except Exception as exc:
-            logger.error("Matrix thinking: failed to start in %s: %s", room_id, exc)
+            logger.error("Matrix introspection: failed to start %s in %s: %s", field_kind, room_id, exc)
             return None
 
         if not isinstance(resp, nio.RoomSendResponse):
             logger.error(
-                "Matrix thinking: unexpected response %s",
+                "Matrix introspection: unexpected response %s",
                 getattr(resp, "message", resp),
             )
             return None
 
-        event_id = resp.event_id
+        session = ThinkingSession(
+            room_id=room_id,
+            event_id=resp.event_id,
+            task_id=task_id,
+            started_at=now,
+            last_update=now,
+            field_kind=field_kind,
+            title=title,
+            summary=initial_summary,
+            model_label=model_label,
+            content_lines=initial_lines,
+        )
         async with self._lock:
-            self._sessions[task_id] = ThinkingSession(
-                room_id=room_id,
-                event_id=event_id,
-                task_id=task_id,
-                started_at=now,
-                last_update=now,
-            )
+            self._sessions[key] = session
 
-        logger.info("Matrix thinking started in %s (task %s, event %s)", room_id, task_id, event_id)
-        return event_id
+        logger.info(
+            "Matrix introspection started in %s (task=%s kind=%s event=%s)",
+            room_id,
+            task_id,
+            field_kind,
+            resp.event_id,
+        )
+        return resp.event_id
 
     async def update(
         self,
         task_id: str,
         step_info: str,
         content_md: str = "",
+        *,
+        field_kind: str = "thinking",
+        model_label: Optional[str] = None,
+        append_line: bool = True,
     ) -> None:
-        """Live-update the thinking block.  Rate-limited to avoid flooding."""
+        """Append data losslessly and flush on a rate-limited schedule."""
+        key = self._session_key(task_id, field_kind)
+        snapshot = None
+
         async with self._lock:
-            session = self._sessions.get(task_id)
+            key, session = self._lookup_session_locked(task_id, field_kind)
             if not session or session.finalized:
                 return
 
-            now = time.time()
-            if now - session.last_update < _MIN_EDIT_INTERVAL:
-                return  # throttle
-
-            session.step_count += 1
-            session.last_update = now
-
-            # Accumulate content
-            if content_md:
+            if step_info:
+                session.summary = step_info
+            if model_label:
+                session.model_label = model_label
+            if content_md and append_line:
                 session.content_lines.append(content_md)
+            session.step_count += 1
+            session.dirty = True
 
-            # Build snapshot under lock
-            step = session.step_count
-            event_id = session.event_id
-            room_id = session.room_id
-            lines = list(session.content_lines)
+            now = time.time()
+            elapsed = now - session.last_update
+            if elapsed >= _MIN_EDIT_INTERVAL and (session.flush_task is None or session.flush_task.done()):
+                snapshot = self._snapshot_locked(session)
+                session.last_update = now
+                session.dirty = False
+            else:
+                delay = max(0.0, _MIN_EDIT_INTERVAL - elapsed)
+                self._ensure_flush_locked(key, session, delay)
 
-        # Build HTML outside lock
-        content_html = self._lines_to_html(lines)
-        elapsed = self._elapsed_str(session.started_at)
-
-        html_body = self._build_html(
-            summary=step_info,
-            step=step,
-            ts=time.time(),
-            content_html=content_html,
-            open_tag=True,
-            elapsed=elapsed,
-        )
-        plaintext = f"🤔 Step {step} — {step_info} ({elapsed})"
-        edit_content = self._edit_content(event_id, html_body, plaintext)
-
-        try:
-            await asyncio.wait_for(
-                self._adapter._client.room_send(
-                    room_id,
-                    "m.room.message",
-                    edit_content,
-                    ignore_unverified_devices=True,
-                ),
-                timeout=15,
-            )
-        except Exception as exc:
-            logger.debug("Matrix thinking: update failed for task %s: %s", task_id, exc)
+        if snapshot:
+            await self._send_edit_snapshot(snapshot)
 
     async def finalize(
         self,
         task_id: str,
         final_summary: str = "Task complete",
         collapse: bool = True,
+        *,
+        field_kind: str = "thinking",
+        model_label: Optional[str] = None,
     ) -> None:
-        """Close the thinking block and optionally collapse it."""
+        """Flush all buffered data, then collapse the field."""
+        key = self._session_key(task_id, field_kind)
+        snapshot = None
+        flush_task = None
+
         async with self._lock:
-            session = self._sessions.get(task_id)
+            key, session = self._lookup_session_locked(task_id, field_kind)
             if not session:
                 return
             session.finalized = True
-            event_id = session.event_id
-            room_id = session.room_id
-            step = session.step_count
-            lines = list(session.content_lines)
+            if field_kind == "thinking" and final_summary and not final_summary.startswith(("✅", "⚠️")):
+                session.summary = f"✅ {final_summary}"
+            else:
+                session.summary = final_summary
+            if model_label:
+                session.model_label = model_label
+            flush_task = session.flush_task
+            session.flush_task = None
+            snapshot = self._snapshot_locked(session)
 
-        elapsed = self._elapsed_str(session.started_at)
-        content_html = self._lines_to_html(lines)
+        if flush_task and not flush_task.done():
+            flush_task.cancel()
+            try:
+                await flush_task
+            except asyncio.CancelledError:
+                pass
+
+        await self._send_edit_snapshot(snapshot, final=True, collapse=collapse)
+
+        async with self._lock:
+            self._sessions.pop(key, None)
+
+    async def abort(
+        self,
+        task_id: str,
+        reason: str = "Aborted",
+        *,
+        field_kind: str = "thinking",
+        model_label: Optional[str] = None,
+    ) -> None:
+        """Abort a field while preserving all buffered content."""
+        await self.finalize(
+            task_id,
+            f"⚠️ {reason}",
+            collapse=True,
+            field_kind=field_kind,
+            model_label=model_label,
+        )
+
+    def has_session(self, task_id: str, field_kind: str = "thinking") -> bool:
+        key = self._session_key(task_id, field_kind)
+        return key in self._sessions or (field_kind == "thinking" and task_id in self._sessions)
+
+    async def cleanup_stale(self, max_age: float = 1800) -> None:
+        now = time.time()
+        async with self._lock:
+            stale = [
+                key
+                for key, session in self._sessions.items()
+                if now - session.started_at > max_age
+            ]
+            for key in stale:
+                session = self._sessions.pop(key, None)
+                if session and session.flush_task and not session.flush_task.done():
+                    session.flush_task.cancel()
+                logger.warning("Matrix introspection: cleaned up stale session %s", key)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _session_key(task_id: str, field_kind: str) -> str:
+        return f"{task_id}:{field_kind}"
+
+    def _lookup_session_locked(
+        self, task_id: str, field_kind: str
+    ) -> tuple[str, Optional[ThinkingSession]]:
+        key = self._session_key(task_id, field_kind)
+        session = self._sessions.get(key)
+        if session is None and field_kind == "thinking":
+            session = self._sessions.get(task_id)
+            if session is not None:
+                key = task_id
+        return key, session
+
+    @staticmethod
+    def _field_title(field_kind: str) -> str:
+        return "Tool Activity" if field_kind == "tools" else "Hermes Agent"
+
+    @staticmethod
+    def _field_icon(field_kind: str) -> str:
+        return "🛠️" if field_kind == "tools" else "🤔"
+
+    def _snapshot_locked(self, session: ThinkingSession) -> Dict[str, Any]:
+        return {
+            "room_id": session.room_id,
+            "event_id": session.event_id,
+            "task_id": session.task_id,
+            "started_at": session.started_at,
+            "step": session.step_count,
+            "summary": session.summary,
+            "content_lines": list(session.content_lines),
+            "field_kind": session.field_kind,
+            "title": session.title,
+            "model_label": session.model_label,
+        }
+
+    def _ensure_flush_locked(self, key: str, session: ThinkingSession, delay: float) -> None:
+        if session.flush_task is None or session.flush_task.done():
+            session.flush_task = asyncio.create_task(self._delayed_flush(key, delay))
+
+    async def _delayed_flush(self, key: str, delay: float) -> None:
+        try:
+            await asyncio.sleep(delay)
+            await self._flush(key)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("Matrix introspection: delayed flush failed for %s: %s", key, exc)
+
+    async def _flush(self, key: str) -> None:
+        snapshot = None
+        async with self._lock:
+            session = self._sessions.get(key)
+            if not session or session.finalized:
+                return
+            session.flush_task = None
+            if not session.dirty:
+                return
+            snapshot = self._snapshot_locked(session)
+            session.last_update = time.time()
+            session.dirty = False
+
+        await self._send_edit_snapshot(snapshot)
+
+    async def _send_edit_snapshot(
+        self,
+        snapshot: Dict[str, Any],
+        *,
+        final: bool = False,
+        collapse: bool = True,
+    ) -> None:
+        elapsed = self._elapsed_str(snapshot["started_at"])
+        content_html = self._lines_to_html(snapshot["content_lines"])
+        summary = snapshot["summary"] or ("Complete" if final else "Working")
+        open_tag = not final or not collapse
 
         html_body = self._build_html(
-            summary=f"✅ {final_summary}",
-            step=step,
+            summary=summary,
+            step=snapshot["step"],
             ts=time.time(),
             content_html=content_html,
-            open_tag=not collapse,
+            open_tag=open_tag,
             elapsed=elapsed,
-            final=True,
+            final=final,
+            field_kind=snapshot["field_kind"],
+            model_label=snapshot.get("model_label") or "",
         )
-        plaintext = f"✅ {final_summary} ({step} steps, {elapsed})"
-        edit_content = self._edit_content(event_id, html_body, plaintext)
+        plaintext = self._plaintext_summary(
+            snapshot["title"],
+            summary,
+            elapsed=elapsed,
+            model_label=snapshot.get("model_label") or "",
+        )
+        edit_content = self._edit_content(snapshot["event_id"], html_body, plaintext)
 
         try:
             await asyncio.wait_for(
                 self._adapter._client.room_send(
-                    room_id,
+                    snapshot["room_id"],
                     "m.room.message",
                     edit_content,
                     ignore_unverified_devices=True,
@@ -212,73 +374,20 @@ class ThinkingManager:
                 timeout=15,
             )
         except Exception as exc:
-            logger.debug("Matrix thinking: finalize failed for task %s: %s", task_id, exc)
-
-        # Clean up
-        async with self._lock:
-            self._sessions.pop(task_id, None)
-
-        logger.info("Matrix thinking finalized for task %s (%s)", task_id, elapsed)
-
-    async def abort(self, task_id: str, reason: str = "Aborted") -> None:
-        """Abort a thinking session (error / timeout)."""
-        async with self._lock:
-            session = self._sessions.get(task_id)
-            if not session:
-                return
-            session.finalized = True
-            event_id = session.event_id
-            room_id = session.room_id
-            step = session.step_count
-            lines = list(session.content_lines)
-
-        elapsed = self._elapsed_str(session.started_at)
-        content_html = self._lines_to_html(lines)
-
-        html_body = self._build_html(
-            summary=f"⚠️ {reason}",
-            step=step,
-            ts=time.time(),
-            content_html=content_html,
-            open_tag=False,
-            elapsed=elapsed,
-            final=True,
-        )
-        plaintext = f"⚠️ {reason} ({step} steps, {elapsed})"
-        edit_content = self._edit_content(event_id, html_body, plaintext)
-
-        try:
-            await asyncio.wait_for(
-                self._adapter._client.room_send(
-                    room_id,
-                    "m.room.message",
-                    edit_content,
-                    ignore_unverified_devices=True,
-                ),
-                timeout=15,
+            logger.debug(
+                "Matrix introspection: edit failed for task %s kind %s: %s",
+                snapshot["task_id"],
+                snapshot["field_kind"],
+                exc,
             )
-        except Exception:
-            pass
-
-        async with self._lock:
-            self._sessions.pop(task_id, None)
-
-    def has_session(self, task_id: str) -> bool:
-        """Check if a thinking session exists (sync-safe, approximate)."""
-        return task_id in self._sessions
-
-    async def cleanup_stale(self, max_age: float = 1800) -> None:
-        """Remove sessions older than max_age seconds."""
-        now = time.time()
-        async with self._lock:
-            stale = [
-                tid
-                for tid, s in self._sessions.items()
-                if now - s.started_at > max_age
-            ]
-            for tid in stale:
-                self._sessions.pop(tid, None)
-                logger.warning("Matrix thinking: cleaned up stale session %s", tid)
+            # Mark dirty again for non-final sessions so later updates/finalization retry.
+            if not final:
+                key = self._session_key(snapshot["task_id"], snapshot["field_kind"])
+                async with self._lock:
+                    session = self._sessions.get(key)
+                    if session and not session.finalized:
+                        session.dirty = True
+                        self._ensure_flush_locked(key, session, _MIN_EDIT_INTERVAL)
 
     # ------------------------------------------------------------------
     # HTML generation
@@ -293,39 +402,42 @@ class ThinkingManager:
         open_tag: bool = True,
         elapsed: str = "",
         final: bool = False,
+        field_kind: str = "thinking",
+        model_label: str = "",
     ) -> str:
-        """Build sanitized HTML for <details> block."""
         open_attr = " open" if open_tag else ""
         timestamp = time.strftime("%H:%M:%S", time.localtime(ts))
-
         step_info = f"Step {step}" if step > 0 else "Starting"
         elapsed_info = f" • {elapsed}" if elapsed else ""
+        icon = self._field_icon(field_kind)
+        title = self._field_title(field_kind)
 
-        # Truncate content if too large
         if len(content_html.encode("utf-8")) > _MAX_BODY_SIZE:
-            content_html = content_html[: _MAX_BODY_SIZE] + "\n… (truncated)"
+            content_html = content_html[:_MAX_BODY_SIZE] + "\n… (truncated)"
 
-        details_body = f"<pre><code>{content_html}</code></pre>" if content_html else ""
-        result = (
+        meta_html = (
+            f"<p><em>Model: {html.escape(model_label)}</em></p>" if model_label else ""
+        )
+        details_body = meta_html
+        if content_html:
+            details_body += f"<pre><code>{content_html}</code></pre>"
+
+        return (
             f"<details{open_attr}>"
-            f"<summary>🤔 <strong>Hermes Agent</strong> "
+            f"<summary>{icon} <strong>{html.escape(title)}</strong> "
             f"({step_info}{elapsed_info} • {timestamp}) — "
             f"{html.escape(summary)}</summary>"
             f"{details_body}"
             f"</details>"
         )
-        return result
 
     def _lines_to_html(self, lines: list) -> str:
-        """Convert accumulated content lines to escaped HTML."""
         if not lines:
             return ""
-        # Escape each line individually for safety
         return "\n".join(html.escape(line) for line in lines)
 
     @staticmethod
     def _elapsed_str(started_at: float) -> str:
-        """Human-readable elapsed time."""
         elapsed = time.time() - started_at
         if elapsed < 60:
             return f"{elapsed:.0f}s"
@@ -333,13 +445,28 @@ class ThinkingManager:
         seconds = int(elapsed % 60)
         return f"{minutes}m{seconds}s"
 
+    def _plaintext_summary(
+        self,
+        title: str,
+        summary: str,
+        *,
+        elapsed: str = "",
+        model_label: str = "",
+    ) -> str:
+        icon = "🛠️" if title == "Tool Activity" else "🤔"
+        parts = [f"{icon} {title} — {summary}"]
+        if elapsed:
+            parts.append(f"({elapsed})")
+        if model_label:
+            parts.append(f"[{model_label}]")
+        return " ".join(parts)
+
     # ------------------------------------------------------------------
     # Message content builders
     # ------------------------------------------------------------------
 
     @staticmethod
     def _msg_content(html_body: str, plaintext: str) -> Dict[str, Any]:
-        """Build m.room.message content dict with HTML formatting."""
         return {
             "msgtype": "m.text",
             "body": plaintext,
@@ -348,10 +475,7 @@ class ThinkingManager:
         }
 
     @staticmethod
-    def _edit_content(
-        original_event_id: str, html_body: str, plaintext: str
-    ) -> Dict[str, Any]:
-        """Build m.replace edit content dict."""
+    def _edit_content(original_event_id: str, html_body: str, plaintext: str) -> Dict[str, Any]:
         new_content = {
             "msgtype": "m.text",
             "body": plaintext,

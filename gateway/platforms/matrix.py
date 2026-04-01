@@ -505,37 +505,154 @@ class MatrixAdapter(BasePlatformAdapter):
         return self._thinking_manager
 
     async def start_thinking(
-        self, room_id: str, task_id: str, initial_summary: str = "Processing request..."
+        self,
+        room_id: str,
+        task_id: str,
+        initial_summary: str = "Processing request...",
+        model_label: str = "",
+        initial_content_md: str = "",
     ) -> Optional[str]:
-        """Start a collapsible thinking field.  Returns event_id or None."""
+        """Start a collapsible thinking field. Returns event_id or None."""
         if not self._thinking_enabled or not self._client:
             return None
         mgr = self._get_thinking_manager()
         if not mgr:
             return None
-        return await mgr.start(room_id, task_id, initial_summary)
+        return await mgr.start(
+            room_id,
+            task_id,
+            initial_summary,
+            field_kind="thinking",
+            model_label=model_label,
+            initial_content_md=initial_content_md,
+        )
 
     async def update_thinking(
-        self, task_id: str, step_info: str, content_md: str = ""
+        self,
+        task_id: str,
+        step_info: str,
+        content_md: str = "",
+        model_label: Optional[str] = None,
+        append_line: bool = True,
     ) -> None:
-        """Live-update thinking field (rate-limited)."""
+        """Live-update thinking field (buffered + lossless)."""
         if not self._thinking_enabled or not self._thinking_manager:
             return
-        await self._thinking_manager.update(task_id, step_info, content_md)
+        await self._thinking_manager.update(
+            task_id,
+            step_info,
+            content_md,
+            field_kind="thinking",
+            model_label=model_label,
+            append_line=append_line,
+        )
 
     async def finalize_thinking(
-        self, task_id: str, final_summary: str = "Task complete", collapse: bool = True
+        self,
+        task_id: str,
+        final_summary: str = "Task complete",
+        collapse: bool = True,
+        model_label: Optional[str] = None,
     ) -> None:
         """Finalize and optionally collapse thinking field."""
         if not self._thinking_enabled or not self._thinking_manager:
             return
-        await self._thinking_manager.finalize(task_id, final_summary, collapse)
+        await self._thinking_manager.finalize(
+            task_id,
+            final_summary,
+            collapse,
+            field_kind="thinking",
+            model_label=model_label,
+        )
 
-    async def abort_thinking(self, task_id: str, reason: str = "Aborted") -> None:
+    async def abort_thinking(
+        self,
+        task_id: str,
+        reason: str = "Aborted",
+        model_label: Optional[str] = None,
+    ) -> None:
         """Abort a thinking session on error/timeout."""
         if not self._thinking_manager:
             return
-        await self._thinking_manager.abort(task_id, reason)
+        await self._thinking_manager.abort(
+            task_id,
+            reason,
+            field_kind="thinking",
+            model_label=model_label,
+        )
+
+    async def start_tool_activity(
+        self,
+        room_id: str,
+        task_id: str,
+        initial_summary: str = "Tool activity",
+        model_label: str = "",
+        initial_content_md: str = "",
+    ) -> Optional[str]:
+        if not self._thinking_enabled or not self._client:
+            return None
+        mgr = self._get_thinking_manager()
+        if not mgr:
+            return None
+        return await mgr.start(
+            room_id,
+            task_id,
+            initial_summary,
+            field_kind="tools",
+            model_label=model_label,
+            initial_content_md=initial_content_md,
+        )
+
+    async def update_tool_activity(
+        self,
+        task_id: str,
+        step_info: str,
+        content_md: str = "",
+        model_label: Optional[str] = None,
+        append_line: bool = True,
+    ) -> None:
+        if not self._thinking_enabled or not self._thinking_manager:
+            return
+        await self._thinking_manager.update(
+            task_id,
+            step_info,
+            content_md,
+            field_kind="tools",
+            model_label=model_label,
+            append_line=append_line,
+        )
+
+    async def finalize_tool_activity(
+        self,
+        task_id: str,
+        final_summary: str = "Tool activity complete",
+        collapse: bool = True,
+        model_label: Optional[str] = None,
+    ) -> None:
+        if not self._thinking_enabled or not self._thinking_manager:
+            return
+        await self._thinking_manager.finalize(
+            task_id,
+            final_summary,
+            collapse,
+            field_kind="tools",
+            model_label=model_label,
+        )
+
+    async def abort_tool_activity(
+        self,
+        task_id: str,
+        reason: str = "Tool activity aborted",
+        model_label: Optional[str] = None,
+    ) -> None:
+        if not self._thinking_manager:
+            return
+        await self._thinking_manager.abort(
+            task_id,
+            reason,
+            field_kind="tools",
+            model_label=model_label,
+        )
 
     async def send_image(
         self,

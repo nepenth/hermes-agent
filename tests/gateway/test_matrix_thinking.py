@@ -582,6 +582,48 @@ class TestContentAccumulation:
             assert session.content_lines[0] == "First reasoning line"
             assert session.step_count == 1
 
+    @pytest.mark.asyncio
+    async def test_rapid_updates_are_buffered_and_flushed_losslessly(self):
+        adapter, mock_client, _ = _make_adapter()
+
+        import sys
+        fake_nio = MagicMock()
+        fake_nio.RoomSendResponse = type("RoomSendResponse", (), {})
+        mock_resp = fake_nio.RoomSendResponse()
+        mock_resp.event_id = "$evt_update"
+        mock_client.room_send = AsyncMock(return_value=mock_resp)
+
+        with patch.dict(sys.modules, {"nio": fake_nio}):
+            import gateway.platforms.matrix_thinking as mt
+            mgr = adapter._get_thinking_manager()
+
+            with patch.object(mt, "_MIN_EDIT_INTERVAL", 0.05):
+                await mgr.start("!room:example.org", "task_buffer", "Starting")
+                mock_client.room_send.reset_mock()
+
+                await mgr.update("task_buffer", "Reasoning…", "first line")
+                await mgr.update("task_buffer", "Reasoning…", "second line")
+                await asyncio.sleep(0.08)
+
+                assert mock_client.room_send.called
+                payload = mock_client.room_send.call_args[0][2]
+                rendered = payload["m.new_content"]["formatted_body"]
+                assert "first line" in rendered
+                assert "second line" in rendered
+
+    def test_tool_field_html_includes_model_label(self):
+        mgr = _make_manager()
+        result = mgr._build_html(
+            summary="Running tools",
+            step=2,
+            ts=time.time(),
+            content_html="tool line",
+            model_label="gpt-5.4 via openai-codex",
+            field_kind="tools",
+        )
+        assert "Tool Activity" in result
+        assert "gpt-5.4 via openai-codex" in result
+
 
 # ---------------------------------------------------------------------------
 # HTML truncation

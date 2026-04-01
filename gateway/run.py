@@ -5592,12 +5592,30 @@ class GatewayRunner:
         _status_chat_id = source.chat_id
         _status_thread_metadata = {"thread_id": _progress_thread_id} if _progress_thread_id else None
         _thinking_started = [False]
+        _tool_field_started = [False]
         _thinking_task_id = session_key or session_id or ""
+        _model_label_holder = [None]
+
+        def _set_model_label(model_name: str = "", provider_name: str = "") -> None:
+            model_name = (model_name or "").strip()
+            provider_name = (provider_name or "").strip()
+            if model_name:
+                _model_label_holder[0] = (
+                    f"{model_name} via {provider_name}" if provider_name else model_name
+                )
 
         def _status_callback_sync(event_type: str, message: str) -> None:
             if not _status_adapter:
                 return
             try:
+                if message:
+                    _fb_match = re.search(
+                        r"switching to fallback:\s*(.+?)\s+via\s+([^\s]+)",
+                        message,
+                        re.IGNORECASE,
+                    )
+                    if _fb_match:
+                        _set_model_label(_fb_match.group(1), _fb_match.group(2))
                 if _matrix_thinking_active:
                     if message and not _thinking_started[0]:
                         _thinking_started[0] = True
@@ -5606,15 +5624,18 @@ class GatewayRunner:
                                 _status_chat_id,
                                 _thinking_task_id,
                                 message,
+                                model_label=_model_label_holder[0] or "",
+                                initial_content_md=message,
                             ),
                             _loop_for_step,
-                        )
+                        ).result(timeout=10)
                     elif message:
                         asyncio.run_coroutine_threadsafe(
                             _status_adapter.update_thinking(
                                 _thinking_task_id,
                                 message,
-                                "",
+                                message,
+                                model_label=_model_label_holder[0],
                             ),
                             _loop_for_step,
                         )
@@ -5629,6 +5650,47 @@ class GatewayRunner:
                 )
             except Exception as _e:
                 logger.debug("status_callback error (%s): %s", event_type, _e)
+
+        def _matrix_tool_progress_sync(tool_name: str, preview: str = None, args: dict = None):
+            if not (_matrix_thinking_active and _status_adapter):
+                return
+            try:
+                from agent.display import get_tool_emoji
+                import json as _json
+
+                emoji = get_tool_emoji(tool_name, default="⚙️")
+                if args:
+                    args_str = _json.dumps(args, ensure_ascii=False, default=str)
+                    msg = f"{emoji} {tool_name} {args_str}"
+                elif preview:
+                    msg = f"{emoji} {tool_name}: \"{preview}\""
+                else:
+                    msg = f"{emoji} {tool_name}"
+
+                if not _tool_field_started[0]:
+                    _tool_field_started[0] = True
+                    asyncio.run_coroutine_threadsafe(
+                        _status_adapter.start_tool_activity(
+                            _status_chat_id,
+                            _thinking_task_id,
+                            "Tool activity",
+                            model_label=_model_label_holder[0] or "",
+                            initial_content_md=msg,
+                        ),
+                        _loop_for_step,
+                    ).result(timeout=10)
+                else:
+                    asyncio.run_coroutine_threadsafe(
+                        _status_adapter.update_tool_activity(
+                            _thinking_task_id,
+                            tool_name,
+                            msg,
+                            model_label=_model_label_holder[0],
+                        ),
+                        _loop_for_step,
+                    )
+            except Exception as _e:
+                logger.debug("matrix tool activity callback error: %s", _e)
 
         def run_sync():
             # Pass session_key to process registry via env var so background
@@ -5702,6 +5764,10 @@ class GatewayRunner:
                     logger.debug("Could not set up stream consumer: %s", _sc_err)
 
             turn_route = self._resolve_turn_agent_config(message, model, runtime_kwargs)
+            _set_model_label(
+                turn_route.get("model", ""),
+                turn_route.get("runtime", {}).get("provider", ""),
+            )
 
             # Check agent cache — reuse the AIAgent from the previous message
             # in this session to preserve the frozen system prompt and tool
@@ -5755,7 +5821,11 @@ class GatewayRunner:
 
             # Per-message state — callbacks and reasoning config change every
             # turn and must not be baked into the cached agent constructor.
-            agent.tool_progress_callback = progress_callback if tool_progress_enabled else None
+            agent.tool_progress_callback = (
+                _matrix_tool_progress_sync
+                if _matrix_thinking_active
+                else (progress_callback if tool_progress_enabled else None)
+            )
             agent.step_callback = _step_callback_sync if _hooks_ref.loaded_hooks else None
             agent.stream_delta_callback = _stream_delta_cb
             agent.status_callback = _status_callback_sync
@@ -5775,23 +5845,24 @@ class GatewayRunner:
                     """Called by agent when thinking state changes."""
                     try:
                         if text and not _thinking_started[0]:
-                            # Start thinking session on first thinking signal
                             _thinking_started[0] = True
                             asyncio.run_coroutine_threadsafe(
                                 _thinking_adapter.start_thinking(
                                     source.chat_id,
                                     _thinking_task_id,
                                     "Processing…",
+                                    model_label=_model_label_holder[0] or "",
+                                    initial_content_md=text,
                                 ),
                                 _loop_for_step,
-                            )
+                            ).result(timeout=10)
                         elif text and _thinking_started[0]:
-                            # Update with thinking text
                             asyncio.run_coroutine_threadsafe(
                                 _thinking_adapter.update_thinking(
                                     _thinking_task_id,
                                     "Reasoning…",
                                     text,
+                                    model_label=_model_label_holder[0],
                                 ),
                                 _loop_for_step,
                             )
@@ -5808,6 +5879,7 @@ class GatewayRunner:
                                 _thinking_task_id,
                                 "Reasoning…",
                                 text,
+                                model_label=_model_label_holder[0],
                             ),
                             _loop_for_step,
                         )
@@ -5816,6 +5888,9 @@ class GatewayRunner:
 
                 agent.thinking_callback = _thinking_callback_sync
                 agent.reasoning_callback = _reasoning_callback_sync
+            else:
+                agent.thinking_callback = None
+                agent.reasoning_callback = None
 
             # Background review delivery — send "💾 Memory updated" etc. to user
             def _bg_review_send(message: str) -> None:
@@ -5913,7 +5988,16 @@ class GatewayRunner:
             if _stream_consumer is not None:
                 _stream_consumer.finish()
 
-            # Finalize thinking field (collapse the <details> block)
+            _final_agent = agent_holder[0]
+            _final_model_label = None
+            if _final_agent is not None:
+                _set_model_label(
+                    getattr(_final_agent, "model", "") or "",
+                    getattr(_final_agent, "provider", "") or "",
+                )
+                _final_model_label = _model_label_holder[0]
+
+            # Finalize introspection fields (collapse the <details> blocks)
             if _thinking_started[0]:
                 _is_error = result.get("failed") or result.get("error")
                 try:
@@ -5922,6 +6006,7 @@ class GatewayRunner:
                             _thinking_adapter.abort_thinking(
                                 _thinking_task_id,
                                 str(result.get("error", "Agent error")),
+                                model_label=_final_model_label,
                             ),
                             _loop_for_step,
                         ).result(timeout=10)
@@ -5932,11 +6017,27 @@ class GatewayRunner:
                                 _thinking_task_id,
                                 f"Complete ({_steps} API calls)",
                                 collapse=True,
+                                model_label=_final_model_label,
                             ),
                             _loop_for_step,
                         ).result(timeout=10)
                 except Exception as _e:
                     logger.debug("thinking finalize error: %s", _e)
+
+            if _tool_field_started[0]:
+                try:
+                    _tool_steps = result.get("api_calls", 0)
+                    asyncio.run_coroutine_threadsafe(
+                        _thinking_adapter.finalize_tool_activity(
+                            _thinking_task_id,
+                            f"Complete ({_tool_steps} API calls)",
+                            collapse=True,
+                            model_label=_final_model_label,
+                        ),
+                        _loop_for_step,
+                    ).result(timeout=10)
+                except Exception as _e:
+                    logger.debug("tool activity finalize error: %s", _e)
             
             # Return final response, or a message if something went wrong
             final_response = result.get("final_response")
