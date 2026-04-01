@@ -467,6 +467,34 @@ class TestThinkingManagerCleanup:
         assert mgr.has_session("task_1") is True
         assert mgr.has_session("task_nonexistent") is False
 
+    @pytest.mark.asyncio
+    async def test_abort_all_finalizes_active_sessions(self):
+        adapter, mock_client, _ = _make_adapter()
+        mgr = adapter._get_thinking_manager()
+
+        from gateway.platforms.matrix_thinking import ThinkingSession
+        mgr._sessions["task_1:thinking"] = ThinkingSession(
+            room_id="!room:example.org",
+            event_id="$evt_1",
+            task_id="task_1",
+            started_at=time.time() - 5,
+            last_update=time.time() - 5,
+            field_kind="thinking",
+        )
+        mgr._sessions["task_1:tools"] = ThinkingSession(
+            room_id="!room:example.org",
+            event_id="$evt_2",
+            task_id="task_1",
+            started_at=time.time() - 5,
+            last_update=time.time() - 5,
+            field_kind="tools",
+        )
+
+        await mgr.abort_all("Gateway restarting")
+
+        assert mgr._sessions == {}
+        assert mock_client.room_send.call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # Config integration
@@ -545,6 +573,25 @@ class TestMatrixAdapterThinkingIntegration:
         # Manager not initialized yet
         await adapter.abort_thinking("task_1", "Error")
         mock_client.room_send.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_aborts_active_introspection_fields(self):
+        adapter, mock_client, _ = _make_adapter()
+        mgr = adapter._get_thinking_manager()
+
+        from gateway.platforms.matrix_thinking import ThinkingSession
+        mgr._sessions["task_disc:thinking"] = ThinkingSession(
+            room_id="!room:example.org",
+            event_id="$evt_1",
+            task_id="task_disc",
+            started_at=time.time() - 5,
+            last_update=time.time() - 5,
+            field_kind="thinking",
+        )
+
+        await adapter.disconnect()
+
+        assert mock_client.room_send.called
 
 
 # ---------------------------------------------------------------------------

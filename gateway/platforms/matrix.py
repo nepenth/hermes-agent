@@ -309,6 +309,12 @@ class MatrixAdapter(BasePlatformAdapter):
         """Disconnect from Matrix."""
         self._closing = True
 
+        if self._thinking_manager:
+            try:
+                await self._thinking_manager.abort_all("Gateway restarting")
+            except Exception as exc:
+                logger.debug("Matrix: could not abort active introspection fields on disconnect: %s", exc)
+
         if self._sync_task and not self._sync_task.done():
             self._sync_task.cancel()
             try:

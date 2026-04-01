@@ -263,6 +263,23 @@ class ThinkingManager:
                     session.flush_task.cancel()
                 logger.warning("Matrix introspection: cleaned up stale session %s", key)
 
+    async def abort_all(self, reason: str = "Gateway restarting") -> None:
+        """Abort all active fields before shutdown/restart to avoid dangling blocks."""
+        async with self._lock:
+            snapshots = [
+                (key, session.task_id, session.field_kind, session.flush_task)
+                for key, session in self._sessions.items()
+            ]
+
+        for _key, task_id, field_kind, flush_task in snapshots:
+            if flush_task and not flush_task.done():
+                flush_task.cancel()
+                try:
+                    await flush_task
+                except asyncio.CancelledError:
+                    pass
+            await self.abort(task_id, reason, field_kind=field_kind)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
