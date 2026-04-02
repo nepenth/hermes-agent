@@ -15,9 +15,11 @@ Environment variables:
     MATRIX_REACTIONS        Set "false" to disable processing lifecycle reactions
                             (👀/✅/❌). Default: true
     MATRIX_READ_RECEIPTS    Control when read receipts are sent:
-                            "immediate" (default) — on message arrival,
-                            "after_processing" — after the agent finishes,
+                            "after_processing" (default) — after the agent finishes,
+                            "immediate" — on message arrival,
                             "disabled" — never send read receipts.
+    MATRIX_AUTO_TRUST_DEVICES  Set "true" to auto-verify newly discovered Matrix devices.
+                               Default: false (safer default; opt-in only)
 """
 
 from __future__ import annotations
@@ -136,13 +138,19 @@ class MatrixAdapter(BasePlatformAdapter):
             "MATRIX_REACTIONS", "true"
         ).lower() not in ("false", "0", "no")
 
-        # Read receipts: immediate (default), after_processing, or disabled.
+        # Read receipts: after_processing (default), immediate, or disabled.
         self._read_receipt_mode: str = os.getenv(
-            "MATRIX_READ_RECEIPTS", "immediate"
+            "MATRIX_READ_RECEIPTS", "after_processing"
         ).lower().strip()
         if self._read_receipt_mode not in ("immediate", "after_processing", "disabled"):
-            logger.warning("Matrix: invalid MATRIX_READ_RECEIPTS=%r, defaulting to immediate", self._read_receipt_mode)
-            self._read_receipt_mode = "immediate"
+            logger.warning("Matrix: invalid MATRIX_READ_RECEIPTS=%r, defaulting to after_processing", self._read_receipt_mode)
+            self._read_receipt_mode = "after_processing"
+
+        # Auto-trusting newly discovered devices is powerful but risky.
+        # Keep it explicit opt-in instead of silently trusting by default.
+        self._auto_trust_devices_enabled: bool = os.getenv(
+            "MATRIX_AUTO_TRUST_DEVICES", "false"
+        ).lower() in ("true", "1", "yes")
 
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
@@ -782,10 +790,10 @@ class MatrixAdapter(BasePlatformAdapter):
             except Exception as exc:
                 logger.warning("Matrix: E2EE maintenance task failed: %s", exc)
 
-        # After key queries, auto-trust all devices so senders share keys with
-        # us.  For a bot this is the right default — we want to decrypt
-        # everything, not enforce manual verification.
-        if did_query_keys:
+        # After key queries, auto-trust devices only when explicitly opted in.
+        # Keep the default safe; operators can enable this if they want the bot
+        # to proactively verify newly discovered devices.
+        if did_query_keys and self._auto_trust_devices_enabled:
             self._auto_trust_devices()
 
         # Retry any buffered undecrypted events now that new keys may have

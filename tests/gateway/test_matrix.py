@@ -650,6 +650,33 @@ class TestMatrixEncryptedSendFallback:
 # ---------------------------------------------------------------------------
 
 class TestMatrixAutoTrustDevices:
+    def test_auto_trust_default_is_disabled(self):
+        adapter = _make_adapter()
+        assert adapter._auto_trust_devices_enabled is False
+
+    def test_auto_trust_can_be_enabled_via_env(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_AUTO_TRUST_DEVICES", "true")
+        adapter = _make_adapter()
+        assert adapter._auto_trust_devices_enabled is True
+
+    @pytest.mark.asyncio
+    async def test_e2ee_maintenance_skips_auto_trust_by_default(self):
+        adapter = _make_adapter()
+        fake_client = MagicMock()
+        fake_client.should_query_keys = True
+        fake_client.should_upload_keys = False
+        fake_client.should_claim_keys = False
+        fake_client.send_to_device_messages = AsyncMock(return_value=None)
+        fake_client.keys_query = AsyncMock(return_value=None)
+        fake_client.olm = object()
+        adapter._client = fake_client
+        adapter._encryption = True
+        adapter._auto_trust_devices = MagicMock()
+
+        await adapter._run_e2ee_maintenance()
+
+        adapter._auto_trust_devices.assert_not_called()
+
     def test_auto_trust_verifies_unverified_devices(self):
         adapter = _make_adapter()
 
@@ -1447,10 +1474,10 @@ class TestMatrixStopTyping:
 # ---------------------------------------------------------------------------
 
 class TestMatrixReadReceiptConfig:
-    def test_default_mode_is_immediate(self):
-        """Default MATRIX_READ_RECEIPTS should be 'immediate'."""
+    def test_default_mode_is_after_processing(self):
+        """Default MATRIX_READ_RECEIPTS should be 'after_processing'."""
         adapter = _make_adapter()
-        assert adapter._read_receipt_mode == "immediate"
+        assert adapter._read_receipt_mode == "after_processing"
 
     def test_disabled_mode(self, monkeypatch):
         """When MATRIX_READ_RECEIPTS=disabled, no receipts are sent on message."""
@@ -1477,13 +1504,13 @@ class TestMatrixReadReceiptConfig:
             adapter._background_read_receipt(room_id, msg_id)
         adapter._background_read_receipt.assert_called_once_with(room_id, msg_id)
 
-    def test_invalid_mode_defaults_to_immediate(self, monkeypatch):
-        """Invalid MATRIX_READ_RECEIPTS value should warn and default to immediate."""
+    def test_invalid_mode_defaults_to_after_processing(self, monkeypatch):
+        """Invalid MATRIX_READ_RECEIPTS value should warn and default to after_processing."""
         monkeypatch.setenv("MATRIX_READ_RECEIPTS", "bogus_value")
         import logging
         with patch("gateway.platforms.matrix.logger") as mock_logger:
             adapter = _make_adapter()
-            assert adapter._read_receipt_mode == "immediate"
+            assert adapter._read_receipt_mode == "after_processing"
             mock_logger.warning.assert_called()
             # Verify the warning mentions the invalid value
             warn_args = mock_logger.warning.call_args[0]
