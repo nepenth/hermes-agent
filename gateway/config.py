@@ -749,7 +749,7 @@ def _apply_env_overrides(config: GatewayConfig) -> None:
             config.platforms[Platform.MATRIX].extra["password"] = matrix_password
         matrix_e2ee = os.getenv("MATRIX_ENCRYPTION", "").lower() in ("true", "1", "yes")
         config.platforms[Platform.MATRIX].extra["encryption"] = matrix_e2ee
-        matrix_thinking = os.getenv("MATRIX_THINKING_FIELDS_ENABLED", "true").lower() in ("true", "1", "yes")
+        matrix_thinking = os.getenv("MATRIX_THINKING_FIELDS_ENABLED", "false").lower() in ("true", "1", "yes")
         config.platforms[Platform.MATRIX].extra["thinking_fields_enabled"] = matrix_thinking
     matrix_home = os.getenv("MATRIX_HOME_ROOM")
     if matrix_home and Platform.MATRIX in config.platforms:

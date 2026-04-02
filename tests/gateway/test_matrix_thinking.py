@@ -501,7 +501,7 @@ class TestThinkingManagerCleanup:
 # ---------------------------------------------------------------------------
 
 class TestThinkingConfig:
-    def test_thinking_enabled_by_default(self, monkeypatch):
+    def test_thinking_disabled_by_default(self, monkeypatch):
         monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "syt_abc123")
         monkeypatch.setenv("MATRIX_HOMESERVER", "https://matrix.example.org")
         monkeypatch.delenv("MATRIX_THINKING_FIELDS_ENABLED", raising=False)
@@ -511,7 +511,7 @@ class TestThinkingConfig:
         _apply_env_overrides(config)
 
         mc = config.platforms[Platform.MATRIX]
-        assert mc.extra.get("thinking_fields_enabled") is True
+        assert mc.extra.get("thinking_fields_enabled") is False
 
     def test_thinking_disabled_by_env(self, monkeypatch):
         monkeypatch.setenv("MATRIX_ACCESS_TOKEN", "syt_abc123")

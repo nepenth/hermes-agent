@@ -126,7 +126,7 @@ class MatrixAdapter(BasePlatformAdapter):
         # Thinking / agentic collapsible fields
         self._thinking_enabled: bool = config.extra.get(
             "thinking_fields_enabled",
-            os.getenv("MATRIX_THINKING_FIELDS_ENABLED", "true").lower()
+            os.getenv("MATRIX_THINKING_FIELDS_ENABLED", "false").lower()
             in ("true", "1", "yes"),
         )
         self._thinking_manager: Optional[Any] = None  # Lazy init after connect

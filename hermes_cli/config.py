@@ -963,7 +963,7 @@ OPTIONAL_ENV_VARS = {
         "category": "messaging",
     },
     "MATRIX_THINKING_FIELDS_ENABLED": {
-        "description": "Enable collapsible thinking fields in Matrix rooms (default: true). Shows live-updating <details> blocks during agent reasoning.",
+        "description": "Enable collapsible thinking fields in Matrix rooms (default: false). Shows live-updating <details> blocks during agent reasoning.",
         "prompt": "Enable Matrix thinking fields (true/false)",
         "url": None,
         "password": False,

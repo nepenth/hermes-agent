@@ -104,6 +104,15 @@ class FakeAgent:
         return {"final_response": "done", "messages": [], "api_calls": 2}
 
 
+class FakeAgentReasoningFirst(FakeAgent):
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        if self.reasoning_callback:
+            self.reasoning_callback("Reasoning arrived first")
+        if self.tool_progress_callback:
+            self.tool_progress_callback("terminal", "pwd")
+        return {"final_response": "done", "messages": [], "api_calls": 1}
+
+
 def _make_runner(adapter):
     gateway_run = importlib.import_module("gateway.run")
     GatewayRunner = gateway_run.GatewayRunner
@@ -184,3 +193,62 @@ async def test_matrix_run_routes_status_reasoning_and_tools_to_buffered_fields(m
     assert any("pwd" in payload for payload in tool_payloads)
     assert any("turn_route" in payload for payload in tool_payloads)
     assert any(c[-1] == "gpt-5.4 via openai-codex" for c in adapter.calls if c[0].startswith("finalize_"))
+
+
+@pytest.mark.asyncio
+async def test_matrix_run_reasoning_can_start_field_before_thinking(monkeypatch, tmp_path):
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = FakeAgentReasoningFirst
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {"display": {"tool_progress": "all"}})
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***", "provider": "anthropic", "base_url": "https://api.anthropic.com"})
+    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda *args, **kwargs: "claude-opus-4-6")
+
+    adapter = MatrixIntrospectionAdapter()
+    runner = _make_runner(adapter)
+    source = SessionSource(platform=Platform.MATRIX, chat_id="!room:example.org", chat_type="dm", thread_id=None)
+
+    result = await runner._run_agent(message="hello", context_prompt="", history=[], source=source, session_id="sess-2", session_key="agent:main:matrix:dm:!room:example.org")
+
+    assert result["final_response"] == "done"
+    call_names = [name for name, *_ in adapter.calls]
+    assert "start_thinking" in call_names
+    thinking_payloads = [c[-1] for c in adapter.calls if c[0] == "start_thinking"]
+    assert any("Reasoning arrived first" in payload for payload in thinking_payloads)
+
+
+@pytest.mark.asyncio
+async def test_matrix_run_respects_tool_progress_off(monkeypatch, tmp_path):
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = FakeAgent
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {"display": {"tool_progress": "off"}})
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***", "provider": "anthropic", "base_url": "https://api.anthropic.com"})
+    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda *args, **kwargs: "claude-opus-4-6")
+
+    adapter = MatrixIntrospectionAdapter()
+    runner = _make_runner(adapter)
+    source = SessionSource(platform=Platform.MATRIX, chat_id="!room:example.org", chat_type="dm", thread_id=None)
+
+    result = await runner._run_agent(message="hello", context_prompt="", history=[], source=source, session_id="sess-3", session_key="agent:main:matrix:dm:!room:example.org")
+
+    assert result["final_response"] == "done"
+    call_names = [name for name, *_ in adapter.calls]
+    assert "start_thinking" in call_names
+    assert "start_tool_activity" not in call_names
+    assert "update_tool_activity" not in call_names
+    assert "finalize_tool_activity" not in call_names

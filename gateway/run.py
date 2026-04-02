@@ -5407,6 +5407,7 @@ class GatewayRunner:
             and _matrix_adapter
             and getattr(_matrix_adapter, "_thinking_enabled", False)
         )
+        _matrix_tool_activity_enabled = _matrix_thinking_active and progress_mode != "off"
         tool_progress_enabled = progress_mode != "off" and not _matrix_thinking_active
         
         # Queue for progress messages (thread-safe)
@@ -5652,7 +5653,7 @@ class GatewayRunner:
                 logger.debug("status_callback error (%s): %s", event_type, _e)
 
         def _matrix_tool_progress_sync(tool_name: str, preview: str = None, args: dict = None):
-            if not (_matrix_thinking_active and _status_adapter):
+            if not (_matrix_tool_activity_enabled and _status_adapter):
                 return
             try:
                 from agent.display import get_tool_emoji
@@ -5871,9 +5872,22 @@ class GatewayRunner:
 
                 def _reasoning_callback_sync(text: str) -> None:
                     """Called by agent with reasoning trace deltas."""
-                    if not _thinking_started[0] or not text:
+                    if not text:
                         return
                     try:
+                        if not _thinking_started[0]:
+                            _thinking_started[0] = True
+                            asyncio.run_coroutine_threadsafe(
+                                _thinking_adapter.start_thinking(
+                                    source.chat_id,
+                                    _thinking_task_id,
+                                    "Reasoning…",
+                                    model_label=_model_label_holder[0] or "",
+                                    initial_content_md=text,
+                                ),
+                                _loop_for_step,
+                            ).result(timeout=10)
+                            return
                         asyncio.run_coroutine_threadsafe(
                             _thinking_adapter.update_thinking(
                                 _thinking_task_id,
