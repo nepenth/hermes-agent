@@ -169,8 +169,13 @@ class ThinkingManager:
                 session.summary = step_info
             if model_label:
                 session.model_label = model_label
-            if content_md and append_line:
-                session.content_lines.append(content_md)
+            if content_md:
+                if append_line:
+                    session.content_lines.append(content_md)
+                elif session.content_lines:
+                    session.content_lines[-1] += content_md
+                else:
+                    session.content_lines.append(content_md)
             session.step_count += 1
             session.dirty = True
 

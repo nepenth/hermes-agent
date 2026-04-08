@@ -6558,6 +6558,11 @@ class GatewayRunner:
         _tool_field_started = [False]
         _thinking_task_id = session_key or session_id or ""
         _model_label_holder = [None]
+        _matrix_thinking_active = (
+            source.platform == Platform.MATRIX
+            and _status_adapter is not None
+            and getattr(_status_adapter, "_thinking_enabled", False)
+        )
 
         def _set_model_label(model_name: str = "", provider_name: str = "") -> None:
             model_name = (model_name or "").strip()
@@ -6843,6 +6848,7 @@ class GatewayRunner:
                                 "Reasoning…",
                                 text,
                                 model_label=_model_label_holder[0],
+                                append_line=False,
                             ),
                             _loop_for_step,
                         )
