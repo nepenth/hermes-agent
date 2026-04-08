@@ -65,6 +65,9 @@ _KEY_EXPORT_PASSPHRASE = "hermes-matrix-e2ee-keys"
 _MAX_PENDING_EVENTS = 100
 _PENDING_EVENT_TTL = 300  # seconds — stop retrying after 5 min
 
+# Scoped lock scope for preventing duplicate local consumers of the same
+# Matrix identity (same access token or same homeserver+user_id).
+_MATRIX_LOCK_SCOPE = "matrix-user"
 
 _E2EE_INSTALL_HINT = (
     "Install with: pip install 'matrix-nio[e2e]'  "
@@ -172,6 +175,10 @@ class MatrixAdapter(BasePlatformAdapter):
             "MATRIX_REACTIONS", "true"
         ).lower() not in ("false", "0", "no")
 
+        # Scoped lock identity for preventing duplicate local consumers of the
+        # same Matrix account.
+        self._lock_identity: Optional[str] = None
+
     def _is_duplicate_event(self, event_id) -> bool:
         """Return True if this event was already processed. Tracks the ID otherwise."""
         if not event_id:
@@ -197,6 +204,43 @@ class MatrixAdapter(BasePlatformAdapter):
             logger.error("Matrix: homeserver URL not configured")
             return False
 
+        def _release_matrix_lock() -> None:
+            try:
+                from gateway.status import release_scoped_lock
+                if self._lock_identity:
+                    release_scoped_lock(_MATRIX_LOCK_SCOPE, self._lock_identity)
+                    self._lock_identity = None
+            except Exception as exc:
+                logger.warning("Matrix: failed to release identity lock: %s", exc, exc_info=True)
+
+        try:
+            from gateway.status import acquire_scoped_lock
+
+            self._lock_identity = self._access_token or f"{self._homeserver}|{self._user_id}"
+            acquired, existing = acquire_scoped_lock(
+                _MATRIX_LOCK_SCOPE,
+                self._lock_identity,
+                metadata={
+                    "platform": self.platform.value,
+                    "homeserver": self._homeserver,
+                    "user_id": self._user_id,
+                },
+            )
+            if not acquired:
+                owner_pid = existing.get("pid") if isinstance(existing, dict) else None
+                message = "Matrix identity already in use"
+                if owner_pid:
+                    message += f" (PID {owner_pid})"
+                message += ". Stop the other gateway first."
+                logger.error("[%s] %s", self.name, message)
+                self._set_fatal_error("matrix_identity_lock", message, retryable=False)
+                return False
+        except Exception as exc:
+            message = f"Matrix identity lock setup failed: {exc}"
+            logger.error("[%s] %s", self.name, message, exc_info=True)
+            self._set_fatal_error("matrix_identity_lock_error", message, retryable=True)
+            return False
+
         # Determine store path and ensure it exists.
         store_path = str(_STORE_DIR)
         _STORE_DIR.mkdir(parents=True, exist_ok=True)
@@ -213,6 +257,7 @@ class MatrixAdapter(BasePlatformAdapter):
                     "Refusing to connect — encrypted rooms would silently fail.",
                     _E2EE_INSTALL_HINT,
                 )
+                _release_matrix_lock()
                 return False
             try:
                 client = nio.AsyncClient(
@@ -231,6 +276,7 @@ class MatrixAdapter(BasePlatformAdapter):
                     "Matrix: failed to create E2EE client: %s. %s",
                     exc, _E2EE_INSTALL_HINT,
                 )
+                _release_matrix_lock()
                 return False
         else:
             client = nio.AsyncClient(
@@ -292,6 +338,7 @@ class MatrixAdapter(BasePlatformAdapter):
                     "Matrix: whoami failed — check MATRIX_ACCESS_TOKEN and MATRIX_HOMESERVER"
                 )
                 await client.close()
+                _release_matrix_lock()
                 return False
         elif self._password and self._user_id:
             resp = await client.login(
@@ -303,10 +350,12 @@ class MatrixAdapter(BasePlatformAdapter):
             else:
                 logger.error("Matrix: login failed — %s", getattr(resp, "message", resp))
                 await client.close()
+                _release_matrix_lock()
                 return False
         else:
             logger.error("Matrix: need MATRIX_ACCESS_TOKEN or MATRIX_USER_ID + MATRIX_PASSWORD")
             await client.close()
+            _release_matrix_lock()
             return False
 
         # If E2EE is enabled, load the crypto store.
@@ -336,6 +385,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 _E2EE_INSTALL_HINT,
             )
             await client.close()
+            _release_matrix_lock()
             return False
 
         # Register event callbacks.
@@ -416,6 +466,14 @@ class MatrixAdapter(BasePlatformAdapter):
         if self._client:
             await self._client.close()
             self._client = None
+
+        try:
+            from gateway.status import release_scoped_lock
+            if self._lock_identity:
+                release_scoped_lock(_MATRIX_LOCK_SCOPE, self._lock_identity)
+                self._lock_identity = None
+        except Exception as exc:
+            logger.warning("Matrix: failed to release identity lock on disconnect: %s", exc, exc_info=True)
 
         logger.info("Matrix: disconnected")
 

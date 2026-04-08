@@ -616,6 +616,90 @@ class TestMatrixAccessTokenAuth:
         await adapter.disconnect()
 
 
+class TestMatrixIdentityLock:
+    @pytest.mark.asyncio
+    async def test_connect_fails_when_identity_lock_is_held(self):
+        from gateway.platforms.matrix import MatrixAdapter
+
+        config = PlatformConfig(
+            enabled=True,
+            token="syt_test_access_token",
+            extra={
+                "homeserver": "https://matrix.example.org",
+                "user_id": "@bot:example.org",
+            },
+        )
+        adapter = MatrixAdapter(config)
+
+        fake_nio = MagicMock()
+
+        with patch.dict("sys.modules", {"nio": fake_nio}):
+            with patch("gateway.status.acquire_scoped_lock", return_value=(False, {"pid": 424242})):
+                result = await adapter.connect()
+
+        assert result is False
+        assert adapter._fatal_error_code == "matrix_identity_lock"
+        assert "PID 424242" in (adapter._fatal_error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_disconnect_releases_identity_lock_after_successful_connect(self):
+        from gateway.platforms.matrix import MatrixAdapter
+
+        config = PlatformConfig(
+            enabled=True,
+            token="syt_test_access_token",
+            extra={
+                "homeserver": "https://matrix.example.org",
+                "user_id": "@bot:example.org",
+            },
+        )
+        adapter = MatrixAdapter(config)
+
+        class FakeWhoamiResponse:
+            def __init__(self, user_id, device_id):
+                self.user_id = user_id
+                self.device_id = device_id
+
+        class FakeSyncResponse:
+            def __init__(self):
+                self.rooms = MagicMock(join={})
+
+        fake_client = MagicMock()
+        fake_client.whoami = AsyncMock(return_value=FakeWhoamiResponse("@bot:example.org", "DEV123"))
+        fake_client.sync = AsyncMock(return_value=FakeSyncResponse())
+        fake_client.close = AsyncMock()
+        fake_client.add_event_callback = MagicMock()
+        fake_client.rooms = {}
+        fake_client.account_data = {}
+        fake_client.olm = None
+
+        fake_nio = MagicMock()
+        fake_nio.AsyncClient = MagicMock(return_value=fake_client)
+        fake_nio.WhoamiResponse = FakeWhoamiResponse
+        fake_nio.SyncResponse = FakeSyncResponse
+        fake_nio.LoginResponse = type("LoginResponse", (), {})
+        fake_nio.RoomMessageText = type("RoomMessageText", (), {})
+        fake_nio.RoomMessageImage = type("RoomMessageImage", (), {})
+        fake_nio.RoomMessageAudio = type("RoomMessageAudio", (), {})
+        fake_nio.RoomMessageVideo = type("RoomMessageVideo", (), {})
+        fake_nio.RoomMessageFile = type("RoomMessageFile", (), {})
+        fake_nio.InviteMemberEvent = type("InviteMemberEvent", (), {})
+        fake_nio.MegolmEvent = type("MegolmEvent", (), {})
+
+        with patch.dict("sys.modules", {"nio": fake_nio}):
+            with patch("gateway.status.acquire_scoped_lock", return_value=(True, None)) as acquire_lock:
+                with patch("gateway.status.release_scoped_lock") as release_lock:
+                    with patch.object(adapter, "_refresh_dm_cache", AsyncMock()):
+                        with patch.object(adapter, "_sync_loop", AsyncMock(return_value=None)):
+                            assert await adapter.connect() is True
+                            acquire_lock.assert_called_once()
+                            assert adapter._lock_identity == "syt_test_access_token"
+
+                    await adapter.disconnect()
+                    release_lock.assert_called_with("matrix-user", "syt_test_access_token")
+                    assert adapter._lock_identity is None
+
+
 class TestMatrixE2EEHardFail:
     """connect() must refuse to start when E2EE is requested but deps are missing."""
 
