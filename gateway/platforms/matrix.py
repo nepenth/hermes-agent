@@ -387,12 +387,28 @@ class MatrixAdapter(BasePlatformAdapter):
 
         # Start the sync loop.
         self._sync_task = asyncio.create_task(self._sync_loop())
+
+        # Wire Matrix tools adapter reference so LLM-callable tools can
+        # reach the adapter's async methods from sync handlers.
+        try:
+            from tools.matrix_tools import set_matrix_adapter
+            set_matrix_adapter(self)
+        except ImportError:
+            pass
+
         self._mark_connected()
         return True
 
     async def disconnect(self) -> None:
         """Disconnect from Matrix."""
         self._closing = True
+
+        # Clear Matrix tools adapter reference.
+        try:
+            from tools.matrix_tools import set_matrix_adapter
+            set_matrix_adapter(None)
+        except ImportError:
+            pass
 
         if self._sync_task and not self._sync_task.done():
             self._sync_task.cancel()
