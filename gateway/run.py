@@ -7531,6 +7531,14 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
             logging.getLogger().setLevel(_stderr_level)
 
     runner = GatewayRunner(config)
+
+    # Write the PID file BEFORE adapter startup so concurrent `gateway run --replace`
+    # invocations cannot all slip past the duplicate-instance guard during the
+    # several-second connect window. If startup fails or exits cleanly, remove it.
+    import atexit
+    from gateway.status import write_pid_file, remove_pid_file
+    write_pid_file()
+    atexit.register(remove_pid_file)
     
     # Set up signal handlers
     def signal_handler():
@@ -7546,17 +7554,13 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
     # Start the gateway
     success = await runner.start()
     if not success:
+        remove_pid_file()
         return False
     if runner.should_exit_cleanly:
         if runner.exit_reason:
             logger.error("Gateway exiting cleanly: %s", runner.exit_reason)
+        remove_pid_file()
         return True
-    
-    # Write PID file so CLI can detect gateway is running
-    import atexit
-    from gateway.status import write_pid_file, remove_pid_file
-    write_pid_file()
-    atexit.register(remove_pid_file)
     
     # Start background cron ticker so scheduled jobs fire automatically.
     # Pass the event loop so cron delivery can use live adapters (E2EE support).
