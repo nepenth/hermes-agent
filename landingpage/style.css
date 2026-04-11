@@ -21,11 +21,14 @@
     --border: rgba(48, 80, 255, 0.1);
     --border-hover: rgba(48, 80, 255, 0.22);
     --text: #E8ECFF;
-    --text-dim: #8090BB;
-    --text-muted: #506090;
+    --text-dim: #B8C3DD;
+    --text-muted: #6B7A9A;
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-    --container: 1080px;
+    --container: 1240px;
+    --content-wide: 980px;
+    --content-medium: 900px;
+    --content-narrow: 760px;
     --radius: 12px;
     --radius-sm: 8px;
 
@@ -265,16 +268,17 @@ strong {
 .hero {
     position: relative;
     z-index: 1;
-    min-height: 100vh;
+    min-height: 84vh;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 120px 24px 80px;
+    padding: 104px 24px 56px;
     text-align: center;
 }
 
 .hero-content {
-    max-width: 760px;
+    width: min(100%, var(--content-medium));
+    max-width: var(--content-medium);
 }
 
 .hero-badge {
@@ -341,11 +345,11 @@ strong {
 }
 
 .hero-subtitle {
-    font-size: 17px;
-    line-height: 1.7;
+    font-size: 18px;
+    line-height: 1.75;
     color: var(--text-dim);
-    max-width: 620px;
-    margin: 0 auto 36px;
+    max-width: var(--content-narrow);
+    margin: 0 auto 40px;
 }
 
 .hero-install {
@@ -354,7 +358,8 @@ strong {
 
 /* --- Install Widget (hero tabbed installer) --- */
 .install-widget {
-    max-width: 740px;
+    width: min(100%, var(--content-medium));
+    max-width: var(--content-medium);
     margin: 0 auto;
     background: var(--bg-card);
     border: 1px solid var(--border);
@@ -426,13 +431,12 @@ strong {
 
 .install-widget-body {
     display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 14px 16px;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 16px 18px;
     font-family: var(--font-mono);
     font-size: 13px;
     color: var(--text);
-    overflow-x: auto;
 }
 
 .install-prompt {
@@ -440,14 +444,17 @@ strong {
     font-weight: 600;
     flex-shrink: 0;
     opacity: 0.7;
+    padding-top: 1px;
 }
 
 .install-widget-body code {
     flex: 1;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: normal;
     text-align: left;
+    line-height: 1.6;
     transition: opacity 0.15s var(--ease-out-quad);
 }
 
@@ -504,9 +511,10 @@ strong {
 }
 
 .install-note {
-    font-size: 13px;
+    font-size: 14px;
+    line-height: 1.6;
     color: var(--text-muted);
-    margin-top: 12px;
+    margin-top: 14px;
 }
 
 .hero-links {
@@ -553,7 +561,7 @@ strong {
 .section {
     position: relative;
     z-index: 1;
-    padding: 80px 0;
+    padding: 72px 0;
 }
 
 .section-header {
@@ -574,9 +582,9 @@ strong {
 .section-desc {
     color: var(--text-dim);
     font-size: 16px;
-    line-height: 1.7;
-    max-width: 640px;
-    margin: 0 auto 40px;
+    line-height: 1.75;
+    max-width: var(--content-narrow);
+    margin: 0 auto 44px;
     text-align: center;
 }
 
@@ -647,7 +655,8 @@ strong {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
-    max-width: 800px;
+    width: min(100%, var(--content-wide));
+    max-width: var(--content-wide);
     margin: 0 auto;
 }
 
@@ -766,16 +775,17 @@ strong {
 }
 
 .specs-list {
-    max-width: 720px;
+    width: min(100%, var(--content-medium));
+    max-width: var(--content-medium);
     margin: 0 auto;
-    padding-top: 24px;
+    padding-top: 28px;
 }
 
 .spec-row {
     display: grid;
-    grid-template-columns: 120px 1fr;
-    gap: 24px;
-    padding: 24px 0;
+    grid-template-columns: 160px minmax(0, 1fr);
+    gap: 28px;
+    padding: 28px 0;
     border-bottom: 1px solid var(--border);
 }
 
@@ -814,14 +824,17 @@ strong {
 
 .install-steps {
     display: grid;
-    gap: 28px;
-    max-width: 640px;
+    gap: 32px;
+    width: min(100%, var(--content-medium));
+    max-width: var(--content-medium);
     margin: 0 auto;
 }
 
 .install-step {
-    display: flex;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
     gap: 20px;
+    align-items: start;
 }
 
 .step-number {
@@ -859,9 +872,10 @@ strong {
 }
 
 .step-note {
-    font-size: 13px;
+    font-size: 14px;
+    line-height: 1.65;
     color: var(--text-muted);
-    margin-top: 8px;
+    margin-top: 10px;
 }
 
 .code-block {
@@ -879,6 +893,8 @@ strong {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
     padding: 8px 14px;
     background: rgba(255, 255, 255, 0.02);
     border-bottom: 1px solid var(--border);
@@ -895,7 +911,8 @@ strong {
     color: var(--text);
     overflow-x: auto;
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
+    word-break: normal;
 }
 
 .code-comment {
@@ -903,16 +920,18 @@ strong {
 }
 
 .install-windows {
-    margin-top: 48px;
+    margin-top: 56px;
     padding-top: 32px;
     border-top: 1px solid var(--border);
-    max-width: 640px;
+    width: min(100%, var(--content-narrow));
+    max-width: var(--content-narrow);
     margin-left: auto;
     margin-right: auto;
 }
 
 .install-windows p {
-    font-size: 14px;
+    font-size: 15px;
+    line-height: 1.7;
     color: var(--text-dim);
     margin-bottom: 12px;
 }
@@ -1007,6 +1026,7 @@ strong {
     }
 
     .hero-content {
+        width: 100%;
         max-width: 100%;
     }
 
@@ -1034,12 +1054,13 @@ strong {
     .install-widget-body {
         font-size: 10px;
         padding: 10px 12px;
+        gap: 8px;
     }
 
     .install-widget-body code {
-        overflow: hidden;
-        text-overflow: ellipsis;
         display: block;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
     }
 
     .install-widget-header {
@@ -1108,10 +1129,13 @@ strong {
 
     /* --- Install steps --- */
     .install-steps {
+        width: 100%;
         max-width: 100%;
+        gap: 24px;
     }
 
     .install-step {
+        grid-template-columns: 32px minmax(0, 1fr);
         gap: 14px;
     }
 
@@ -1123,7 +1147,8 @@ strong {
 
     .code-block pre {
         font-size: 11px;
-        word-break: break-all;
+        overflow-wrap: anywhere;
+        word-break: normal;
     }
 
     .install-windows {
