@@ -8045,7 +8045,7 @@ class GatewayRunner:
                                     _thinking_task_id,
                                     "Processing request...",
                                     model_label=_model_label_holder[0] or "",
-                                    initial_content_md=text,
+                                    initial_content_md="",
                                     thread_id=_progress_thread_id,
                                 ),
                                 _loop_for_step,
@@ -8055,7 +8055,7 @@ class GatewayRunner:
                                 _status_adapter.update_thinking(
                                     _thinking_task_id,
                                     "Thinking...",
-                                    text,
+                                    "",
                                     model_label=_model_label_holder[0],
                                     append_line=False,
                                 ),

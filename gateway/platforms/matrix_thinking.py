@@ -224,7 +224,7 @@ class ThinkingManager:
         if field_kind == "tools":
             return "⚡ Agent Acting:"
         suffix = f" via {model_label}" if model_label else ""
-        return f"🤔 Agent Thinking: Hermes{suffix}"
+        return f"🧐 Agent Thinking: Hermes{suffix}"
 
     @staticmethod
     def _plaintext_summary(title: str, summary: str) -> str:

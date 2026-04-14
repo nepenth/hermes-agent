@@ -29,7 +29,7 @@ class TestThinkingManagerTitles:
     def test_field_titles_match_branch_c_requirement_with_friendly_emoji(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 
-        assert ThinkingManager._field_title("thinking", "gpt-5.4 via openai-codex") == "🤔 Agent Thinking: Hermes via gpt-5.4 via openai-codex"
+        assert ThinkingManager._field_title("thinking", "gpt-5.4 via openai-codex") == "🧐 Agent Thinking: Hermes via gpt-5.4 via openai-codex"
         assert ThinkingManager._field_title("tools", "gpt-5.4 via openai-codex") == "⚡ Agent Acting:"
 
     def test_plaintext_summary_includes_required_heading(self):
@@ -92,7 +92,38 @@ class TestThinkingManagerLifecycle:
         assert "<pre" in content["formatted_body"]
 
     @pytest.mark.asyncio
-    async def test_thinking_delta_updates_append_as_flowing_text_not_single_word_lines(self):
+    async def test_thinking_callback_updates_summary_without_polluting_body(self):
+        from gateway.platforms.matrix_thinking import ThinkingManager
+
+        adapter = _make_adapter()
+        adapter._client.send_message_event = AsyncMock(return_value="$evt_summary")
+
+        mgr = ThinkingManager(adapter)
+        await mgr.start(
+            "!room:example.org",
+            "task-summary",
+            "Processing request...",
+            field_kind="thinking",
+            model_label="gpt-5.4 via openai-codex",
+            initial_content_md="",
+        )
+        mgr._sessions["task-summary:thinking"].last_update = 0
+        await mgr.update(
+            "task-summary",
+            "(◔_◔) processing...",
+            "",
+            field_kind="thinking",
+            append_line=False,
+        )
+        interim_payload = adapter._client.send_message_event.await_args_list[-1].args[2]
+        interim_formatted = interim_payload["formatted_body"]
+        assert "(◔_◔) processing..." in interim_formatted
+        assert "<pre><code></code></pre>" not in interim_formatted
+
+        await mgr.finalize("task-summary", "done", field_kind="thinking")
+
+    @pytest.mark.asyncio
+    async def test_reasoning_deltas_append_as_flowing_text_not_single_word_lines(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 
         adapter = _make_adapter()
@@ -119,7 +150,8 @@ class TestThinkingManagerLifecycle:
         final_payload = adapter._client.send_message_event.await_args_list[-1].args[2]
         formatted = final_payload["formatted_body"]
         assert "I am considering the issue" in formatted
-        assert "I am<br/> considering the issue" not in formatted
+        assert "I am\n considering the issue" not in formatted
+        assert "<pre><code>I am considering the issue</code></pre>" in formatted
 
     @pytest.mark.asyncio
     async def test_tools_finalize_stays_expanded_by_default_while_thinking_collapses(self):

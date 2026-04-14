@@ -160,7 +160,8 @@ async def test_matrix_run_routes_thinking_reasoning_and_tools_to_panes(monkeypat
     assert "finalize_thinking" in call_names
     assert "finalize_tool_activity" in call_names
     assert any(call[0] == "finalize_tool_activity" and call[3] is False for call in adapter.calls)
-    assert any(call[0] == "update_thinking" and call[4] is False for call in adapter.calls)
+    assert any(call[0] == "update_thinking" and call[2] == "Reasoning delta" and call[4] is False for call in adapter.calls)
+    assert any(call[0] == "update_thinking" and call[1] == "Thinking..." and call[2] == "" and call[4] is False for call in adapter.calls)
     assert "send" not in call_names
 
 
