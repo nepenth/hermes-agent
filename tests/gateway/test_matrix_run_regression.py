@@ -5,6 +5,7 @@ import sys
 import threading
 import types
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,6 +19,8 @@ class MatrixThinkingAdapter(BasePlatformAdapter):
         super().__init__(PlatformConfig(enabled=True, token="***"), Platform.MATRIX)
         self._thinking_enabled = True
         self.calls = []
+        self._send_exec_approval_mock = AsyncMock(return_value=SendResult(success=True, message_id="$approval"))
+        self._send_model_picker_mock = AsyncMock(return_value=SendResult(success=True, message_id="$picker"))
 
     async def connect(self) -> bool:
         return True
@@ -62,6 +65,12 @@ class MatrixThinkingAdapter(BasePlatformAdapter):
     async def abort_tool_activity(self, task_id, reason="Aborted", model_label=None):
         self.calls.append(("abort_tool_activity", reason, model_label))
 
+    async def send_model_picker(self, **kwargs):
+        return await self._send_model_picker_mock(**kwargs)
+
+    async def send_exec_approval(self, **kwargs):
+        return await self._send_exec_approval_mock(**kwargs)
+
     def has_pending_interrupt(self, session_key: str) -> bool:
         return False
 
@@ -101,6 +110,23 @@ class FakeAgentReasoningFirst(FakeAgent):
         if self.reasoning_callback:
             self.reasoning_callback("Reasoning arrived first")
         return {"final_response": "done", "messages": [], "api_calls": 1}
+
+
+class FakeAgentApprovalNotify(FakeAgent):
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        from tools.approval import _gateway_notify_cbs, get_current_session_key
+
+        session_key = get_current_session_key()
+        notify_cb = _gateway_notify_cbs[session_key]
+        notify_cb({"command": "rm -rf /tmp/example", "description": "dangerous command"})
+        return {"final_response": "done", "messages": [], "api_calls": 1}
+
+
+class FakeAgentFailureAfterTool(FakeAgent):
+    def run_conversation(self, message, conversation_history=None, task_id=None):
+        if self.tool_progress_callback:
+            self.tool_progress_callback("tool.started", "terminal", '"pwd"')
+        return {"final_response": "", "messages": [], "api_calls": 1, "failed": True, "error": "tool blew up"}
 
 
 def _make_runner(adapter):
@@ -219,5 +245,105 @@ async def test_matrix_run_respects_tool_progress_off(monkeypatch, tmp_path):
     call_names = [name for name, *_ in adapter.calls]
     assert "start_thinking" in call_names
     assert "start_tool_activity" not in call_names
+
+
+@pytest.mark.asyncio
+async def test_matrix_model_picker_real_path_passes_sender_id(monkeypatch, tmp_path):
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    (tmp_path / "config.yaml").write_text("model:\n  default: gpt-5.4\n  provider: openai-codex\n")
+    monkeypatch.setattr(
+        "agent.models_dev.fetch_models_dev",
+        lambda: {"openai-codex": {"label": "OpenAI Codex", "models": {"gpt-5.4": {"label": "gpt-5.4"}}}},
+    )
+
+    adapter = MatrixThinkingAdapter()
+    runner = _make_runner(adapter)
+    event = SimpleNamespace(
+        text="/model",
+        source=SessionSource(
+            platform=Platform.MATRIX,
+            chat_id="!room:example.org",
+            chat_type="dm",
+            user_id="@chris:example.org",
+            thread_id="$thread-1",
+        ),
+        get_command_args=lambda: "",
+    )
+
+    result = await runner._handle_model_command(event)
+
+    assert result is None
+    metadata = adapter._send_model_picker_mock.await_args.kwargs["metadata"]
+    assert metadata["thread_id"] == "$thread-1"
+    assert metadata["sender_id"] == "@chris:example.org"
+
+
+@pytest.mark.asyncio
+async def test_matrix_approval_real_path_passes_sender_id(monkeypatch, tmp_path):
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = FakeAgentApprovalNotify
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {"display": {"tool_progress": "all"}})
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***", "provider": "anthropic", "base_url": "https://api.anthropic.com"})
+    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda *args, **kwargs: "claude-opus-4-6")
+
+    adapter = MatrixThinkingAdapter()
+    runner = _make_runner(adapter)
+    source = SessionSource(
+        platform=Platform.MATRIX,
+        chat_id="!room:example.org",
+        chat_type="dm",
+        user_id="@chris:example.org",
+        thread_id="$thread-approval",
+    )
+
+    result = await runner._run_agent(message="hello", context_prompt="", history=[], source=source, session_id="sess-approval", session_key="agent:main:matrix:dm:!room:example.org")
+
+    assert result["final_response"] == "done"
+    adapter._send_exec_approval_mock.assert_awaited_once()
+    metadata = adapter._send_exec_approval_mock.await_args.kwargs["metadata"]
+    assert metadata["thread_id"] == "$thread-approval"
+    assert metadata["sender_id"] == "@chris:example.org"
+
+
+@pytest.mark.asyncio
+async def test_matrix_run_aborts_tool_activity_on_failed_turn(monkeypatch, tmp_path):
+    fake_dotenv = types.ModuleType("dotenv")
+    fake_dotenv.load_dotenv = lambda *args, **kwargs: None
+    monkeypatch.setitem(sys.modules, "dotenv", fake_dotenv)
+
+    fake_run_agent = types.ModuleType("run_agent")
+    fake_run_agent.AIAgent = FakeAgentFailureAfterTool
+    monkeypatch.setitem(sys.modules, "run_agent", fake_run_agent)
+
+    gateway_run = importlib.import_module("gateway.run")
+    monkeypatch.setattr(gateway_run, "_hermes_home", tmp_path)
+    monkeypatch.setattr(gateway_run, "_load_gateway_config", lambda: {"display": {"tool_progress": "all"}})
+    monkeypatch.setattr(gateway_run, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "***", "provider": "anthropic", "base_url": "https://api.anthropic.com"})
+    monkeypatch.setattr(gateway_run, "_resolve_gateway_model", lambda *args, **kwargs: "claude-opus-4-6")
+
+    adapter = MatrixThinkingAdapter()
+    runner = _make_runner(adapter)
+    source = SessionSource(platform=Platform.MATRIX, chat_id="!room:example.org", chat_type="dm", thread_id=None)
+
+    result = await runner._run_agent(message="hello", context_prompt="", history=[], source=source, session_id="sess-fail", session_key="agent:main:matrix:dm:!room:example.org")
+
+    assert result["final_response"].startswith("⚠️")
+    call_names = [name for name, *_ in adapter.calls]
+    assert "start_tool_activity" in call_names
+    assert "abort_tool_activity" in call_names
+    assert "finalize_tool_activity" not in call_names
     assert "update_tool_activity" not in call_names
     assert "finalize_tool_activity" not in call_names

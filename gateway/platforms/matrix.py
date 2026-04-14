@@ -338,9 +338,6 @@ class MatrixAdapter(BasePlatformAdapter):
         authorized_actor = state.get("authorized_actor")
         if authorized_actor:
             return sender == authorized_actor
-        allowed = self._allowed_user_ids
-        if allowed:
-            return sender in allowed or "*" in allowed
         return True
 
     @staticmethod
@@ -993,11 +990,18 @@ class MatrixAdapter(BasePlatformAdapter):
                 pass
 
     async def edit_message(
-        self, chat_id: str, message_id: str, content: str
+        self, chat_id: str, message_id: str, content: str, metadata: Optional[Dict[str, Any]] = None
     ) -> SendResult:
         """Edit an existing message (via m.replace)."""
 
         formatted = self.format_message(content)
+        relates_to: Dict[str, Any] = {
+            "rel_type": "m.replace",
+            "event_id": message_id,
+        }
+        thread_id = (metadata or {}).get("thread_id")
+        if thread_id:
+            relates_to["m.in_reply_to"] = {"event_id": thread_id}
         msg_content: Dict[str, Any] = {
             "msgtype": "m.text",
             "body": f"* {formatted}",
@@ -1005,10 +1009,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 "msgtype": "m.text",
                 "body": formatted,
             },
-            "m.relates_to": {
-                "rel_type": "m.replace",
-                "event_id": message_id,
-            },
+            "m.relates_to": relates_to,
         }
 
         html = self._markdown_to_html(formatted)
@@ -1706,11 +1707,40 @@ class MatrixAdapter(BasePlatformAdapter):
 
     async def _seed_control_reactions(self, room_id: str, event_id: str, emojis: list[str]) -> None:
         """Pre-seed interactive control reactions so clients expose tap targets."""
+        seen = set()
         for emoji in emojis:
+            if not emoji or emoji in seen:
+                continue
+            seen.add(emoji)
             try:
                 await self.send_reaction(room_id, event_id, emoji)
             except Exception as exc:
                 logger.debug("Matrix control reaction seed failed for %s on %s: %s", emoji, event_id, exc)
+
+    def _model_picker_reactions(self, state: Dict[str, Any]) -> list[str]:
+        page = int(state.get("page", 0))
+        page_size = int(state.get("page_size", 9))
+        if state.get("stage") == "provider":
+            providers = state.get("providers", [])
+            page_items = providers[page * page_size:(page + 1) * page_size]
+            emojis = [self._number_emoji(idx) for idx in range(len(page_items))]
+            if page > 0:
+                emojis.append("◀️")
+            if (page + 1) * page_size < len(providers):
+                emojis.append("▶️")
+            emojis.append("❌")
+            return emojis
+
+        selected_provider = state.get("selected_provider") or {}
+        models = selected_provider.get("models", [])
+        page_items = models[page * page_size:(page + 1) * page_size]
+        emojis = [self._number_emoji(idx) for idx in range(len(page_items))]
+        if page > 0:
+            emojis.append("◀️")
+        if (page + 1) * page_size < len(models):
+            emojis.append("▶️")
+        emojis.extend(["↩️", "❌"])
+        return emojis
 
     async def _redact_reaction(
         self, room_id: str, reaction_event_id: str, reason: str = "",
@@ -1776,7 +1806,12 @@ class MatrixAdapter(BasePlatformAdapter):
         }
         label = label_map.get(choice, "Resolved")
         try:
-            await self.edit_message(state["room_id"], target_event_id, f"{label} by {sender}")
+            await self.edit_message(
+                state["room_id"],
+                target_event_id,
+                f"{label} by {sender}",
+                metadata={"thread_id": state.get("thread_id")} if state.get("thread_id") else None,
+            )
         except Exception:
             pass
 
@@ -1798,7 +1833,12 @@ class MatrixAdapter(BasePlatformAdapter):
             self._model_picker_state.pop(target_event_id, None)
             self._pop_event_role(target_event_id)
             try:
-                await self.edit_message(state["room_id"], target_event_id, "❌ Model selection cancelled")
+                await self.edit_message(
+                    state["room_id"],
+                    target_event_id,
+                    "❌ Model selection cancelled",
+                    metadata={"thread_id": state.get("thread_id")} if state.get("thread_id") else None,
+                )
             except Exception:
                 pass
             return
@@ -1854,7 +1894,12 @@ class MatrixAdapter(BasePlatformAdapter):
                 self._model_picker_state.pop(target_event_id, None)
                 self._pop_event_role(target_event_id)
                 try:
-                    await self.edit_message(state["room_id"], target_event_id, result_text)
+                    await self.edit_message(
+                        state["room_id"],
+                        target_event_id,
+                        result_text,
+                        metadata={"thread_id": state.get("thread_id")} if state.get("thread_id") else None,
+                    )
                 except Exception:
                     pass
                 return
@@ -2263,11 +2308,7 @@ class MatrixAdapter(BasePlatformAdapter):
         }
         self._model_picker_state[result.message_id] = state
         self._register_event_role(result.message_id, "interactive_control", chat_id, metadata, control_type="model_picker")
-        await self._seed_control_reactions(
-            chat_id,
-            result.message_id,
-            [self._number_emoji(idx) for idx in range(len(page_items))] + (["▶️"] if len(providers) > page_size else []) + ["❌"],
-        )
+        await self._seed_control_reactions(chat_id, result.message_id, self._model_picker_reactions(state))
         return result
 
     async def _edit_model_picker_message(self, message_id: str, state: Dict[str, Any]) -> SendResult:
@@ -2296,30 +2337,38 @@ class MatrixAdapter(BasePlatformAdapter):
             if start + page_size < len(providers):
                 text += "\nReact with ▶️ for next page."
             text += "\nReact with ❌ to cancel."
-            return await self.edit_message(room_id, message_id, text)
+        else:
+            selected_provider = state.get("selected_provider") or {}
+            models = selected_provider.get("models", [])
+            start = page * page_size
+            page_items = models[start:start + page_size]
+            lines = []
+            for idx, model_id in enumerate(page_items):
+                marker = " ✓" if model_id == state.get("current_model") else ""
+                lines.append(f"{self._number_emoji(idx)} {model_id}{marker}")
+            provider_name = selected_provider.get("name") or selected_provider.get("slug") or "provider"
+            text = (
+                "⚙️ Model Configuration\n\n"
+                f"Provider: {provider_name}\n"
+                "React to choose a model:\n"
+                + "\n".join(lines)
+            )
+            if start > 0:
+                text += "\n\nReact with ◀️ for previous page."
+            if start + page_size < len(models):
+                text += "\nReact with ▶️ for next page."
+            text += "\nReact with ↩️ to go back."
+            text += "\nReact with ❌ to cancel."
 
-        selected_provider = state.get("selected_provider") or {}
-        models = selected_provider.get("models", [])
-        start = page * page_size
-        page_items = models[start:start + page_size]
-        lines = []
-        for idx, model_id in enumerate(page_items):
-            marker = " ✓" if model_id == state.get("current_model") else ""
-            lines.append(f"{self._number_emoji(idx)} {model_id}{marker}")
-        provider_name = selected_provider.get("name") or selected_provider.get("slug") or "provider"
-        text = (
-            "⚙️ Model Configuration\n\n"
-            f"Provider: {provider_name}\n"
-            "React to choose a model:\n"
-            + "\n".join(lines)
+        result = await self.edit_message(
+            room_id,
+            message_id,
+            text,
+            metadata={"thread_id": state.get("thread_id")} if state.get("thread_id") else None,
         )
-        if start > 0:
-            text += "\n\nReact with ◀️ for previous page."
-        if start + page_size < len(models):
-            text += "\nReact with ▶️ for next page."
-        text += "\nReact with ↩️ to go back."
-        text += "\nReact with ❌ to cancel."
-        return await self.edit_message(room_id, message_id, text)
+        if result.success:
+            await self._seed_control_reactions(room_id, message_id, self._model_picker_reactions(state))
+        return result
 
     # ------------------------------------------------------------------
     # Helpers

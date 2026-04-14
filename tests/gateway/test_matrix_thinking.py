@@ -171,6 +171,20 @@ class TestThinkingManagerLifecycle:
         tools_payload = adapter._client.send_message_event.await_args_list[-1].args[2]
         assert "<details open><summary>" in tools_payload["formatted_body"]
 
+    def test_edit_content_preserves_thread_relation(self):
+        from gateway.platforms.matrix_thinking import ThinkingManager
+
+        content = ThinkingManager._edit_content(
+            "$event",
+            "<details open><summary>🧐 Agent Thinking</summary></details>",
+            "🧐 Agent Thinking\nReasoning...",
+            thread_id="$thread-1",
+        )
+
+        assert content["m.relates_to"]["rel_type"] == "m.replace"
+        assert content["m.relates_to"]["event_id"] == "$event"
+        assert content["m.relates_to"]["m.in_reply_to"]["event_id"] == "$thread-1"
+
     def test_elapsed_str_still_formats_duration(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 

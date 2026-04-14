@@ -255,7 +255,13 @@ class ThinkingManager:
         return content
 
     @staticmethod
-    def _edit_content(event_id: str, formatted_body: str, body: str) -> Dict[str, Any]:
+    def _edit_content(event_id: str, formatted_body: str, body: str, *, thread_id: Optional[str] = None) -> Dict[str, Any]:
+        relates_to: Dict[str, Any] = {
+            "rel_type": "m.replace",
+            "event_id": event_id,
+        }
+        if thread_id:
+            relates_to["m.in_reply_to"] = {"event_id": thread_id}
         return {
             "msgtype": "m.text",
             "body": f"* {body}",
@@ -267,10 +273,7 @@ class ThinkingManager:
                 "format": "org.matrix.custom.html",
                 "formatted_body": formatted_body,
             },
-            "m.relates_to": {
-                "rel_type": "m.replace",
-                "event_id": event_id,
-            },
+            "m.relates_to": relates_to,
         }
 
     @staticmethod
@@ -371,7 +374,12 @@ class ThinkingManager:
             content_html=snapshot["content_html"],
             open_tag=not (final and collapse),
         )
-        content = self._edit_content(snapshot["event_id"], formatted, body)
+        content = self._edit_content(
+            snapshot["event_id"],
+            formatted,
+            body,
+            thread_id=snapshot.get("thread_id"),
+        )
         try:
             await self._adapter._client.send_message_event(snapshot["room_id"], "m.room.message", content)
         except Exception as exc:

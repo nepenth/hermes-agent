@@ -4423,7 +4423,9 @@ class GatewayRunner:
                         lines.append("_(session only — use `/model <name> --global` to persist)_")
                         return "\n".join(lines)
 
-                    metadata = {"thread_id": source.thread_id} if source.thread_id else None
+                    metadata = {"sender_id": source.user_id} if source.user_id else {}
+                    if source.thread_id:
+                        metadata["thread_id"] = source.thread_id
                     result = await adapter.send_model_picker(
                         chat_id=source.chat_id,
                         providers=providers,
@@ -7725,7 +7727,9 @@ class GatewayRunner:
         # Bridge sync status_callback → async adapter.send for context pressure
         _status_adapter = self.adapters.get(source.platform)
         _status_chat_id = source.chat_id
-        _status_thread_metadata = {"thread_id": _progress_thread_id} if _progress_thread_id else None
+        _status_thread_metadata = {"sender_id": source.user_id} if source.user_id else {}
+        if _progress_thread_id:
+            _status_thread_metadata["thread_id"] = _progress_thread_id
         _thinking_started = [False]
         _tool_field_started = [False]
         _thinking_task_id = session_key or session_id or ""
@@ -8318,16 +8322,27 @@ class GatewayRunner:
                     logger.debug("thinking finalize error: %s", _e)
 
             if _matrix_thinking_active and _tool_field_started[0]:
+                _is_error = result.get("failed") or result.get("error")
                 try:
-                    asyncio.run_coroutine_threadsafe(
-                        _status_adapter.finalize_tool_activity(
-                            _thinking_task_id,
-                            f"Complete ({result.get('api_calls', 0)} API calls)",
-                            collapse=False,
-                            model_label=_final_model_label,
-                        ),
-                        _loop_for_step,
-                    ).result(timeout=10)
+                    if _is_error:
+                        asyncio.run_coroutine_threadsafe(
+                            _status_adapter.abort_tool_activity(
+                                _thinking_task_id,
+                                str(result.get("error", "Agent error")),
+                                model_label=_final_model_label,
+                            ),
+                            _loop_for_step,
+                        ).result(timeout=10)
+                    else:
+                        asyncio.run_coroutine_threadsafe(
+                            _status_adapter.finalize_tool_activity(
+                                _thinking_task_id,
+                                f"Complete ({result.get('api_calls', 0)} API calls)",
+                                collapse=False,
+                                model_label=_final_model_label,
+                            ),
+                            _loop_for_step,
+                        ).result(timeout=10)
                 except Exception as _e:
                     logger.debug("tool activity finalize error: %s", _e)
             
