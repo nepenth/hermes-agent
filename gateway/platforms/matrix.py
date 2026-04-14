@@ -849,7 +849,7 @@ class MatrixAdapter(BasePlatformAdapter):
         self,
         task_id: str,
         final_summary: str = "Tool activity complete",
-        collapse: bool = True,
+        collapse: bool = False,
         model_label: Optional[str] = None,
     ) -> None:
         if not self._thinking_enabled or not self._thinking_manager:

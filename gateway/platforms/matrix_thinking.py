@@ -29,7 +29,7 @@ class ThinkingSession:
     content_lines: list[str] = field(default_factory=list)
     finalized: bool = False
     field_kind: str = "thinking"
-    title: str = "Agent Thinking: Hermes"
+    title: str = "🤔 Agent Thinking: Hermes"
     summary: str = ""
     model_label: str = ""
     dirty: bool = False
@@ -61,7 +61,7 @@ class ThinkingManager:
                 if model_label:
                     existing.model_label = model_label
                 if initial_content_md:
-                    existing.content_lines.append(initial_content_md)
+                    self._append_content_locked(existing, initial_content_md, append_line=True)
                     existing.dirty = True
                     self._ensure_flush_locked(key, existing, 0.0)
                 return existing.event_id
@@ -132,8 +132,8 @@ class ThinkingManager:
             if model_label:
                 session.model_label = model_label
                 session.title = self._field_title(field_kind, model_label)
-            if content_md and append_line:
-                session.content_lines.append(content_md)
+            if content_md:
+                self._append_content_locked(session, content_md, append_line=append_line)
             session.step_count += 1
             session.dirty = True
 
@@ -153,7 +153,7 @@ class ThinkingManager:
         self,
         task_id: str,
         final_summary: str = "Task complete",
-        collapse: bool = True,
+        collapse: Optional[bool] = None,
         *,
         field_kind: str = "thinking",
         model_label: Optional[str] = None,
@@ -185,6 +185,8 @@ class ThinkingManager:
             except asyncio.CancelledError:
                 pass
 
+        if collapse is None:
+            collapse = field_kind == "thinking"
         await self._send_edit_snapshot(snapshot, final=True, collapse=collapse)
         async with self._lock:
             self._sessions.pop(key, None)
@@ -220,9 +222,9 @@ class ThinkingManager:
     @staticmethod
     def _field_title(field_kind: str, model_label: str = "") -> str:
         if field_kind == "tools":
-            return "Agent Acting:"
+            return "⚡ Agent Acting:"
         suffix = f" via {model_label}" if model_label else ""
-        return f"Agent Thinking: Hermes{suffix}"
+        return f"🤔 Agent Thinking: Hermes{suffix}"
 
     @staticmethod
     def _plaintext_summary(title: str, summary: str) -> str:
@@ -275,8 +277,20 @@ class ThinkingManager:
     def _lines_to_html(lines: list[str]) -> str:
         if not lines:
             return ""
-        escaped = [html.escape(line) for line in lines]
-        return "<br/>".join(escaped)
+        text = "\n".join(lines)
+        text = text[:_MAX_BODY_SIZE]
+        escaped = html.escape(text)
+        return "<pre><code>" + escaped + "</code></pre>"
+
+    @staticmethod
+    def _append_content_locked(session: ThinkingSession, content_md: str, *, append_line: bool) -> None:
+        if not content_md:
+            return
+        text = str(content_md)
+        if append_line or not session.content_lines:
+            session.content_lines.append(text)
+        else:
+            session.content_lines[-1] += text
 
     def _build_html(
         self,
@@ -297,7 +311,7 @@ class ThinkingManager:
         return (
             f"<details{details_open}><summary>{title_html}</summary>"
             f"<p><strong>{summary_html}</strong> · {step_label}</p>"
-            f"<div>{body}</div>"
+            f"<blockquote>{body}</blockquote>"
             f"</details>"
         )[:_MAX_BODY_SIZE]
 

@@ -8057,6 +8057,7 @@ class GatewayRunner:
                                     "Thinking...",
                                     text,
                                     model_label=_model_label_holder[0],
+                                    append_line=False,
                                 ),
                                 _loop_for_step,
                             )
@@ -8087,6 +8088,7 @@ class GatewayRunner:
                                     "Reasoning...",
                                     text,
                                     model_label=_model_label_holder[0],
+                                    append_line=False,
                                 ),
                                 _loop_for_step,
                             )
@@ -8321,7 +8323,7 @@ class GatewayRunner:
                         _status_adapter.finalize_tool_activity(
                             _thinking_task_id,
                             f"Complete ({result.get('api_calls', 0)} API calls)",
-                            collapse=True,
+                            collapse=False,
                             model_label=_final_model_label,
                         ),
                         _loop_for_step,

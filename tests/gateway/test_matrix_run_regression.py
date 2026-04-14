@@ -56,7 +56,7 @@ class MatrixThinkingAdapter(BasePlatformAdapter):
     async def update_tool_activity(self, task_id, step_info, content_md="", model_label=None, append_line=True):
         self.calls.append(("update_tool_activity", step_info, content_md, model_label, append_line))
 
-    async def finalize_tool_activity(self, task_id, final_summary="Tool activity complete", collapse=True, model_label=None):
+    async def finalize_tool_activity(self, task_id, final_summary="Tool activity complete", collapse=False, model_label=None):
         self.calls.append(("finalize_tool_activity", final_summary, model_label, collapse))
 
     async def abort_tool_activity(self, task_id, reason="Aborted", model_label=None):
@@ -159,6 +159,8 @@ async def test_matrix_run_routes_thinking_reasoning_and_tools_to_panes(monkeypat
     assert "update_tool_activity" in call_names
     assert "finalize_thinking" in call_names
     assert "finalize_tool_activity" in call_names
+    assert any(call[0] == "finalize_tool_activity" and call[3] is False for call in adapter.calls)
+    assert any(call[0] == "update_thinking" and call[4] is False for call in adapter.calls)
     assert "send" not in call_names
 
 
