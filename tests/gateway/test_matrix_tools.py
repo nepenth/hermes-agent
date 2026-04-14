@@ -143,3 +143,25 @@ class TestMatrixToolHandlers:
         result = json.loads(_handle_set_presence({"state": "online", "status_msg": "ready"}))
         assert result["success"] is True
         adapter.set_presence.assert_awaited_once_with(state="online", status_msg="ready")
+
+    def test_send_reaction_retries_transient_failures(self):
+        adapter = DummyAdapter()
+        adapter.send_reaction = AsyncMock(side_effect=[RuntimeError("temporary"), "$reaction"])
+        set_matrix_adapter(adapter)
+
+        result = json.loads(_handle_send_reaction({"room_id": "!r:ex", "event_id": "$e", "emoji": "👍"}))
+
+        assert result["success"] is True
+        assert result["reaction_event_id"] == "$reaction"
+        assert adapter.send_reaction.await_count == 2
+
+    def test_set_presence_returns_error_after_retry_budget_exhausted(self):
+        adapter = DummyAdapter()
+        adapter.set_presence = AsyncMock(side_effect=RuntimeError("homeserver unavailable"))
+        set_matrix_adapter(adapter)
+
+        result = json.loads(_handle_set_presence({"state": "online", "status_msg": "ready"}))
+
+        assert "error" in result
+        assert "Failed to set presence" in result["error"]
+        assert adapter.set_presence.await_count == 3
