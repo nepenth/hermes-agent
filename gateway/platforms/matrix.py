@@ -32,7 +32,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any, Callable, Dict, Optional, Set
 
 from html import escape as _html_escape
 
@@ -261,6 +261,15 @@ class MatrixAdapter(BasePlatformAdapter):
         ).lower() not in ("false", "0", "no")
         self._pending_reactions: dict[tuple[str, str], str] = {}
 
+        # Interactive controls and outbound event-role routing.
+        allowed_users_raw = os.getenv("MATRIX_ALLOWED_USERS", "")
+        self._allowed_user_ids: Set[str] = {
+            u.strip() for u in allowed_users_raw.split(",") if u.strip()
+        }
+        self._event_roles: Dict[str, Dict[str, Any]] = {}
+        self._approval_state: Dict[str, Dict[str, Any]] = {}
+        self._model_picker_state: Dict[str, Dict[str, Any]] = {}
+
         # Text batching: merge rapid successive messages (Telegram-style).
         # Matrix clients split long messages around 4000 chars.
         self._text_batch_delay_seconds = float(os.getenv("HERMES_MATRIX_TEXT_BATCH_DELAY_SECONDS", "0.6"))
@@ -280,6 +289,57 @@ class MatrixAdapter(BasePlatformAdapter):
         self._processed_events.append(event_id)
         self._processed_events_set.add(event_id)
         return False
+
+    def _register_event_role(
+        self,
+        event_id: str,
+        role: str,
+        room_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        **extra: Any,
+    ) -> None:
+        """Register outbound event role metadata for later reaction routing."""
+        if not event_id:
+            return
+        entry = {
+            "role": role,
+            "room_id": room_id,
+            "thread_id": (metadata or {}).get("thread_id"),
+            "created_at": time.time(),
+        }
+        entry.update(extra)
+        self._event_roles[event_id] = entry
+
+    def _pop_event_role(self, event_id: str) -> Optional[Dict[str, Any]]:
+        if not event_id:
+            return None
+        return self._event_roles.pop(event_id, None)
+
+    def _get_event_role(self, event_id: str) -> Optional[Dict[str, Any]]:
+        if not event_id:
+            return None
+        return self._event_roles.get(event_id)
+
+    def _is_authorized_interaction_user(self, sender: str, state: Dict[str, Any]) -> bool:
+        """Authorize a reaction sender for an interactive control."""
+        if sender == self._user_id:
+            return False
+        allowed = self._allowed_user_ids
+        if allowed:
+            return sender in allowed or "*" in allowed
+        authorized_actor = state.get("authorized_actor")
+        if authorized_actor:
+            return sender == authorized_actor
+        return True
+
+    @staticmethod
+    def _normalize_reaction_key(key: str) -> str:
+        return (key or "").replace("\ufe0f", "").strip()
+
+    @staticmethod
+    def _number_emoji(index: int) -> str:
+        numerals = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣"]
+        return numerals[index]
 
     # ------------------------------------------------------------------
     # E2EE helpers
@@ -595,6 +655,18 @@ class MatrixAdapter(BasePlatformAdapter):
     async def disconnect(self) -> None:
         """Disconnect from Matrix."""
         self._closing = True
+
+        if self._approval_state:
+            try:
+                from tools.approval import resolve_gateway_approval
+                for state in list(self._approval_state.values()):
+                    if not state.get("resolved"):
+                        resolve_gateway_approval(state["session_key"], "deny")
+            except Exception:
+                pass
+        self._approval_state.clear()
+        self._model_picker_state.clear()
+        self._event_roles.clear()
 
         if self._sync_task and not self._sync_task.done():
             self._sync_task.cancel()
@@ -1478,6 +1550,113 @@ class MatrixAdapter(BasePlatformAdapter):
             "\u2705" if outcome == ProcessingOutcome.SUCCESS else "\u274c",
         )
 
+    async def _resolve_interactive_approval(
+        self, target_event_id: str, choice: str, sender: str
+    ) -> None:
+        state = self._approval_state.get(target_event_id)
+        if not state or state.get("resolved"):
+            return
+        if not self._is_authorized_interaction_user(sender, state):
+            return
+
+        state["resolved"] = True
+        self._approval_state.pop(target_event_id, None)
+        self._pop_event_role(target_event_id)
+
+        from tools.approval import resolve_gateway_approval
+
+        resolve_gateway_approval(state["session_key"], choice)
+        label_map = {
+            "once": "✅ Approved once",
+            "session": "✅ Approved for session",
+            "always": "✅ Approved permanently",
+            "deny": "❌ Denied",
+        }
+        label = label_map.get(choice, "Resolved")
+        try:
+            await self.edit_message(state["room_id"], target_event_id, f"{label} by {sender}")
+        except Exception:
+            pass
+
+    async def _resolve_model_picker_reaction(
+        self, target_event_id: str, key: str, sender: str
+    ) -> None:
+        state = self._model_picker_state.get(target_event_id)
+        if not state or state.get("resolved"):
+            return
+        if not self._is_authorized_interaction_user(sender, state):
+            return
+
+        key_norm = self._normalize_reaction_key(key)
+        page = int(state.get("page", 0))
+        page_size = int(state.get("page_size", 9))
+
+        if key_norm == "❌":
+            state["resolved"] = True
+            self._model_picker_state.pop(target_event_id, None)
+            self._pop_event_role(target_event_id)
+            try:
+                await self.edit_message(state["room_id"], target_event_id, "❌ Model selection cancelled")
+            except Exception:
+                pass
+            return
+
+        if state.get("stage") == "provider":
+            providers = state.get("providers", [])
+            max_page = max(0, (len(providers) - 1) // page_size)
+            if key_norm == "▶":
+                state["page"] = min(max_page, page + 1)
+                await self._edit_model_picker_message(target_event_id, state)
+                return
+            if key_norm == "◀":
+                state["page"] = max(0, page - 1)
+                await self._edit_model_picker_message(target_event_id, state)
+                return
+
+            page_items = providers[page * page_size:(page + 1) * page_size]
+            for idx, provider in enumerate(page_items):
+                if key == self._number_emoji(idx):
+                    state["stage"] = "model"
+                    state["page"] = 0
+                    state["selected_provider"] = provider
+                    await self._edit_model_picker_message(target_event_id, state)
+                    return
+            return
+
+        if key_norm == "↩":
+            state["stage"] = "provider"
+            state["selected_provider"] = None
+            state["page"] = 0
+            await self._edit_model_picker_message(target_event_id, state)
+            return
+
+        selected_provider = state.get("selected_provider") or {}
+        models = selected_provider.get("models", [])
+        max_page = max(0, (len(models) - 1) // page_size)
+        if key_norm == "▶":
+            state["page"] = min(max_page, page + 1)
+            await self._edit_model_picker_message(target_event_id, state)
+            return
+        if key_norm == "◀":
+            state["page"] = max(0, page - 1)
+            await self._edit_model_picker_message(target_event_id, state)
+            return
+
+        page_items = models[page * page_size:(page + 1) * page_size]
+        for idx, model_id in enumerate(page_items):
+            if key == self._number_emoji(idx):
+                callback = state["on_model_selected"]
+                provider_slug = selected_provider.get("slug") or selected_provider.get("name") or ""
+                result_text = await callback(state["room_id"], model_id, provider_slug)
+                state["resolved"] = True
+                self._model_picker_state.pop(target_event_id, None)
+                self._pop_event_role(target_event_id)
+                try:
+                    await self.edit_message(state["room_id"], target_event_id, result_text)
+                except Exception:
+                    pass
+                return
+
     async def _on_reaction(self, event: Any) -> None:
         """Handle incoming reaction events."""
         sender = str(getattr(event, "sender", ""))
@@ -1499,6 +1678,25 @@ class MatrixAdapter(BasePlatformAdapter):
             elif hasattr(relates_to, "event_id"):
                 reacts_to = str(getattr(relates_to, "event_id", ""))
                 key = str(getattr(relates_to, "key", ""))
+
+            role_info = self._get_event_role(reacts_to)
+            if role_info and role_info.get("role") == "interactive_control":
+                control_type = role_info.get("control_type")
+                if control_type == "approval":
+                    choice_map = {
+                        "✅": "once",
+                        "🔁": "session",
+                        "♾": "always",
+                        "❌": "deny",
+                    }
+                    choice = choice_map.get(self._normalize_reaction_key(key))
+                    if choice:
+                        await self._resolve_interactive_approval(reacts_to, choice, sender)
+                    return
+                if control_type == "model_picker":
+                    await self._resolve_model_picker_reaction(reacts_to, key, sender)
+                    return
+
             logger.info(
                 "Matrix: reaction %s from %s on %s in %s",
                 key, sender, reacts_to, room_id,
@@ -1772,6 +1970,148 @@ class MatrixAdapter(BasePlatformAdapter):
     ) -> SendResult:
         """Send a notice message (bot-appropriate, non-alerting)."""
         return await self._send_simple_message(chat_id, text, "m.notice")
+
+    async def send_exec_approval(
+        self,
+        chat_id: str,
+        command: str,
+        session_key: str,
+        description: str = "dangerous command",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send a Matrix approval control message routed by event-role metadata."""
+        cmd_preview = command[:1500] + "..." if len(command) > 1500 else command
+        text = (
+            "⚠️ Command Approval Required\n\n"
+            f"`{cmd_preview}`\n\n"
+            f"Reason: {description}\n\n"
+            "React with:\n"
+            "✅ Allow once\n"
+            "🔁 Allow for session\n"
+            "♾️ Allow always\n"
+            "❌ Deny"
+        )
+        result = await self.send(chat_id, text, metadata=metadata)
+        if not result.success or not result.message_id:
+            return result
+
+        state = {
+            "control_type": "approval",
+            "session_key": session_key,
+            "room_id": chat_id,
+            "thread_id": (metadata or {}).get("thread_id"),
+            "authorized_actor": (metadata or {}).get("sender_id"),
+            "resolved": False,
+        }
+        self._approval_state[result.message_id] = state
+        self._register_event_role(result.message_id, "interactive_control", chat_id, metadata, control_type="approval")
+        return result
+
+    async def send_model_picker(
+        self,
+        chat_id: str,
+        providers: list,
+        current_model: str,
+        current_provider: str,
+        session_key: str,
+        on_model_selected: Callable[[str, str, str], Any],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Send a Matrix model-picker control message using numbered reactions."""
+        page_size = 9
+        page_items = providers[:page_size]
+        provider_lines = []
+        for idx, provider in enumerate(page_items):
+            label = provider.get("name") or provider.get("slug") or "provider"
+            count = provider.get("total_models", len(provider.get("models", [])))
+            marker = " ✓" if provider.get("is_current") else ""
+            provider_lines.append(f"{self._number_emoji(idx)} {label} ({count}){marker}")
+
+        text = (
+            "⚙️ Model Configuration\n\n"
+            f"Current model: `{current_model or 'unknown'}`\n"
+            f"Provider: {current_provider}\n\n"
+            "React to choose a provider:\n"
+            + "\n".join(provider_lines)
+        )
+        if len(providers) > page_size:
+            text += "\n\nReact with ▶️ for next page."
+        text += "\nReact with ❌ to cancel."
+
+        result = await self.send(chat_id, text, metadata=metadata)
+        if not result.success or not result.message_id:
+            return result
+
+        state = {
+            "control_type": "model_picker",
+            "stage": "provider",
+            "room_id": chat_id,
+            "thread_id": (metadata or {}).get("thread_id"),
+            "session_key": session_key,
+            "authorized_actor": (metadata or {}).get("sender_id"),
+            "providers": providers,
+            "current_model": current_model,
+            "current_provider": current_provider,
+            "on_model_selected": on_model_selected,
+            "page": 0,
+            "page_size": page_size,
+            "selected_provider": None,
+            "resolved": False,
+        }
+        self._model_picker_state[result.message_id] = state
+        self._register_event_role(result.message_id, "interactive_control", chat_id, metadata, control_type="model_picker")
+        return result
+
+    async def _edit_model_picker_message(self, message_id: str, state: Dict[str, Any]) -> SendResult:
+        room_id = state["room_id"]
+        page = int(state.get("page", 0))
+        page_size = int(state.get("page_size", 9))
+
+        if state.get("stage") == "provider":
+            providers = state.get("providers", [])
+            start = page * page_size
+            page_items = providers[start:start + page_size]
+            lines = []
+            for idx, provider in enumerate(page_items):
+                label = provider.get("name") or provider.get("slug") or "provider"
+                count = provider.get("total_models", len(provider.get("models", [])))
+                lines.append(f"{self._number_emoji(idx)} {label} ({count})")
+            text = (
+                "⚙️ Model Configuration\n\n"
+                f"Current model: `{state.get('current_model') or 'unknown'}`\n"
+                f"Provider: {state.get('current_provider') or 'unknown'}\n\n"
+                "React to choose a provider:\n"
+                + "\n".join(lines)
+            )
+            if start > 0:
+                text += "\n\nReact with ◀️ for previous page."
+            if start + page_size < len(providers):
+                text += "\nReact with ▶️ for next page."
+            text += "\nReact with ❌ to cancel."
+            return await self.edit_message(room_id, message_id, text)
+
+        selected_provider = state.get("selected_provider") or {}
+        models = selected_provider.get("models", [])
+        start = page * page_size
+        page_items = models[start:start + page_size]
+        lines = []
+        for idx, model_id in enumerate(page_items):
+            marker = " ✓" if model_id == state.get("current_model") else ""
+            lines.append(f"{self._number_emoji(idx)} {model_id}{marker}")
+        provider_name = selected_provider.get("name") or selected_provider.get("slug") or "provider"
+        text = (
+            "⚙️ Model Configuration\n\n"
+            f"Provider: {provider_name}\n"
+            "React to choose a model:\n"
+            + "\n".join(lines)
+        )
+        if start > 0:
+            text += "\n\nReact with ◀️ for previous page."
+        if start + page_size < len(models):
+            text += "\nReact with ▶️ for next page."
+        text += "\nReact with ↩️ to go back."
+        text += "\nReact with ❌ to cancel."
+        return await self.edit_message(room_id, message_id, text)
 
     # ------------------------------------------------------------------
     # Helpers
