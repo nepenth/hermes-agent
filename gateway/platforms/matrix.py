@@ -2200,7 +2200,11 @@ class MatrixAdapter(BasePlatformAdapter):
     # ------------------------------------------------------------------
 
     async def _send_simple_message(
-        self, chat_id: str, text: str, msgtype: str,
+        self,
+        chat_id: str,
+        text: str,
+        msgtype: str,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Send a simple message (emote, notice) with optional HTML formatting."""
         if not self._client or not text:
@@ -2211,6 +2215,15 @@ class MatrixAdapter(BasePlatformAdapter):
         if html and html != text:
             msg_content["format"] = "org.matrix.custom.html"
             msg_content["formatted_body"] = html
+
+        thread_id = (metadata or {}).get("thread_id")
+        if thread_id:
+            msg_content["m.relates_to"] = {
+                "rel_type": "m.thread",
+                "event_id": thread_id,
+                "is_falling_back": True,
+                "m.in_reply_to": {"event_id": thread_id},
+            }
 
         try:
             event_id = await self._client.send_message_event(
@@ -2224,13 +2237,13 @@ class MatrixAdapter(BasePlatformAdapter):
         self, chat_id: str, text: str, metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Send an emote message (/me style action)."""
-        return await self._send_simple_message(chat_id, text, "m.emote")
+        return await self._send_simple_message(chat_id, text, "m.emote", metadata=metadata)
 
     async def send_notice(
         self, chat_id: str, text: str, metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
         """Send a notice message (bot-appropriate, non-alerting)."""
-        return await self._send_simple_message(chat_id, text, "m.notice")
+        return await self._send_simple_message(chat_id, text, "m.notice", metadata=metadata)
 
     async def send_exec_approval(
         self,
