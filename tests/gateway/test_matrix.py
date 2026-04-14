@@ -1869,6 +1869,42 @@ class TestMatrixMessageTypes:
         assert content["msgtype"] == "m.notice"
 
     @pytest.mark.asyncio
+    async def test_send_notice_preserves_thread_metadata(self):
+        mock_client = MagicMock()
+        mock_client.send_message_event = AsyncMock(return_value="$notice-thread")
+        self.adapter._client = mock_client
+
+        result = await self.adapter.send_notice(
+            "!room:ex",
+            "Threaded notice",
+            metadata={"thread_id": "$thread1"},
+        )
+
+        assert result.success is True
+        call_args = mock_client.send_message_event.call_args
+        content = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("content")
+        assert content["msgtype"] == "m.notice"
+        assert content["m.relates_to"]["m.in_reply_to"]["event_id"] == "$thread1"
+
+    @pytest.mark.asyncio
+    async def test_send_emote_preserves_thread_metadata(self):
+        mock_client = MagicMock()
+        mock_client.send_message_event = AsyncMock(return_value="$emote-thread")
+        self.adapter._client = mock_client
+
+        result = await self.adapter.send_emote(
+            "!room:ex",
+            "waves in thread",
+            metadata={"thread_id": "$thread2"},
+        )
+
+        assert result.success is True
+        call_args = mock_client.send_message_event.call_args
+        content = call_args.args[2] if len(call_args.args) > 2 else call_args.kwargs.get("content")
+        assert content["msgtype"] == "m.emote"
+        assert content["m.relates_to"]["m.in_reply_to"]["event_id"] == "$thread2"
+
+    @pytest.mark.asyncio
     async def test_send_emote_empty_text(self):
         self.adapter._client = MagicMock()
         result = await self.adapter.send_emote("!room:ex", "")
