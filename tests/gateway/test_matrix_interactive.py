@@ -9,7 +9,7 @@ from gateway.config import PlatformConfig
 from gateway.platforms.base import SendResult
 
 
-def _make_adapter():
+def _make_adapter(extra=None):
     from gateway.platforms.matrix import MatrixAdapter
 
     config = PlatformConfig(
@@ -18,6 +18,7 @@ def _make_adapter():
         extra={
             "homeserver": "https://matrix.example.org",
             "user_id": "@bot:example.org",
+            **(extra or {}),
         },
     )
     return MatrixAdapter(config)
@@ -144,12 +145,35 @@ class TestMatrixExecApproval:
         }
         adapter._event_roles["$approval"] = {"role": "interactive_control", "control_type": "approval"}
         adapter.edit_message = AsyncMock()
+        adapter.send_notice = AsyncMock(return_value=SendResult(success=True, message_id="$notice"))
 
         with patch("tools.approval.resolve_gateway_approval") as mock_resolve:
             await adapter._on_reaction(_reaction_event("$r1", "@intruder:example.org", "$approval", "✅"))
 
         mock_resolve.assert_not_called()
+        adapter.send_notice.assert_awaited_once()
+        assert "Approval requires reaction from @chris:example.org" in adapter.send_notice.await_args.args[1]
         assert "$approval" in adapter._approval_state
+
+    async def test_approval_wrong_user_can_resolve_when_sender_validation_disabled(self):
+        adapter = _make_adapter({"approval_require_sender": False})
+        adapter._approval_state["$approval"] = {
+            "session_key": "session-1",
+            "room_id": "!room:example.org",
+            "thread_id": None,
+            "authorized_actor": "@chris:example.org",
+            "resolved": False,
+        }
+        adapter._event_roles["$approval"] = {"role": "interactive_control", "control_type": "approval"}
+        adapter.edit_message = AsyncMock(return_value=SendResult(success=True, message_id="$edit"))
+        adapter.send_notice = AsyncMock(return_value=SendResult(success=True, message_id="$notice"))
+
+        with patch("tools.approval.resolve_gateway_approval") as mock_resolve:
+            await adapter._on_reaction(_reaction_event("$r1", "@intruder:example.org", "$approval", "✅"))
+
+        mock_resolve.assert_called_once_with("session-1", "once")
+        adapter.send_notice.assert_not_called()
+        assert "$approval" not in adapter._approval_state
 
     async def test_approval_self_reaction_ignored(self):
         adapter = _make_adapter()

@@ -270,6 +270,10 @@ class MatrixAdapter(BasePlatformAdapter):
         self._allowed_user_ids: Set[str] = {
             u.strip() for u in allowed_users_raw.split(",") if u.strip()
         }
+        self._approval_require_sender: bool = config.extra.get(
+            "approval_require_sender",
+            os.getenv("MATRIX_APPROVAL_REQUIRE_SENDER", "true").lower() in ("true", "1", "yes"),
+        )
         self._event_roles: Dict[str, Dict[str, Any]] = {}
         self._approval_state: Dict[str, Dict[str, Any]] = {}
         self._model_picker_state: Dict[str, Dict[str, Any]] = {}
@@ -331,12 +335,12 @@ class MatrixAdapter(BasePlatformAdapter):
             return None
         return self._event_roles.get(event_id)
 
-    def _is_authorized_interaction_user(self, sender: str, state: Dict[str, Any]) -> bool:
+    def _is_authorized_interaction_user(self, sender: str, state: Dict[str, Any], *, require_sender: bool = True) -> bool:
         """Authorize a reaction sender for an interactive control."""
         if sender == self._user_id:
             return False
         authorized_actor = state.get("authorized_actor")
-        if authorized_actor:
+        if authorized_actor and require_sender:
             return sender == authorized_actor
         return True
 
@@ -1788,7 +1792,17 @@ class MatrixAdapter(BasePlatformAdapter):
         state = self._approval_state.get(target_event_id)
         if not state or state.get("resolved"):
             return
-        if not self._is_authorized_interaction_user(sender, state):
+        if not self._is_authorized_interaction_user(sender, state, require_sender=self._approval_require_sender):
+            if self._approval_require_sender and state.get("authorized_actor"):
+                try:
+                    feedback = f"⚠️ Approval requires reaction from {state['authorized_actor']}. Sender validation is enabled."
+                    await self.send_notice(
+                        state["room_id"],
+                        feedback,
+                        metadata={"thread_id": state.get("thread_id")} if state.get("thread_id") else None,
+                    )
+                except Exception:
+                    pass
             return
 
         state["resolved"] = True
