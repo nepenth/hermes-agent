@@ -9,7 +9,7 @@ from gateway.config import PlatformConfig
 from gateway.platforms.base import SendResult
 
 
-def _make_adapter():
+def _make_adapter(extra=None):
     from gateway.platforms.matrix import MatrixAdapter
 
     config = PlatformConfig(
@@ -18,6 +18,7 @@ def _make_adapter():
         extra={
             "homeserver": "https://matrix.example.org",
             "user_id": "@bot:example.org",
+            **(extra or {}),
         },
     )
     return MatrixAdapter(config)
@@ -144,12 +145,35 @@ class TestMatrixExecApproval:
         }
         adapter._event_roles["$approval"] = {"role": "interactive_control", "control_type": "approval"}
         adapter.edit_message = AsyncMock()
+        adapter.send_notice = AsyncMock(return_value=SendResult(success=True, message_id="$notice"))
 
         with patch("tools.approval.resolve_gateway_approval") as mock_resolve:
             await adapter._on_reaction(_reaction_event("$r1", "@intruder:example.org", "$approval", "✅"))
 
         mock_resolve.assert_not_called()
+        adapter.send_notice.assert_awaited_once()
+        assert "Approval requires reaction from @chris:example.org" in adapter.send_notice.await_args.args[1]
         assert "$approval" in adapter._approval_state
+
+    async def test_approval_wrong_user_can_resolve_when_sender_validation_disabled(self):
+        adapter = _make_adapter({"approval_require_sender": False})
+        adapter._approval_state["$approval"] = {
+            "session_key": "session-1",
+            "room_id": "!room:example.org",
+            "thread_id": None,
+            "authorized_actor": "@chris:example.org",
+            "resolved": False,
+        }
+        adapter._event_roles["$approval"] = {"role": "interactive_control", "control_type": "approval"}
+        adapter.edit_message = AsyncMock(return_value=SendResult(success=True, message_id="$edit"))
+        adapter.send_notice = AsyncMock(return_value=SendResult(success=True, message_id="$notice"))
+
+        with patch("tools.approval.resolve_gateway_approval") as mock_resolve:
+            await adapter._on_reaction(_reaction_event("$r1", "@intruder:example.org", "$approval", "✅"))
+
+        mock_resolve.assert_called_once_with("session-1", "once")
+        adapter.send_notice.assert_not_called()
+        assert "$approval" not in adapter._approval_state
 
     async def test_approval_self_reaction_ignored(self):
         adapter = _make_adapter()
@@ -253,6 +277,68 @@ class TestMatrixModelPicker:
         await adapter._on_reaction(_reaction_event("$r2", "@chris:example.org", "$picker", "1️⃣"))
         callback.assert_awaited_once_with("!room:example.org", "m1", "custom-vllm")
         assert "$picker" not in adapter._model_picker_state
+
+    async def test_model_picker_reseeds_reactions_after_provider_selection(self):
+        adapter = _make_adapter()
+        callback = AsyncMock(return_value="Model switched")
+        adapter.edit_message = AsyncMock(return_value=SendResult(success=True, message_id="$edit"))
+        adapter.send_reaction = AsyncMock(return_value=SendResult(success=True, message_id="$rxn"))
+        adapter._model_picker_state["$picker"] = {
+            "control_type": "model_picker",
+            "stage": "provider",
+            "room_id": "!room:example.org",
+            "thread_id": "$thread1",
+            "session_key": "session-1",
+            "authorized_actor": "@chris:example.org",
+            "providers": [
+                {"slug": "openai-codex", "name": "OpenAI Codex", "models": ["gpt-5.4"]},
+                {"slug": "custom-vllm", "name": "vLLM", "models": ["m1", "m2"]},
+            ],
+            "current_model": "gpt-5.4",
+            "current_provider": "openai-codex",
+            "on_model_selected": callback,
+            "page": 0,
+            "page_size": 9,
+            "selected_provider": None,
+            "resolved": False,
+        }
+        adapter._event_roles["$picker"] = {"role": "interactive_control", "control_type": "model_picker"}
+
+        await adapter._on_reaction(_reaction_event("$r1", "@chris:example.org", "$picker", "2️⃣"))
+
+        seeded = [call.args[2] for call in adapter.send_reaction.await_args_list]
+        assert seeded == ["1️⃣", "2️⃣", "↩️", "❌"]
+
+    async def test_model_picker_reseeds_reactions_after_page_change(self):
+        adapter = _make_adapter()
+        callback = AsyncMock(return_value="Model switched")
+        adapter.edit_message = AsyncMock(return_value=SendResult(success=True, message_id="$edit"))
+        adapter.send_reaction = AsyncMock(return_value=SendResult(success=True, message_id="$rxn"))
+        adapter._model_picker_state["$picker"] = {
+            "control_type": "model_picker",
+            "stage": "provider",
+            "room_id": "!room:example.org",
+            "thread_id": "$thread1",
+            "session_key": "session-1",
+            "authorized_actor": "@chris:example.org",
+            "providers": [
+                {"slug": f"provider-{idx}", "name": f"Provider {idx}", "models": ["gpt-5.4"]}
+                for idx in range(10)
+            ],
+            "current_model": "gpt-5.4",
+            "current_provider": "provider-0",
+            "on_model_selected": callback,
+            "page": 0,
+            "page_size": 9,
+            "selected_provider": None,
+            "resolved": False,
+        }
+        adapter._event_roles["$picker"] = {"role": "interactive_control", "control_type": "model_picker"}
+
+        await adapter._on_reaction(_reaction_event("$r1", "@chris:example.org", "$picker", "▶️"))
+
+        seeded = [call.args[2] for call in adapter.send_reaction.await_args_list]
+        assert seeded == ["1️⃣", "◀️", "❌"]
 
     async def test_model_picker_wrong_user_ignored(self):
         adapter = _make_adapter()

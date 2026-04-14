@@ -50,6 +50,7 @@ _EXTRA_ENV_KEYS = frozenset({
     "MATTERMOST_HOME_CHANNEL", "MATTERMOST_REPLY_MODE",
     "MATRIX_PASSWORD", "MATRIX_ENCRYPTION", "MATRIX_DEVICE_ID", "MATRIX_HOME_ROOM",
     "MATRIX_REQUIRE_MENTION", "MATRIX_FREE_RESPONSE_ROOMS", "MATRIX_AUTO_THREAD",
+    "MATRIX_APPROVAL_REQUIRE_SENDER",
     "MATRIX_RECOVERY_KEY",
 })
 import yaml
@@ -1273,6 +1274,14 @@ OPTIONAL_ENV_VARS = {
     "MATRIX_AUTO_THREAD": {
         "description": "Auto-create threads for messages in Matrix rooms (default: true)",
         "prompt": "Auto-create threads in rooms (true/false)",
+        "url": None,
+        "password": False,
+        "category": "messaging",
+        "advanced": True,
+    },
+    "MATRIX_APPROVAL_REQUIRE_SENDER": {
+        "description": "Require Matrix approvals to be reacted by the original requester (default: true). Set false to allow any room member to approve.",
+        "prompt": "Require approval reactions from original requester (true/false)",
         "url": None,
         "password": False,
         "category": "messaging",
