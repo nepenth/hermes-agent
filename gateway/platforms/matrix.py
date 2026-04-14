@@ -685,13 +685,17 @@ class MatrixAdapter(BasePlatformAdapter):
             set_matrix_adapter(None)
         except ImportError:
             pass
+        except Exception as exc:
+            logger.warning("Matrix: failed to clear tool adapter binding during disconnect: %s", exc)
 
         if self._sync_task and not self._sync_task.done():
             self._sync_task.cancel()
             try:
                 await self._sync_task
-            except (asyncio.CancelledError, Exception):
+            except asyncio.CancelledError:
                 pass
+            except Exception as exc:
+                logger.warning("Matrix: sync task raised during disconnect: %s", exc)
 
         # Close the SQLite crypto store database.
         if hasattr(self, "_crypto_db") and self._crypto_db:

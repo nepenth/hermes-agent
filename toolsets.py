@@ -238,9 +238,6 @@ TOOLSETS = {
         ],
         "includes": []
     },
-        ],
-        "includes": []
-    },
 
 
     # Scenario-specific toolsets

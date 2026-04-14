@@ -28,6 +28,8 @@ _MAX_NAME_LEN = 255
 _MAX_TOPIC_LEN = 1000
 _MAX_STATUS_LEN = 255
 _ALLOWED_PRESETS = frozenset(("private_chat", "public_chat"))
+_TOOL_RETRY_ATTEMPTS = 3
+_TOOL_RETRY_DELAY_SECONDS = 0.5
 
 
 def set_matrix_adapter(adapter: Optional[Any]) -> None:
@@ -51,7 +53,7 @@ def _ensure_adapter() -> Any:
     return adapter
 
 
-def _run_async(coro):
+def _run_async(coro: Any) -> Any:
     """Run an async coroutine from a sync tool handler."""
     adapter = _ensure_adapter()
     adapter_loop = getattr(adapter, "_loop", None)
@@ -78,6 +80,31 @@ def _run_async(coro):
     return asyncio.run(coro)
 
 
+def _run_async_retry(async_fn: Any, *args: Any, attempts: int = _TOOL_RETRY_ATTEMPTS, delay_seconds: float = _TOOL_RETRY_DELAY_SECONDS, **kwargs: Any) -> Any:
+    """Run an adapter coroutine with light retry for transient homeserver failures."""
+    last_exc: Optional[Exception] = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _run_async(async_fn(*args, **kwargs))
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                break
+            logger.warning(
+                "Matrix tools: %s failed on attempt %d/%d; retrying in %.1fs",
+                getattr(async_fn, "__name__", repr(async_fn)),
+                attempt,
+                attempts,
+                delay_seconds,
+            )
+            import time
+            time.sleep(delay_seconds * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
 def _json_error(message: str) -> str:
     return json.dumps({"error": message}, ensure_ascii=False)
 
@@ -98,7 +125,7 @@ def _handle_send_reaction(args: dict, **_kw) -> str:
 
     try:
         adapter = _ensure_adapter()
-        reaction_event_id = _run_async(adapter.send_reaction(room_id, event_id, emoji))
+        reaction_event_id = _run_async_retry(adapter.send_reaction, room_id, event_id, emoji)
         return json.dumps({"success": bool(reaction_event_id), "reaction_event_id": reaction_event_id}, ensure_ascii=False)
     except Exception as exc:
         logger.error("matrix_send_reaction error: %s", exc)
@@ -117,7 +144,7 @@ def _handle_redact_message(args: dict, **_kw) -> str:
 
     try:
         adapter = _ensure_adapter()
-        ok = _run_async(adapter.redact_message(room_id, event_id, reason=reason))
+        ok = _run_async_retry(adapter.redact_message, room_id, event_id, reason=reason)
         return json.dumps({"success": bool(ok)}, ensure_ascii=False)
     except Exception as exc:
         logger.error("matrix_redact_message error: %s", exc)
@@ -143,7 +170,7 @@ def _handle_create_room(args: dict, **_kw) -> str:
 
     try:
         adapter = _ensure_adapter()
-        room_id = _run_async(adapter.create_room(name=name, topic=topic, invite=invite, is_direct=is_direct, preset=preset))
+        room_id = _run_async_retry(adapter.create_room, name=name, topic=topic, invite=invite, is_direct=is_direct, preset=preset)
         if not room_id:
             return json.dumps({"success": False, "error": "Room creation failed"}, ensure_ascii=False)
         return json.dumps({"success": True, "room_id": room_id}, ensure_ascii=False)
@@ -163,7 +190,7 @@ def _handle_invite_user(args: dict, **_kw) -> str:
 
     try:
         adapter = _ensure_adapter()
-        ok = _run_async(adapter.invite_user(room_id, user_id))
+        ok = _run_async_retry(adapter.invite_user, room_id, user_id)
         return json.dumps({"success": bool(ok)}, ensure_ascii=False)
     except Exception as exc:
         logger.error("matrix_invite_user error: %s", exc)
@@ -183,7 +210,7 @@ def _handle_fetch_history(args: dict, **_kw) -> str:
 
     try:
         adapter = _ensure_adapter()
-        messages = _run_async(adapter.fetch_room_history(room_id, limit=limit, start=start))
+        messages = _run_async_retry(adapter.fetch_room_history, room_id, limit=limit, start=start)
         return json.dumps({"count": len(messages), "messages": messages}, ensure_ascii=False)
     except Exception as exc:
         logger.error("matrix_fetch_history error: %s", exc)
@@ -199,7 +226,7 @@ def _handle_set_presence(args: dict, **_kw) -> str:
 
     try:
         adapter = _ensure_adapter()
-        ok = _run_async(adapter.set_presence(state=state, status_msg=status_msg))
+        ok = _run_async_retry(adapter.set_presence, state=state, status_msg=status_msg)
         return json.dumps({"success": bool(ok)}, ensure_ascii=False)
     except Exception as exc:
         logger.error("matrix_set_presence error: %s", exc)
