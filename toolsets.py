@@ -201,6 +201,19 @@ TOOLSETS = {
         "includes": []
     },
 
+    "matrix": {
+        "description": "Matrix room interaction and management tools",
+        "tools": [
+            "matrix_send_reaction",
+            "matrix_redact_message",
+            "matrix_create_room",
+            "matrix_invite_user",
+            "matrix_fetch_history",
+            "matrix_set_presence",
+        ],
+        "includes": []
+    },
+
 
     # Scenario-specific toolsets
     
@@ -338,7 +351,7 @@ TOOLSETS = {
     "hermes-matrix": {
         "description": "Matrix bot toolset - decentralized encrypted messaging (full access)",
         "tools": _HERMES_CORE_TOOLS,
-        "includes": []
+        "includes": ["matrix"]
     },
 
     "hermes-dingtalk": {
