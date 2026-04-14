@@ -208,13 +208,17 @@ class MatrixAdapter(BasePlatformAdapter):
             config.extra.get("homeserver", "")
             or os.getenv("MATRIX_HOMESERVER", "")
         ).rstrip("/")
-        self._access_token: str = config.token or os.getenv("MATRIX_ACCESS_TOKEN", "")
+        explicit_access_token = config.token or config.extra.get("access_token", "")
+        explicit_password = config.extra.get("password", "")
+        self._access_token: str = explicit_access_token or (
+            "" if explicit_password else os.getenv("MATRIX_ACCESS_TOKEN", "")
+        )
         self._user_id: str = (
             config.extra.get("user_id", "")
             or os.getenv("MATRIX_USER_ID", "")
         )
         self._password: str = (
-            config.extra.get("password", "")
+            explicit_password
             or os.getenv("MATRIX_PASSWORD", "")
         )
         self._encryption: bool = config.extra.get(
@@ -331,12 +335,12 @@ class MatrixAdapter(BasePlatformAdapter):
         """Authorize a reaction sender for an interactive control."""
         if sender == self._user_id:
             return False
-        allowed = self._allowed_user_ids
-        if allowed:
-            return sender in allowed or "*" in allowed
         authorized_actor = state.get("authorized_actor")
         if authorized_actor:
             return sender == authorized_actor
+        allowed = self._allowed_user_ids
+        if allowed:
+            return sender in allowed or "*" in allowed
         return True
 
     @staticmethod
@@ -1813,7 +1817,7 @@ class MatrixAdapter(BasePlatformAdapter):
 
             page_items = providers[page * page_size:(page + 1) * page_size]
             for idx, provider in enumerate(page_items):
-                if key == self._number_emoji(idx):
+                if key_norm == self._normalize_reaction_key(self._number_emoji(idx)):
                     state["stage"] = "model"
                     state["page"] = 0
                     state["selected_provider"] = provider
@@ -1842,7 +1846,7 @@ class MatrixAdapter(BasePlatformAdapter):
 
         page_items = models[page * page_size:(page + 1) * page_size]
         for idx, model_id in enumerate(page_items):
-            if key == self._number_emoji(idx):
+            if key_norm == self._normalize_reaction_key(self._number_emoji(idx)):
                 callback = state["on_model_selected"]
                 provider_slug = selected_provider.get("slug") or selected_provider.get("name") or ""
                 result_text = await callback(state["room_id"], model_id, provider_slug)
