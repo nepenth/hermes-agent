@@ -26,26 +26,27 @@ def _make_adapter(thinking_enabled=True):
 
 
 class TestThinkingManagerTitles:
-    def test_field_titles_match_branch_c_requirement_with_friendly_emoji(self):
+    def test_field_titles_use_brain_icon_and_provider_model_utilization_label(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 
-        assert ThinkingManager._field_title("thinking", "gpt-5.4 via openai-codex") == "🧐 Agent Thinking: Hermes via gpt-5.4 via openai-codex"
+        assert ThinkingManager._field_title("thinking", "gpt-5.4 via openai-codex") == "🧠 Agent Thinking: Utilizing gpt-5.4 via openai-codex"
+        assert ThinkingManager._field_title("thinking", "") == "🧠 Agent Thinking:"
         assert ThinkingManager._field_title("tools", "gpt-5.4 via openai-codex") == "⚡ Agent Acting:"
 
-    def test_plaintext_summary_includes_required_heading(self):
+    def test_plaintext_summary_includes_updated_heading(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 
         text = ThinkingManager._plaintext_summary(
-            "Agent Thinking: Hermes via gpt-5.4 via openai-codex",
+            "🧠 Agent Thinking: Utilizing gpt-5.4 via openai-codex",
             "Processing request...",
         )
-        assert "Agent Thinking: Hermes via gpt-5.4 via openai-codex" in text
+        assert "🧠 Agent Thinking: Utilizing gpt-5.4 via openai-codex" in text
         assert "Processing request..." in text
 
 
 class TestThinkingManagerLifecycle:
     @pytest.mark.asyncio
-    async def test_start_thinking_uses_branch_c_heading(self):
+    async def test_start_thinking_uses_updated_heading(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 
         adapter = _make_adapter()
@@ -64,7 +65,7 @@ class TestThinkingManagerLifecycle:
 
         assert event_id == "$evt_123"
         content = send_message_event.call_args.args[2]
-        assert "Agent Thinking: Hermes via gpt-5.4 via openai-codex" in content["formatted_body"]
+        assert "🧠 Agent Thinking: Utilizing gpt-5.4 via openai-codex" in content["formatted_body"]
         assert "first delta" in content["formatted_body"]
 
     @pytest.mark.asyncio
@@ -171,13 +172,26 @@ class TestThinkingManagerLifecycle:
         tools_payload = adapter._client.send_message_event.await_args_list[-1].args[2]
         assert "<details open><summary>" in tools_payload["formatted_body"]
 
+    @pytest.mark.asyncio
+    async def test_tools_abort_stays_expanded_by_default(self):
+        from gateway.platforms.matrix_thinking import ThinkingManager
+
+        adapter = _make_adapter()
+        adapter._client.send_message_event = AsyncMock(return_value="$evt_abort")
+
+        mgr = ThinkingManager(adapter)
+        await mgr.start("!room:example.org", "task-tools-abort", "Tool activity", field_kind="tools")
+        await mgr.abort("task-tools-abort", "tool failed", field_kind="tools")
+        tools_payload = adapter._client.send_message_event.await_args_list[-1].args[2]
+        assert "<details open><summary>" in tools_payload["formatted_body"]
+
     def test_edit_content_preserves_thread_relation(self):
         from gateway.platforms.matrix_thinking import ThinkingManager
 
         content = ThinkingManager._edit_content(
             "$event",
-            "<details open><summary>🧐 Agent Thinking</summary></details>",
-            "🧐 Agent Thinking\nReasoning...",
+            "<details open><summary>🧠 Agent Thinking:</summary></details>",
+            "🧠 Agent Thinking:\nReasoning...",
             thread_id="$thread-1",
         )
 
@@ -198,7 +212,7 @@ class TestThinkingManagerLifecycle:
             "event_id": "$event",
             "task_id": "task-retry",
             "field_kind": "thinking",
-            "title": "🧐 Agent Thinking: Hermes via gpt-5.4 via openai-codex",
+            "title": "🧠 Agent Thinking: Utilizing gpt-5.4 via openai-codex",
             "summary": "Processing request...",
             "step_count": 1,
             "content_html": "<pre><code>reasoning</code></pre>",

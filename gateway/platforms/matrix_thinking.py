@@ -31,7 +31,7 @@ class ThinkingSession:
     content_lines: list[str] = field(default_factory=list)
     finalized: bool = False
     field_kind: str = "thinking"
-    title: str = "🤔 Agent Thinking: Hermes"
+    title: str = "🧠 Agent Thinking:"
     summary: str = ""
     model_label: str = ""
     dirty: bool = False
@@ -219,7 +219,7 @@ class ThinkingManager:
         await self.finalize(
             task_id,
             f"⚠️ {reason}",
-            collapse=True,
+            collapse=(field_kind == "thinking"),
             field_kind=field_kind,
             model_label=model_label,
         )
@@ -240,8 +240,9 @@ class ThinkingManager:
     def _field_title(field_kind: str, model_label: str = "") -> str:
         if field_kind == "tools":
             return "⚡ Agent Acting:"
-        suffix = f" via {model_label}" if model_label else ""
-        return f"🧐 Agent Thinking: Hermes{suffix}"
+        if model_label:
+            return f"🧠 Agent Thinking: Utilizing {model_label}"
+        return "🧠 Agent Thinking:"
 
     @staticmethod
     def _plaintext_summary(title: str, summary: str) -> str:
