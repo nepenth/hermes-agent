@@ -142,10 +142,6 @@ CONTEXT_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "query": {
-                "type": "string",
-                "description": "Optional focus query to filter context. Omit for full session context snapshot.",
-            },
             "peer": {
                 "type": "string",
                 "description": "Peer to query. Built-in aliases: 'user' (default), 'ai'. Or pass any peer ID from this workspace.",

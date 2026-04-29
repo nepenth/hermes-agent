@@ -495,6 +495,12 @@ class TestConcludeToolDispatch:
         assert "overwrites the entire peer card" in description
         assert "preserved" in description
 
+    def test_honcho_context_schema_does_not_advertise_unimplemented_query_filter(self):
+        from plugins.memory.honcho import CONTEXT_SCHEMA
+
+        assert "query" not in CONTEXT_SCHEMA["parameters"]["properties"]
+        assert "filter context" not in CONTEXT_SCHEMA["description"]
+
     def test_honcho_profile_empty_card_update_clears_card_through_handler(self):
         provider = HonchoMemoryProvider()
         provider._session_initialized = True

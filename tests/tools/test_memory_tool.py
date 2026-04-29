@@ -36,10 +36,33 @@ class TestMemorySchema:
         assert "mental" in description
 
     def test_default_memory_limits_include_extra_headroom(self):
+        from inspect import signature
+        import importlib.util
+        import sys
+
         from hermes_cli.config import DEFAULT_CONFIG
 
-        assert DEFAULT_CONFIG["memory"]["memory_char_limit"] == 3200
-        assert DEFAULT_CONFIG["memory"]["user_char_limit"] == 2375
+        expected_memory = 3200
+        expected_user = 2375
+
+        assert DEFAULT_CONFIG["memory"]["memory_char_limit"] == expected_memory
+        assert DEFAULT_CONFIG["memory"]["user_char_limit"] == expected_user
+        assert signature(MemoryStore).parameters["memory_char_limit"].default == expected_memory
+        assert signature(MemoryStore).parameters["user_char_limit"].default == expected_user
+
+        migration_path = Path(
+            "optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes.py"
+        )
+        spec = importlib.util.spec_from_file_location("openclaw_to_hermes", migration_path)
+        assert spec and spec.loader
+        migration = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = migration
+        try:
+            spec.loader.exec_module(migration)
+        finally:
+            sys.modules.pop(spec.name, None)
+        assert migration.DEFAULT_MEMORY_CHAR_LIMIT == expected_memory
+        assert migration.DEFAULT_USER_CHAR_LIMIT == expected_user
 
 
 # =========================================================================
