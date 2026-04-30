@@ -11,6 +11,7 @@ from gateway.platforms.matrix import MatrixAdapter
 
 
 ROOM_ID = "!roomid:example.org"
+NEW_ROOM_ID = "!newroom:example.org"
 SENDER_ID = "@user:example.org"
 BOT_ID = "@bot:example.org"
 
@@ -22,7 +23,7 @@ class FakeStateEvent:
 
 class FakeStateStore:
     async def get_members(self, room_id):
-        assert str(room_id) == ROOM_ID
+        assert str(room_id) in {ROOM_ID, NEW_ROOM_ID}
         return {
             SENDER_ID: {"membership": "join"},
             BOT_ID: {"membership": "join"},
@@ -43,7 +44,7 @@ class FakeClient:
         return {SENDER_ID: self.direct_rooms}
 
     async def get_state_event(self, room_id, event_type):
-        assert str(room_id) == ROOM_ID
+        assert str(room_id) in {ROOM_ID, NEW_ROOM_ID}
         event_type = str(event_type)
         if event_type == "m.room.name":
             return FakeStateEvent(name=self.room_name) if self.room_name is not None else None
@@ -151,6 +152,26 @@ async def test_dm_cache_ignores_non_string_m_direct_room_ids():
     assert adapter._dm_cache_loaded is True
     assert adapter._dm_rooms[ROOM_ID] is False
     assert adapter._dm_rooms["None"] is False
+
+
+@pytest.mark.asyncio
+async def test_dm_cache_refreshes_after_joined_room_set_is_invalidated():
+    fake_client = FakeClient(direct_rooms=[], room_name=None)
+    adapter = make_adapter(fake_client)
+
+    await adapter._ensure_dm_cache_loaded()
+    assert fake_client.account_data_calls == 1
+    assert adapter._dm_rooms == {ROOM_ID: False}
+
+    fake_client.direct_rooms = [NEW_ROOM_ID]
+    adapter._joined_rooms.add(NEW_ROOM_ID)
+    adapter._dm_cache_loaded = False
+
+    await adapter._ensure_dm_cache_loaded()
+
+    assert fake_client.account_data_calls == 2
+    assert adapter._dm_rooms[ROOM_ID] is False
+    assert adapter._dm_rooms[NEW_ROOM_ID] is True
 
 
 @pytest.mark.asyncio

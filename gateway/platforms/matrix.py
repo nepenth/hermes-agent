@@ -830,6 +830,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 rooms_join = sync_data.get("rooms", {}).get("join", {})
                 self._joined_rooms.clear()
                 self._joined_rooms.update(rooms_join.keys())
+                self._dm_cache_loaded = False
                 # Store the next_batch token so incremental syncs start
                 # from where the initial sync left off.
                 nb = sync_data.get("next_batch")
@@ -1357,7 +1358,10 @@ class MatrixAdapter(BasePlatformAdapter):
                     # Update joined rooms from sync response.
                     rooms_join = sync_data.get("rooms", {}).get("join", {})
                     if rooms_join:
+                        new_room_ids = set(rooms_join) - self._joined_rooms
                         self._joined_rooms.update(rooms_join.keys())
+                        if new_room_ids:
+                            self._dm_cache_loaded = False
 
                     # Advance the sync token so the next request is
                     # incremental instead of a full initial sync.
@@ -2418,8 +2422,8 @@ class MatrixAdapter(BasePlatformAdapter):
         return identity.chat_type == "dm"
 
     async def _ensure_dm_cache_loaded(self) -> None:
-        """Load m.direct account data once so non-DM rooms cache negatively."""
-        if self._dm_cache_loaded or self._dm_rooms:
+        """Load m.direct account data when the cache is absent or invalidated."""
+        if self._dm_cache_loaded:
             return
         await self._refresh_dm_cache()
 
