@@ -169,6 +169,7 @@ class SessionContext:
     connected_platforms: List[Platform]
     home_channels: Dict[Platform, HomeChannel]
     shared_multi_user_session: bool = False
+    workspace_binding: Optional[Any] = None
     
     # Session metadata
     session_key: str = ""
@@ -184,6 +185,11 @@ class SessionContext:
                 p.value: hc.to_dict() for p, hc in self.home_channels.items()
             },
             "shared_multi_user_session": self.shared_multi_user_session,
+            "workspace_binding": (
+                self.workspace_binding.to_dict()
+                if hasattr(self.workspace_binding, "to_dict")
+                else self.workspace_binding
+            ),
             "session_key": self.session_key,
             "session_id": self.session_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
@@ -302,6 +308,33 @@ def build_session_context_prompt(
         if redact_pii:
             uid = _hash_sender_id(uid)
         lines.append(f"**User ID:** {uid}")
+
+    if context.source.platform != Platform.LOCAL:
+        lines.append("")
+        lines.append("**Current Project Binding:**")
+        binding = context.workspace_binding
+        if binding:
+            get_value = binding.get if isinstance(binding, dict) else lambda key, default=None: getattr(binding, key, default)
+            project = get_value("name") or get_value("slug")
+            slug = get_value("slug")
+            lines.append(f"  - Project: {project} (`{slug}`)")
+            lines.append(f"  - Binding source: {get_value('source')}")
+            lines.append(f"  - Repo path: `{get_value('repo_path') or 'not configured'}`")
+            lines.append(f"  - Canonical repo URL: `{get_value('canonical_repo_url') or 'not configured'}`")
+            if get_value("default_branch"):
+                lines.append(f"  - Default branch: `{get_value('default_branch')}`")
+            if get_value("response_policy"):
+                lines.append(f"  - Response policy: `{get_value('response_policy')}`")
+            lines.append(
+                "This binding is authoritative for side-effecting project work; do not switch projects "
+                "based on memory or keyword overlap unless the user explicitly asks."
+            )
+        else:
+            lines.append("  - No authoritative project binding was found for this chat/thread.")
+            lines.append(
+                "For side-effecting project work such as file writes, commits, pushes, deployments, "
+                "or destructive commands, ask for confirmation or continue read-only."
+            )
     
     # Platform-specific behavioral notes
     if context.source.platform == Platform.SLACK:

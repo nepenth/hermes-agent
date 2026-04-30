@@ -4637,6 +4637,11 @@ class GatewayRunner:
         
         # Build session context
         context = build_session_context(source, self.config, session_entry)
+        try:
+            from gateway.workspace_registry import resolve_workspace_binding
+            context.workspace_binding = resolve_workspace_binding(source)
+        except Exception as exc:
+            logger.debug("Workspace registry resolution failed: %s", exc)
         
         # Set session context variables for tools (task-local, concurrency-safe)
         _session_env_tokens = self._set_session_env(context)
