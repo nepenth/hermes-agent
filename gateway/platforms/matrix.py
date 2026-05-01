@@ -3328,7 +3328,7 @@ class MatrixAdapter(BasePlatformAdapter):
         try:
             event = await self._client.get_state_event(
                 RoomID(room_id),
-                EventType.ROOM_NAME,
+                "m.room.name",
             )
         except Exception:
             return None
