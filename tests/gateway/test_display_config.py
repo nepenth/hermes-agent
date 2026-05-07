@@ -196,6 +196,12 @@ class TestPlatformDefaults:
         for plat in ("mattermost", "matrix", "feishu", "whatsapp"):
             assert resolve_display_setting({}, plat, "tool_progress") == "new", plat
 
+    def test_matrix_default_tool_preview_length_is_room_friendly(self):
+        """Matrix edits one progress pane, so longer previews stay readable."""
+        from gateway.display_config import resolve_display_setting
+
+        assert resolve_display_setting({}, "matrix", "tool_preview_length") == 160
+
     def test_slack_defaults_tool_progress_off(self):
         """Slack defaults to quiet tool progress (permanent chat noise otherwise)."""
         from gateway.display_config import resolve_display_setting
