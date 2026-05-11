@@ -415,12 +415,23 @@ In Matrix conversations, Hermes exposes Matrix-specific tools to the agent:
 - `matrix_fetch_history`
 - `matrix_set_presence`
 
-These tools are scoped to Matrix contexts and are not available in non-Matrix toolsets. Admin-style tools are disabled by default: redaction requires `MATRIX_TOOLS_ALLOW_REDACTION=true`, invites require `MATRIX_TOOLS_ALLOW_INVITES=true`, and room creation requires `MATRIX_TOOLS_ALLOW_ROOM_CREATE=true`. Public room creation also requires `MATRIX_ALLOW_PUBLIC_ROOMS=true`.
-Matrix tools are limited to the current Matrix room by default. Explicit
-cross-room targets require `MATRIX_TOOLS_ALLOW_CROSS_ROOM=true`; redaction and
-invite-like cross-room actions additionally require
-`MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE=true`. If `MATRIX_ALLOWED_ROOMS` is
-set, Matrix tools may only target those rooms.
+These tools are scoped to Matrix contexts and are not available in non-Matrix toolsets.
+They are also room-scoped by default: if a tool call provides an explicit
+`room_id`, Hermes rejects it unless it matches the current Matrix room.
+
+Security-sensitive Matrix tool gates:
+
+| Capability | Default | Required opt-in |
+|------------|---------|-----------------|
+| Target a different room | Blocked | `MATRIX_TOOLS_ALLOW_CROSS_ROOM=true` |
+| Cross-room redaction or invite-like action | Blocked | `MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE=true` |
+| Redact Matrix messages | Disabled | `MATRIX_TOOLS_ALLOW_REDACTION=true` |
+| Invite Matrix users | Disabled | `MATRIX_TOOLS_ALLOW_INVITES=true` |
+| Create Matrix rooms | Disabled | `MATRIX_TOOLS_ALLOW_ROOM_CREATE=true` |
+| Create public Matrix rooms | Disabled | `MATRIX_ALLOW_PUBLIC_ROOMS=true` |
+
+If `MATRIX_ALLOWED_ROOMS` is set, Matrix tools may only target those rooms even
+when cross-room tool access is enabled.
 
 Reaction controls use:
 
