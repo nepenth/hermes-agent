@@ -267,6 +267,7 @@ If the artifact led to a durable decision or changed system/project state, ALSO 
 4. **Forgetting URL verification.** A committed artifact is not useful if Quartz/nginx did not publish it. Fetch the final URL.
 5. **Over-retaining noise.** Use short TTLs for routine handoffs. Retain only milestone artifacts.
 6. **Editing project cards by side effect.** Artifact publishing is isolated under `Artifacts/agent-reviews/`; update project cards separately and only within ownership rules.
+7. **Breaking the token map while adding agents.** If Forge bootstraps a new profile token in `/etc/whyland-kb/vault-api-tokens.json`, preserve ownership/readability for the API service user (`nepenthe:nepenthe`, mode `600`). A root-owned `600` replacement makes every token look unauthorized until ownership is fixed. The API reloads the token file on each request; no service restart is needed for token additions.
 
 ## Verification Checklist
 
