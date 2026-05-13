@@ -26,6 +26,10 @@ Artifacts/agent-reviews/<project-key>/<yyyy-mm-dd>-<slug>.artifact.json
 
 The KB API sanitizes HTML, strips active content, records metadata, updates artifact indexes, runs KB maintenance, commits/pushes the vault, and returns a URL.
 
+Default mental model: **publish one self-contained static HTML review page first**. Use assets only as supporting evidence/source files. The HTML page SHOULD be useful on its own: summarize the ask, embed important excerpts/tables/code blocks, and link to any raw attachments for traceability.
+
+Operator note: when sharing this skill across Hermes profiles or bootstrapping profile-specific KB tokens, see `references/cross-profile-rollout.md`.
+
 ## When to Use
 
 Use this skill when:
@@ -140,7 +144,19 @@ If an artifact becomes canonical, DO NOT rely on the artifact URL alone. Promote
 
 ## Recommended HTML Structure
 
-Keep it boring and reviewable:
+Create a **single static HTML page** as the primary review surface. The agent has discretion to structure it like a small static document: sections, table of contents, CSS-only tabs, side navigation, accordions using `<details>/<summary>`, comparison tables, callout boxes, and syntax-highlight-like code blocks using CSS. The page MUST still work without JavaScript.
+
+Recommended page shape:
+
+- **Decision / review needed** — what Chris should approve, reject, or inspect.
+- **Executive summary** — short enough to scan.
+- **Navigation** — anchor links or CSS-only controls for longer reviews.
+- **Findings / content** — the substantive review, rendered directly in HTML.
+- **Evidence** — links to raw assets plus embedded excerpts/previews.
+- **Canonical sources** — repo paths, vault notes, issue/PR links, or project files that remain source of truth.
+- **Expiry / retention note** — routine handoff vs retained milestone.
+
+Keep it static and reviewable:
 
 ```html
 <!doctype html>
@@ -150,6 +166,8 @@ Keep it boring and reviewable:
   <title>Review Title</title>
   <style>
     body { font-family: system-ui, sans-serif; line-height: 1.5; }
+    nav a { margin-right: .75rem; }
+    .card { border: 1px solid #444; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
     pre { overflow: auto; padding: 1rem; }
     table { border-collapse: collapse; width: 100%; }
     th, td { border: 1px solid #ccc; padding: .4rem; }
@@ -157,11 +175,20 @@ Keep it boring and reviewable:
 </head>
 <body>
   <h1>Review Title</h1>
-  <section>
+  <nav>
+    <a href="#decision">Decision</a>
+    <a href="#summary">Summary</a>
+    <a href="#evidence">Evidence</a>
+  </nav>
+  <section id="decision" class="card">
     <h2>Decision Needed</h2>
     <p>What Chris should review or approve.</p>
   </section>
-  <section>
+  <section id="summary" class="card">
+    <h2>Summary</h2>
+    <p>The page should stand alone. Do not force Chris to open attachments for the main point.</p>
+  </section>
+  <section id="evidence" class="card">
     <h2>Evidence</h2>
     <ul>
       <li><a href="./2026-05-13-my-slug.assets/evidence.json">Evidence JSON</a></li>
@@ -172,6 +199,25 @@ Keep it boring and reviewable:
 ```
 
 The API injects its own banner and base CSS. Your CSS can style content, but external CSS, JS, and active behavior are not supported.
+
+## Asset Guidance
+
+Assets are optional and SHOULD support the HTML page, not replace it.
+
+Good asset uses:
+
+- raw source excerpts too long to embed fully;
+- images/charts referenced by the page;
+- JSON/CSV/log evidence;
+- Markdown or code files for provenance.
+
+When the source material is Markdown or code, prefer this pattern:
+
+1. Render the important parts into the HTML page using escaped `<pre><code>` blocks, tables, or prose.
+2. Attach the raw source as a sibling asset and link it from the Evidence section.
+3. Use relative links like `./<date>-<slug>.assets/<file>`.
+
+Markdown assets are allowed, but they are **attachments**, not vault notes. They live under `.assets/` and SHOULD NOT be treated as canonical docs. If compatibility problems appear, use `.txt` for raw Markdown until the KB API/tooling is fixed.
 
 ## Publishing Recipe
 
@@ -265,15 +311,17 @@ If the artifact led to a durable decision or changed system/project state, ALSO 
 2. **Treating artifacts as docs.** Artifacts are review surfaces. Canonical docs still live in repos/vault notes.
 3. **Expecting JavaScript.** The sanitizer strips active content. Use static HTML/CSS only.
 4. **Forgetting URL verification.** A committed artifact is not useful if Quartz/nginx did not publish it. Fetch the final URL.
-5. **Over-retaining noise.** Use short TTLs for routine handoffs. Retain only milestone artifacts.
-6. **Editing project cards by side effect.** Artifact publishing is isolated under `Artifacts/agent-reviews/`; update project cards separately and only within ownership rules.
-7. **Breaking the token map while adding agents.** If Forge bootstraps a new profile token in `/etc/whyland-kb/vault-api-tokens.json`, preserve ownership/readability for the API service user (`nepenthe:nepenthe`, mode `600`). A root-owned `600` replacement makes every token look unauthorized until ownership is fixed. The API reloads the token file on each request; no service restart is needed for token additions.
+5. **Markdown assets are attachments, not notes.** Raw `.md` files under `.assets/` should not be used as the main review surface. Embed the relevant Markdown/code in the HTML page and link the raw file only for provenance. If the KB API reports Markdown/frontmatter maintenance warnings, retry with `.txt` attachments and report the API/tooling issue.
+6. **Over-retaining noise.** Use short TTLs for routine handoffs. Retain only milestone artifacts.
+7. **Editing project cards by side effect.** Artifact publishing is isolated under `Artifacts/agent-reviews/`; update project cards separately and only within ownership rules.
+8. **Breaking the token map while adding agents.** If Forge bootstraps a new profile token in `/etc/whyland-kb/vault-api-tokens.json`, preserve ownership/readability for the API service user (`nepenthe:nepenthe`, mode `600`). A root-owned `600` replacement makes every token look unauthorized until ownership is fixed. The API reloads the token file on each request; no service restart is needed for token additions.
 
 ## Verification Checklist
 
 - [ ] Payload includes project, title, slug, TTL/retain choice, and static HTML.
 - [ ] No secrets or sensitive raw logs are included.
 - [ ] Supporting files are small, allowed suffixes, and referenced relatively from HTML.
+- [ ] The HTML page stands alone: key findings are embedded, not only attached.
 - [ ] API returned `ok: true`, URL, manifest, git result, and maintenance exit code 0.
 - [ ] Returned URL fetches successfully from `kb.whyland.com`.
 - [ ] HTML contains the KB artifact banner and no active content markers.
