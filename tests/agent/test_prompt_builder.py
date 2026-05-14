@@ -820,6 +820,7 @@ class TestPromptBuilderConstants:
         assert "Matrix" in hint
         assert "MEDIA:" in hint
         assert "Markdown" in hint
+        assert "Matrix-specific tools" in hint
 
     def test_platform_hints_feishu(self):
         hint = PLATFORM_HINTS["feishu"]
@@ -1192,6 +1193,5 @@ class TestOpenAIModelExecutionGuidance:
 # =========================================================================
 # Budget warning history stripping
 # =========================================================================
-
 
 
