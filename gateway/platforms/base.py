@@ -961,6 +961,10 @@ class MessageEvent:
     # from ``text`` so the sender-prefix logic in run.py can operate on the
     # trigger message alone, then prepend this context afterward.
     channel_context: Optional[str] = None
+
+    # Optional structured agent metadata from platform-native extensions.
+    # Matrix currently populates this when a homeserver runs AgentFirstModule.
+    agent: Dict[str, Any] = field(default_factory=dict)
     
     # Internal flag — set for synthetic events (e.g. background process
     # completion notifications) that must bypass user authorization checks.
