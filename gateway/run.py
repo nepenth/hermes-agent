@@ -13230,17 +13230,10 @@ class GatewayRunner:
                 and platform_key in _legacy_tp_overrides
             )
         )
-        if (
-            source.platform == Platform.MATRIX
-            and not _platform_tool_progress_configured
-            and not _env_tp
-        ):
-            progress_mode = "off"
-        else:
-            progress_mode = (
-                _env_tp
-                if _env_tp and not _tool_progress_configured
-                else (_resolved_tp or _env_tp or "all")
+        progress_mode = (
+            _env_tp
+            if _env_tp and not _tool_progress_configured
+            else (_resolved_tp or _env_tp or "all")
         )
         # Disable tool progress for webhooks - they don't support message editing,
         # so each progress line would be sent as a separate message.
@@ -13290,6 +13283,9 @@ class GatewayRunner:
             _cleanup_progress = False
             _cleanup_adapter = None
         _cleanup_msg_ids: List[str] = []
+        _matrix_show_reasoning = bool(
+            resolve_display_setting(user_config, platform_key, "show_reasoning", False)
+        )
         # First-touch onboarding latch: fires at most once per run, even if
         # several tools exceed the threshold.
         long_tool_hint_fired = [False]
@@ -13344,6 +13340,8 @@ class GatewayRunner:
                 "reasoning.available",
                 "_thinking",
             ):
+                if not _matrix_show_reasoning:
+                    return
                 thinking_text = str(preview or tool_name or "").strip()
                 if thinking_text:
                     progress_queue.put(("__matrix_thinking__", thinking_text))
@@ -13474,22 +13472,55 @@ class GatewayRunner:
             _last_edit_ts = 0.0      # Throttle edits to avoid Telegram flood control
             _PROGRESS_EDIT_INTERVAL = 1.5  # Minimum seconds between edits
 
+            def _matrix_tool_activity_metadata(content: str) -> tuple[str, Dict[str, Any]]:
+                """Return Matrix plain text plus collapsible formatted-body metadata."""
+                import html as _html
+
+                lines = [line for line in str(content or "").splitlines() if line.strip()]
+                count = len(lines)
+                summary = f"🛠 Tool activity ({count} update{'s' if count != 1 else ''})"
+                plain = summary if not lines else f"{summary}\n" + "\n".join(lines)
+                escaped_summary = _html.escape(summary)
+                escaped_body = _html.escape("\n".join(lines))
+                if escaped_body:
+                    formatted = (
+                        f"<details><summary>{escaped_summary}</summary>"
+                        f"<pre><code>{escaped_body}</code></pre></details>"
+                    )
+                else:
+                    formatted = f"<details><summary>{escaped_summary}</summary></details>"
+                metadata = dict(_progress_metadata or {})
+                metadata["matrix_body"] = plain
+                metadata["matrix_formatted_body"] = formatted
+                return plain, metadata
+
             async def _send_or_edit_progress(message_id: Optional[str], content: str) -> Optional[str]:
                 if not content:
                     return message_id
+                send_metadata = _progress_metadata
+                if source.platform == Platform.MATRIX:
+                    content, send_metadata = _matrix_tool_activity_metadata(content)
                 if can_edit and message_id is not None:
-                    result = await adapter.edit_message(
-                        chat_id=source.chat_id,
-                        message_id=message_id,
-                        content=content,
-                    )
+                    try:
+                        result = await adapter.edit_message(
+                            chat_id=source.chat_id,
+                            message_id=message_id,
+                            content=content,
+                            metadata=send_metadata,
+                        )
+                    except TypeError:
+                        result = await adapter.edit_message(
+                            chat_id=source.chat_id,
+                            message_id=message_id,
+                            content=content,
+                        )
                     if result.success:
                         return message_id
-                    return None
+                    message_id = None
                 result = await adapter.send(
                     chat_id=source.chat_id,
                     content=content,
-                    metadata=_progress_metadata,
+                    metadata=send_metadata,
                 )
                 if result.success and result.message_id:
                     return result.message_id
@@ -13613,6 +13644,17 @@ class GatewayRunner:
 
                     if not _run_still_current():
                         return
+
+                    if source.platform == Platform.MATRIX:
+                        progress_msg_id = await _send_or_edit_progress(
+                            progress_msg_id,
+                            "\n".join(progress_lines),
+                        )
+                        _last_edit_ts = time.monotonic()
+                        await asyncio.sleep(0.3)
+                        if _run_still_current():
+                            await adapter.send_typing(source.chat_id, metadata=_progress_metadata)
+                        continue
 
                     if can_edit and progress_msg_id is not None:
                         # Try to edit the existing progress message
