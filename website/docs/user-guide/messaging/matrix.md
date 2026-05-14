@@ -162,6 +162,38 @@ share the lane. With `group_sessions_per_user: true` (default), Alice and Bob ge
 separate Project B sessions. With `group_sessions_per_user: false`, the room has
 one shared Project B transcript.
 
+### Optional AgentFirstModule Metadata
+
+Hermes can consume optional structured metadata from the companion Synapse
+module [`AgentFirstModule`](https://github.com/nepenth/matrix-agentic-modules).
+This is an enhancement layer only. Standard Matrix homeservers continue to work
+without any behavior change.
+
+When the module adds `unsigned.agent_metadata.is_agent=true`, Hermes reads these
+optional fields:
+
+- `session_scope`
+- `room_identity`
+- `tool_status`
+- `approval_status`
+- `approval_request`
+- `tool_call`
+- `tool_result`
+- `typing_status`
+
+Hermes uses this metadata conservatively:
+
+- `session_scope=room` can keep an unthreaded Matrix project room on a stable
+  room-scoped session lane.
+- `room_identity` can enrich the current `SessionSource` with room name, topic,
+  and server scope, but it cannot change the durable Matrix room ID.
+- Tool and approval metadata is exposed on the inbound `MessageEvent.agent`
+  payload for Matrix-native agent UI flows.
+
+Room IDs remain the durable routing boundary. If AgentFirstModule metadata
+claims a different room ID than the event's Matrix room, Hermes ignores that
+room identity override.
+
 This guide walks you through the full setup process — from creating your bot account to sending your first message.
 
 ## Step 1: Create a Bot Account
