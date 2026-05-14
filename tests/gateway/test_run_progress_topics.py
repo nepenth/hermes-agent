@@ -774,7 +774,11 @@ async def test_run_agent_matrix_streaming_omits_cursor(monkeypatch, tmp_path):
         StreamingRefineAgent,
         session_id="sess-matrix-streaming",
         config_data={
-            "display": {"tool_progress": "off", "interim_assistant_messages": False},
+            "display": {
+                "tool_progress": "off",
+                "interim_assistant_messages": False,
+                "platforms": {"matrix": {"streaming": True}},
+            },
             "streaming": {"enabled": True, "edit_interval": 0.01, "buffer_threshold": 1},
         },
         platform=Platform.MATRIX,
@@ -788,6 +792,29 @@ async def test_run_agent_matrix_streaming_omits_cursor(monkeypatch, tmp_path):
     assert all_text, "expected streamed Matrix content to be sent or edited"
     assert all("▉" not in text for text in all_text)
     assert any("Continuing to refine:" in text for text in all_text)
+
+
+@pytest.mark.asyncio
+async def test_run_agent_matrix_defaults_to_final_answer_only(monkeypatch, tmp_path):
+    adapter, result = await _run_with_agent(
+        monkeypatch,
+        tmp_path,
+        FakeAgent,
+        session_id="sess-matrix-final-only",
+        config_data={
+            "display": {"tool_progress": "all", "interim_assistant_messages": True},
+            "streaming": {"enabled": True, "edit_interval": 0.01, "buffer_threshold": 1},
+        },
+        platform=Platform.MATRIX,
+        chat_id="!room:matrix.example.org",
+        chat_type="group",
+        thread_id="$thread",
+    )
+
+    assert result["final_response"] == "done"
+    assert not result.get("already_sent")
+    assert adapter.sent == []
+    assert adapter.edits == []
 
 
 @pytest.mark.asyncio
