@@ -2385,6 +2385,7 @@ class MatrixAdapter(BasePlatformAdapter):
             source_content = {}
 
         relates_to = source_content.get("m.relates_to", {})
+        agent_metadata = self._parse_agent_metadata(event, source_content)
 
         # Skip edits (m.replace relation).
         if relates_to.get("rel_type") == "m.replace":
@@ -2399,12 +2400,72 @@ class MatrixAdapter(BasePlatformAdapter):
         media_msgtypes = ("m.image", "m.audio", "m.video", "m.file")
         if msgtype in media_msgtypes:
             await self._handle_media_message(
-                room_id, sender, event_id, event_ts, source_content, relates_to, msgtype
+                room_id,
+                sender,
+                event_id,
+                event_ts,
+                source_content,
+                relates_to,
+                msgtype,
+                agent_metadata,
             )
         elif msgtype in ("m.text", "m.notice"):
             await self._handle_text_message(
-                room_id, sender, event_id, event_ts, source_content, relates_to
+                room_id,
+                sender,
+                event_id,
+                event_ts,
+                source_content,
+                relates_to,
+                agent_metadata,
             )
+
+    def _parse_agent_metadata(
+        self,
+        event: Any,
+        source_content: Optional[dict] = None,
+    ) -> Dict[str, Any]:
+        """Parse optional AgentFirstModule metadata from Matrix event unsigned.
+
+        The companion homeserver module adds structured fields to ``unsigned``.
+        Standard Matrix servers omit them, in which case this returns
+        ``{"is_agent": False}`` and behavior is unchanged.
+        """
+        unsigned = getattr(event, "unsigned", None)
+        if hasattr(unsigned, "serialize"):
+            try:
+                unsigned = unsigned.serialize()
+            except Exception:
+                unsigned = None
+        if unsigned is None and isinstance(event, dict):
+            unsigned = event.get("unsigned")
+        if not isinstance(unsigned, dict):
+            return {"is_agent": False}
+
+        marker = unsigned.get("agent_metadata") or {}
+        is_agent = bool(
+            marker is True or (isinstance(marker, dict) and marker.get("is_agent"))
+        )
+        if not is_agent:
+            return {"is_agent": False}
+
+        metadata: Dict[str, Any] = {"is_agent": True}
+        for key in (
+            "session_scope",
+            "room_identity",
+            "tool_status",
+            "approval_status",
+            "approval_request",
+            "tool_call",
+            "tool_result",
+            "typing_status",
+        ):
+            if key in unsigned:
+                metadata[key] = unsigned[key]
+            elif isinstance(marker, dict) and key in marker:
+                metadata[key] = marker[key]
+
+        return metadata
 
     async def _resolve_message_context(
         self,
@@ -2414,6 +2475,7 @@ class MatrixAdapter(BasePlatformAdapter):
         body: str,
         source_content: dict,
         relates_to: dict,
+        agent_metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[tuple]:
         """Shared mention/thread/DM gating for text and media handlers.
 
@@ -2515,6 +2577,7 @@ class MatrixAdapter(BasePlatformAdapter):
             parent_chat_id=room_id if thread_id else None,
             message_id=event_id,
         )
+        source.apply_agent_metadata(agent_metadata)
 
         if thread_id:
             self._threads.mark(thread_id)
@@ -2531,6 +2594,7 @@ class MatrixAdapter(BasePlatformAdapter):
         event_ts: float,
         source_content: dict,
         relates_to: dict,
+        agent_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Process a text message event."""
         body = source_content.get("body", "") or ""
@@ -2544,6 +2608,7 @@ class MatrixAdapter(BasePlatformAdapter):
             body,
             source_content,
             relates_to,
+            agent_metadata,
         )
         if ctx is None:
             return
@@ -2582,6 +2647,7 @@ class MatrixAdapter(BasePlatformAdapter):
             raw_message=source_content,
             message_id=event_id,
             reply_to_message_id=reply_to,
+            agent=agent_metadata or {},
         )
 
         if msg_type == MessageType.TEXT and self._text_batch_delay_seconds > 0:
@@ -2598,6 +2664,7 @@ class MatrixAdapter(BasePlatformAdapter):
         source_content: dict,
         relates_to: dict,
         msgtype: str,
+        agent_metadata: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Process a media message event (image, audio, video, file)."""
         body = source_content.get("body", "") or ""
@@ -2765,6 +2832,7 @@ class MatrixAdapter(BasePlatformAdapter):
             body,
             source_content,
             relates_to,
+            agent_metadata,
         )
         if ctx is None:
             return
@@ -2789,6 +2857,7 @@ class MatrixAdapter(BasePlatformAdapter):
             message_id=event_id,
             media_urls=media_urls,
             media_types=media_types,
+            agent=agent_metadata or {},
         )
 
         await self.handle_message(msg_event)
