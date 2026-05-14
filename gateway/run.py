@@ -10489,7 +10489,11 @@ class GatewayRunner:
                             "`/resume --all` to list all Matrix sessions, or "
                             "`/resume --cross-room <session name>` to explicitly cross room boundaries."
                         )
-                    return t("gateway.resume.no_named_sessions")
+                    return (
+                        "No named sessions found.\n"
+                        "Use `/title My Session` to name your current session, "
+                        "then `/resume My Session` to return to it later."
+                    )
                 lines = ["📋 **Named Sessions**\n"]
                 for s in titled[:10]:
                     title = s["title"]
@@ -10577,11 +10581,7 @@ class GatewayRunner:
                 "Future messages in this room will use that transcript until `/reset` "
                 f"or another `/resume`.{msg_part}"
             )
-        if not msg_count:
-            return t("gateway.resume.resumed_no_count", title=title)
-        if msg_count == 1:
-            return t("gateway.resume.resumed_one", title=title, count=msg_count)
-        return t("gateway.resume.resumed_many", title=title, count=msg_count)
+        return f"↻ Resumed session **{title}**{msg_part}. Conversation restored."
 
     async def _handle_branch_command(self, event: MessageEvent) -> str:
         """Handle /branch [name] — fork the current session into a new independent copy.
