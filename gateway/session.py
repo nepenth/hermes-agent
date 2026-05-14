@@ -91,6 +91,7 @@ class SessionSource:
     guild_id: Optional[str] = None  # Discord guild / Slack workspace / Matrix server scope
     parent_chat_id: Optional[str] = None  # Parent channel when chat_id refers to a thread
     message_id: Optional[str] = None  # ID of the triggering message (for pin/reply/react)
+    agent_metadata: Optional[Dict[str, Any]] = None  # Optional platform-provided agent metadata
     
     @property
     def description(self) -> str:
@@ -134,6 +135,8 @@ class SessionSource:
             d["parent_chat_id"] = self.parent_chat_id
         if self.message_id:
             d["message_id"] = self.message_id
+        if self.agent_metadata:
+            d["agent_metadata"] = self.agent_metadata
         return d
 
     @classmethod
@@ -152,7 +155,69 @@ class SessionSource:
             guild_id=data.get("guild_id"),
             parent_chat_id=data.get("parent_chat_id"),
             message_id=data.get("message_id"),
+            agent_metadata=data.get("agent_metadata"),
         )
+
+    def apply_agent_metadata(self, agent_info: Optional[Dict[str, Any]]) -> "SessionSource":
+        """Apply optional structured Matrix agent metadata to this source.
+
+        The Matrix AgentFirstModule exposes metadata through event ``unsigned``.
+        Treat it as an optional enhancement only: unknown/malformed values are
+        ignored, and durable room identity still comes from the Matrix room ID.
+        """
+        if not isinstance(agent_info, dict) or not agent_info.get("is_agent"):
+            return self
+
+        allowed_keys = {
+            "is_agent",
+            "session_scope",
+            "room_identity",
+            "tool_status",
+            "approval_status",
+            "approval_request",
+            "tool_call",
+            "tool_result",
+            "typing_status",
+        }
+        self.agent_metadata = {
+            key: value for key, value in agent_info.items() if key in allowed_keys
+        }
+
+        session_scope = str(agent_info.get("session_scope") or "").strip().lower()
+        if session_scope == "room":
+            self.thread_id = None
+            self.parent_chat_id = None
+
+        room_identity = agent_info.get("room_identity")
+        if not isinstance(room_identity, dict):
+            return self
+
+        metadata_room_id = str(room_identity.get("room_id") or "").strip()
+        if metadata_room_id and metadata_room_id != self.chat_id:
+            logger.debug(
+                "Ignoring AgentFirst room_identity for %s because it references %s",
+                self.chat_id,
+                metadata_room_id,
+            )
+            return self
+
+        room_name = (
+            room_identity.get("name")
+            or room_identity.get("room_name")
+            or room_identity.get("canonical_alias")
+        )
+        if room_name:
+            self.chat_name = str(room_name)
+
+        room_topic = room_identity.get("topic") or room_identity.get("room_topic")
+        if room_topic:
+            self.chat_topic = str(room_topic)
+
+        server_name = room_identity.get("server_name")
+        if server_name:
+            self.guild_id = str(server_name)
+
+        return self
     
 
 
@@ -303,6 +368,16 @@ def build_session_context_prompt(
         if src.thread_id:
             thread_id = _hash_chat_id(src.thread_id) if redact_pii else src.thread_id
             lines.append(f"**Matrix Thread:** {thread_id}")
+        agent_metadata = src.agent_metadata or {}
+        if agent_metadata.get("is_agent"):
+            session_scope = str(agent_metadata.get("session_scope") or "").strip()
+            if session_scope:
+                lines.append(
+                    "**Matrix Agent Metadata:** AgentFirstModule active; "
+                    f"session scope: {session_scope}"
+                )
+            else:
+                lines.append("**Matrix Agent Metadata:** AgentFirstModule active")
         lines.append(
             "**Matrix room boundary:** Treat this turn as scoped to the current "
             "Matrix room/thread only. Do not assume unresolved references are "
