@@ -28,7 +28,10 @@ The KB API sanitizes HTML, strips active content, records metadata, updates arti
 
 Default mental model: **publish one self-contained static HTML review page first**. Use assets only as supporting evidence/source files. The HTML page SHOULD be useful on its own: summarize the ask, embed important excerpts/tables/code blocks, and link to any raw attachments for traceability.
 
-Operator note: when sharing this skill across Hermes profiles or bootstrapping profile-specific KB tokens, see `references/cross-profile-rollout.md`.
+Operator notes:
+
+- When sharing this skill across Hermes profiles or bootstrapping profile-specific KB tokens, see `references/cross-profile-rollout.md`.
+- When debugging artifact publish failures, rollback dirtiness, or Markdown asset/frontmatter regressions, see `references/api-hardening.md`.
 
 ## When to Use
 
@@ -106,7 +109,9 @@ Response shape:
 The API enforces a static review surface:
 
 - HTML is sanitized server-side.
-- `<script>`, iframes, forms, object/embed tags, event handlers, `javascript:` URLs, CSS `@import`, and CSS `url(...)` are stripped.
+- User-supplied `<script>`, iframes, forms, object/embed tags, event handlers, `javascript:` URLs, CSS `@import`, and CSS `url(...)` are stripped.
+- The KB platform injects trusted artifact chrome, UTF-8 metadata, base CSS, and a small first-party copy-control script.
+- Agents MAY use safe copy buttons: `<button type="button" data-copy-target="#some-id">Copy</button>` to copy visible text from a target element, or `<button type="button" data-copy-text="literal text">Copy</button>` for short literal strings. DO NOT add `onclick` or custom JS; it will still be stripped.
 - A visible banner is injected: generated-by, project/scope, timestamp, TTL, and “review artifact only.”
 - Assets are limited by suffix, count, per-file size, and total size.
 - Assets live only under the artifact’s sibling `.assets/` directory.
@@ -120,7 +125,7 @@ Allowed asset suffixes currently include:
 
 DO NOT attempt to bypass the sanitizer. If the review needs an interactive app, publish a static summary here and put the app in the proper project deployment flow.
 
-## Retention
+## Retention and Artifact Management
 
 Default retention is 30 days:
 
@@ -139,6 +144,42 @@ Use `retain: true` only for milestone artifacts that should remain available ind
 ```json
 {"retain": true}
 ```
+
+TTL pruning is handled server-side by KB maintenance (`whyland-kb-maintenance.timer`, every 15 minutes). Artifacts are pruned when their manifest `expires` date is earlier than the current date, so a `ttl_days: 1` artifact normally remains through its expiry date and is removed on the next maintenance run after that date rolls over.
+
+Agents can replace or delete artifacts they own; Forge/admin can manage all artifacts.
+
+Replace an existing artifact in-place by supplying the prior returned path:
+
+```json
+{
+  "project": "Example Project",
+  "slug": "example-review",
+  "artifact_path": "Artifacts/agent-reviews/example-project/2026-05-14-example-review.html",
+  "replace": true,
+  "title": "Example Review",
+  "html": "<!doctype html>...",
+  "assets": [],
+  "message": "artifact: replace example review"
+}
+```
+
+Delete an owned artifact outside its TTL:
+
+```http
+POST /api/vault/artifact/delete
+Authorization: Bearer <WHYLAND_KB_API_TOKEN>
+Content-Type: application/json
+```
+
+```json
+{
+  "path": "Artifacts/agent-reviews/example-project/2026-05-14-example-review.html",
+  "message": "artifact: delete bad example review"
+}
+```
+
+The delete API removes the `.html`, `.artifact.json`, and sibling `.assets/` files, regenerates indexes/public output, and commits/pushes the vault.
 
 If an artifact becomes canonical, DO NOT rely on the artifact URL alone. Promote the underlying content into the proper source of truth: repo docs, project card, decision note, operations note, or runbook.
 
@@ -198,7 +239,22 @@ Keep it static and reviewable:
 </html>
 ```
 
-The API injects its own banner and base CSS. Your CSS can style content, but external CSS, JS, and active behavior are not supported.
+Use safe platform copy controls when useful:
+
+```html
+<button type="button" data-copy-target="#snippet">Copy snippet</button>
+<pre id="snippet"><code>text to copy</code></pre>
+```
+
+or for short literal text:
+
+```html
+<button type="button" data-copy-text="npm test -- --runInBand">Copy command</button>
+```
+
+Do NOT include custom `<script>`, event handlers, forms, or iframes. The sanitizer removes user-supplied active content; only the KB platform's copy-control script is allowed.
+
+The API injects its own banner, UTF-8 metadata, base CSS, and copy-control script. Your CSS can style content, but external CSS, custom JS, and arbitrary active behavior are not supported.
 
 ## Asset Guidance
 
@@ -280,7 +336,8 @@ python3 - <<'PY'
 from pathlib import Path
 s = Path('/tmp/artifact.html').read_text(errors='replace').lower()
 assert 'whyland-artifact-banner' in s
-assert '<script' not in s
+assert 'whyland-kb-agent-review-artifact' in s
+# User-supplied active content should be gone; platform copy script may be present.
 assert 'javascript:' not in s
 assert 'onclick' not in s
 print('artifact verified')
@@ -311,10 +368,11 @@ If the artifact led to a durable decision or changed system/project state, ALSO 
 2. **Treating artifacts as docs.** Artifacts are review surfaces. Canonical docs still live in repos/vault notes.
 3. **Expecting JavaScript.** The sanitizer strips active content. Use static HTML/CSS only.
 4. **Forgetting URL verification.** A committed artifact is not useful if Quartz/nginx did not publish it. Fetch the final URL.
-5. **Markdown assets are attachments, not notes.** Raw `.md` files under `.assets/` should not be used as the main review surface. Embed the relevant Markdown/code in the HTML page and link the raw file only for provenance. If the KB API reports Markdown/frontmatter maintenance warnings, retry with `.txt` attachments and report the API/tooling issue.
-6. **Over-retaining noise.** Use short TTLs for routine handoffs. Retain only milestone artifacts.
-7. **Editing project cards by side effect.** Artifact publishing is isolated under `Artifacts/agent-reviews/`; update project cards separately and only within ownership rules.
-8. **Breaking the token map while adding agents.** If Forge bootstraps a new profile token in `/etc/whyland-kb/vault-api-tokens.json`, preserve ownership/readability for the API service user (`nepenthe:nepenthe`, mode `600`). A root-owned `600` replacement makes every token look unauthorized until ownership is fixed. The API reloads the token file on each request; no service restart is needed for token additions.
+5. **Markdown assets are attachments, not notes.** Raw `.md` files under `.assets/` should not be used as the main review surface. Embed the relevant Markdown/code in the HTML page and link the raw file only for provenance. If the KB API reports Markdown/frontmatter maintenance warnings, retry with `.txt` attachments and report the API/tooling issue; see `references/api-hardening.md` for the host-side exclusion and rollback pattern.
+6. **Dirty rollback after failed publish.** A failed artifact publish should not leave generated indexes or half-written artifact files dirty in the vault worktree. If it does, treat that as a KB API rollback bug, not an agent payload problem.
+7. **Over-retaining noise.** Use short TTLs for routine handoffs. Retain only milestone artifacts.
+8. **Editing project cards by side effect.** Artifact publishing is isolated under `Artifacts/agent-reviews/`; update project cards separately and only within ownership rules.
+9. **Breaking the token map while adding agents.** If Forge bootstraps a new profile token in `/etc/whyland-kb/vault-api-tokens.json`, preserve ownership/readability for the API service user (`nepenthe:nepenthe`, mode `600`). A root-owned `600` replacement makes every token look unauthorized until ownership is fixed. The API reloads the token file on each request; no service restart is needed for token additions.
 
 ## Verification Checklist
 
