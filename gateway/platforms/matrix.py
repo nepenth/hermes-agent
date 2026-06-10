@@ -852,10 +852,8 @@ class MatrixAdapter(BasePlatformAdapter):
         # Thread participation tracking (for require_mention bypass)
         self._threads = ThreadParticipationTracker("matrix")
 
-        # Mention/thread gating — parsed once from env vars.
-        self._require_mention: bool = os.getenv(
-            "MATRIX_REQUIRE_MENTION", "true"
-        ).lower() not in {"false", "0", "no"}
+        # Mention/thread gating — parsed once from config.extra or env vars.
+        self._require_mention: bool = self._parse_require_mention(config)
         self._thread_require_mention: bool = self._parse_thread_require_mention(config)
         free_rooms_raw = config.extra.get("free_response_rooms")
         if free_rooms_raw is None:
@@ -985,6 +983,25 @@ class MatrixAdapter(BasePlatformAdapter):
         self._processed_events.append(event_id)
         self._processed_events_set.add(event_id)
         return False
+
+    @staticmethod
+    def _parse_require_mention(config) -> bool:
+        """Parse require_mention from config.extra or env var.
+
+        Handles both YAML booleans and string values (``\"true\"``, ``\"false\"``,
+        ``\"yes\"``, ``\"no\"``, ``\"on\"``, ``\"off\"``, ``\"1\"``, ``\"0\"``).
+        Falls back to ``MATRIX_REQUIRE_MENTION`` env var, default ``true``.
+        """
+        configured = config.extra.get("require_mention")
+        if configured is not None:
+            if isinstance(configured, bool):
+                return configured
+            if isinstance(configured, str):
+                return configured.lower() not in {"false", "0", "no", "off"}
+            return bool(configured)
+        return os.getenv(
+            "MATRIX_REQUIRE_MENTION", "true"
+        ).lower() not in {"false", "0", "no", "off"}
 
     @staticmethod
     def _parse_thread_require_mention(config) -> bool:
@@ -2300,10 +2317,6 @@ class MatrixAdapter(BasePlatformAdapter):
         """Return True when sender matches configured Matrix ignore patterns."""
         return any(pattern.search(sender or "") for pattern in self._ignored_user_patterns)
 
-    def _is_allowed_matrix_sender(self, sender: str) -> bool:
-        """Return True when MATRIX_ALLOWED_USERS permits the sender."""
-        return not self._allowed_user_ids or sender in self._allowed_user_ids
-
     def _is_allowed_matrix_room(self, room_id: str) -> bool:
         """Return True when MATRIX_ALLOWED_ROOMS permits the room."""
         return not self._allowed_room_ids or room_id in self._allowed_room_ids
@@ -2342,13 +2355,6 @@ class MatrixAdapter(BasePlatformAdapter):
         if self._matches_ignored_user_pattern(sender):
             logger.debug(
                 "Matrix: ignoring sender %s in %s due to configured ignore pattern",
-                sender,
-                room_id,
-            )
-            return
-        if not self._is_allowed_matrix_sender(sender):
-            logger.info(
-                "Matrix: ignoring unauthorized sender %s in %s",
                 sender,
                 room_id,
             )

@@ -3775,11 +3775,12 @@ class TestMatrixOnRoomMessageFilter:
         self.adapter._handle_text_message.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_unauthorized_user_is_dropped(self):
+    async def test_unauthorized_user_reaches_text_handler(self):
+        """MATRIX_ALLOWED_USERS is enforced by gateway authz, not adapter intake."""
         self.adapter._allowed_user_ids = {"@alice:example.org"}
         ev = self._mk_event(sender="@mallory:example.org", body="hello bot")
         await self.adapter._on_room_message(ev)
-        self.adapter._handle_text_message.assert_not_called()
+        self.adapter._handle_text_message.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_authorized_user_reaches_text_handler(self):
@@ -3868,6 +3869,85 @@ class TestMatrixOnRoomMessageFilter:
         await self.adapter._on_room_message(ev)
 
         self.adapter._handle_text_message.assert_awaited_once()
+
+
+class TestMatrixRequireMention:
+    """require_mention should honor config.extra like thread_require_mention."""
+
+    def test_require_mention_from_config_extra_false(self):
+        from gateway.platforms.matrix import MatrixAdapter
+
+        config = PlatformConfig(
+            enabled=True,
+            token="syt_test",
+            extra={
+                "homeserver": "https://matrix.example.org",
+                "require_mention": False,
+            },
+        )
+        adapter = MatrixAdapter(config)
+        assert adapter._require_mention is False
+
+    def test_require_mention_from_env_when_extra_unset(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_REQUIRE_MENTION", "false")
+
+        from gateway.platforms.matrix import MatrixAdapter
+
+        config = PlatformConfig(
+            enabled=True,
+            token="syt_test",
+            extra={"homeserver": "https://matrix.example.org"},
+        )
+        adapter = MatrixAdapter(config)
+        assert adapter._require_mention is False
+
+    def test_require_mention_config_takes_precedence_over_env(self, monkeypatch):
+        monkeypatch.setenv("MATRIX_REQUIRE_MENTION", "true")
+
+        from gateway.platforms.matrix import MatrixAdapter
+
+        config = PlatformConfig(
+            enabled=True,
+            token="syt_test",
+            extra={
+                "homeserver": "https://matrix.example.org",
+                "require_mention": False,
+            },
+        )
+        adapter = MatrixAdapter(config)
+        assert adapter._require_mention is False
+
+    @pytest.mark.asyncio
+    async def test_require_mention_false_allows_unmentioned_group_message(self):
+        from gateway.platforms.matrix import MatrixAdapter
+
+        config = PlatformConfig(
+            enabled=True,
+            token="syt_test",
+            extra={
+                "homeserver": "https://matrix.example.org",
+                "user_id": "@bot:example.org",
+                "require_mention": False,
+            },
+        )
+        adapter = MatrixAdapter(config)
+        adapter._is_dm_room = AsyncMock(return_value=False)
+        adapter._resolve_room_identity = AsyncMock(
+            return_value=MagicMock(display_name="Project Room")
+        )
+        adapter._get_display_name = AsyncMock(return_value="Alice")
+        adapter._background_read_receipt = MagicMock()
+
+        ctx = await adapter._resolve_message_context(
+            room_id="!project:example.org",
+            sender="@alice:example.org",
+            event_id="$unmentioned",
+            body="hello there",
+            source_content={"body": "hello there"},
+            relates_to={},
+        )
+
+        assert ctx is not None
 
 
 class TestMatrixFreeResponsePolicy:
