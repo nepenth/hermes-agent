@@ -876,6 +876,21 @@ Session continuity is maintained via the `X-Hermes-Session-Id` header. The host'
 **Limitations (v1):** Tool progress messages from the remote agent are not relayed back — the user sees the streamed final response only, not individual tool calls. Dangerous command approval prompts are handled on the host side, not relayed to the Matrix user. These can be addressed in future updates.
 :::
 
+### Bot connects and sends, but ignores inbound messages
+
+**Cause**: Matrix event handlers only fire when sync payloads are dispatched through
+mautrix's `handle_sync()` machinery. A raw `client.sync()` poll that never calls
+`handle_sync()` can leave the adapter connected (send works) while inbound
+messages never reach `_on_room_message`.
+
+**Fix**: Hermes uses an explicit sync loop that calls `client.handle_sync()` on
+both the initial sync and every incremental sync response. This matches the
+diagnosis in upstream issue #7914 and closed PR #37807, but keeps Hermes's own
+background maintenance tasks (joined-room tracking, invite handling, E2EE key
+share) instead of delegating the full lifecycle to `client.start()`. If inbound
+messages still fail after a gateway restart, verify handlers are registered before
+the first sync and check logs for `sync event dispatch error`.
+
 ### Sync issues / bot falls behind
 
 **Cause**: Long-running tool executions can delay the sync loop, or the homeserver is slow.
