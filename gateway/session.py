@@ -1280,6 +1280,17 @@ class SessionStore:
         entries.sort(key=lambda e: e.updated_at, reverse=True)
 
         return entries
+
+    def lookup_by_session_id(self, session_id: str) -> Optional[SessionEntry]:
+        """Return the active session entry for a persisted session ID, if any."""
+        if not session_id:
+            return None
+        with self._lock:
+            self._ensure_loaded_locked()
+            for entry in self._entries.values():
+                if entry.session_id == session_id:
+                    return entry
+        return None
     
     def append_to_transcript(self, session_id: str, message: Dict[str, Any], skip_db: bool = False) -> None:
         """Append a message to a session's transcript (SQLite).

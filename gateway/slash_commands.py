@@ -480,6 +480,13 @@ class GatewaySlashCommandsMixin:
 
     def _gateway_session_origin_for_id(self, session_id: str) -> Optional[SessionSource]:
         """Best-effort origin lookup for gateway session IDs."""
+        lookup = getattr(type(self.session_store), "lookup_by_session_id", None)
+        if callable(lookup):
+            entry = lookup(self.session_store, session_id)
+            return getattr(entry, "origin", None) if entry is not None else None
+
+        # Test doubles and older stores may not expose the public lookup helper.
+        # Keep the Matrix resume guard fail-closed if no origin can be resolved.
         entries = getattr(self.session_store, "_entries", {}) or {}
         for entry in entries.values():
             if getattr(entry, "session_id", None) == session_id:
