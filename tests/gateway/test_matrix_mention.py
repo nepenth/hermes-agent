@@ -9,6 +9,13 @@ import pytest
 
 from gateway.config import PlatformConfig
 
+
+@pytest.fixture(autouse=True)
+def _isolate_matrix_session_scope(monkeypatch):
+    """Keep Matrix mention tests independent of profile/service session scope."""
+    monkeypatch.delenv("MATRIX_SESSION_SCOPE", raising=False)
+
+
 # The matrix adapter module is importable without mautrix installed
 # (module-level imports use try/except with stubs).  No need for
 # module-level mock installation — tests that call adapter methods
@@ -569,6 +576,23 @@ async def test_auto_thread_disabled(monkeypatch):
     adapter.handle_message.assert_awaited_once()
     msg = adapter.handle_message.await_args.args[0]
     assert msg.source.thread_id is None
+
+
+@pytest.mark.asyncio
+async def test_room_session_scope_suppresses_auto_thread(monkeypatch):
+    """MATRIX_SESSION_SCOPE=room intentionally keeps room messages unthreaded."""
+    monkeypatch.setenv("MATRIX_REQUIRE_MENTION", "false")
+    monkeypatch.setenv("MATRIX_SESSION_SCOPE", "room")
+    monkeypatch.delenv("MATRIX_AUTO_THREAD", raising=False)
+
+    adapter = _make_adapter()
+    event = _make_event("hello", event_id="$msg1")
+
+    await adapter._on_room_message(event)
+    adapter.handle_message.assert_awaited_once()
+    msg = adapter.handle_message.await_args.args[0]
+    assert msg.source.thread_id is None
+    assert "$msg1" not in adapter._threads
 
 
 @pytest.mark.asyncio
