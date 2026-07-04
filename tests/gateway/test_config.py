@@ -570,6 +570,105 @@ class TestLoadGatewayConfig:
         # Env value preserved, not clobbered by yaml.
         assert os.environ.get("DISCORD_THREAD_REQUIRE_MENTION") == "true"
 
+    def _write_gateway_config(self, tmp_path, monkeypatch, content: str):
+        hermes_home = tmp_path / ".hermes"
+        hermes_home.mkdir()
+        (hermes_home / "config.yaml").write_text(content, encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(hermes_home))
+
+    @staticmethod
+    def _clear_matrix_session_control_env(monkeypatch):
+        monkeypatch.delenv("MATRIX_SESSION_SCOPE", raising=False)
+        monkeypatch.delenv("MATRIX_AUTO_THREAD", raising=False)
+
+    def test_bridges_matrix_session_scope_from_config_yaml(self, tmp_path, monkeypatch):
+        """matrix.session_scope should reach the runtime env var the adapter reads."""
+        self._write_gateway_config(tmp_path, monkeypatch, "matrix:\n  session_scope: room\n")
+        self._clear_matrix_session_control_env(monkeypatch)
+
+        load_gateway_config()
+
+        assert os.environ.get("MATRIX_SESSION_SCOPE") == "room"
+
+    def test_bridges_matrix_auto_thread_from_config_yaml(self, tmp_path, monkeypatch):
+        """matrix.auto_thread should reach the runtime env var the adapter reads."""
+        self._write_gateway_config(tmp_path, monkeypatch, "matrix:\n  auto_thread: false\n")
+        self._clear_matrix_session_control_env(monkeypatch)
+
+        load_gateway_config()
+
+        assert os.environ.get("MATRIX_AUTO_THREAD") == "false"
+
+    def test_matrix_session_controls_yaml_do_not_overwrite_env(self, tmp_path, monkeypatch):
+        """Explicit Matrix env vars should win over config.yaml."""
+        self._write_gateway_config(
+            tmp_path,
+            monkeypatch,
+            "matrix:\n  session_scope: room\n  auto_thread: false\n",
+        )
+        monkeypatch.setenv("MATRIX_SESSION_SCOPE", "thread")
+        monkeypatch.setenv("MATRIX_AUTO_THREAD", "true")
+
+        load_gateway_config()
+
+        assert os.environ.get("MATRIX_SESSION_SCOPE") == "thread"
+        assert os.environ.get("MATRIX_AUTO_THREAD") == "true"
+
+    def test_bridges_matrix_session_controls_from_platforms_config_yaml(self, tmp_path, monkeypatch):
+        """platforms.matrix session controls should use the same plugin bridge."""
+        self._write_gateway_config(
+            tmp_path,
+            monkeypatch,
+            "platforms:\n  matrix:\n    session_scope: room\n    auto_thread: false\n",
+        )
+        self._clear_matrix_session_control_env(monkeypatch)
+
+        load_gateway_config()
+
+        assert os.environ.get("MATRIX_SESSION_SCOPE") == "room"
+        assert os.environ.get("MATRIX_AUTO_THREAD") == "false"
+
+    def test_bridges_matrix_session_controls_from_gateway_platforms_config_yaml(self, tmp_path, monkeypatch):
+        """gateway.platforms.matrix should dispatch the Matrix plugin YAML bridge."""
+        self._write_gateway_config(
+            tmp_path,
+            monkeypatch,
+            "gateway:\n  platforms:\n    matrix:\n      session_scope: thread\n      auto_thread: false\n",
+        )
+        self._clear_matrix_session_control_env(monkeypatch)
+
+        load_gateway_config()
+
+        assert os.environ.get("MATRIX_SESSION_SCOPE") == "thread"
+        assert os.environ.get("MATRIX_AUTO_THREAD") == "false"
+
+    def test_matrix_adapter_observes_config_yaml_session_controls(self, tmp_path, monkeypatch):
+        """MatrixAdapter should observe session controls bridged before construction."""
+        self._write_gateway_config(
+            tmp_path,
+            monkeypatch,
+            "matrix:\n  session_scope: room\n  auto_thread: false\n",
+        )
+        self._clear_matrix_session_control_env(monkeypatch)
+
+        load_gateway_config()
+
+        from plugins.platforms.matrix.adapter import MatrixAdapter
+
+        adapter = MatrixAdapter(
+            PlatformConfig(
+                enabled=True,
+                token="syt_test_token",
+                extra={
+                    "homeserver": "https://matrix.example.org",
+                    "user_id": "@hermes:example.org",
+                },
+            )
+        )
+
+        assert adapter._matrix_session_scope == "room"
+        assert adapter._auto_thread is False
+
     def test_bridges_discord_bots_require_inline_mention_from_config_yaml(self, tmp_path, monkeypatch):
         """discord.bots_require_inline_mention should reach the runtime env var."""
         hermes_home = tmp_path / ".hermes"
