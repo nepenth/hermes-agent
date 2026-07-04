@@ -79,7 +79,9 @@ Shared sessions can be useful for a collaborative room, but they also mean:
 
 ### Mention and Threading Configuration
 
-You can configure mention and auto-threading behavior via environment variables or `config.yaml`:
+Configure mention and auto-threading behavior in `config.yaml`. Environment
+variables remain supported for legacy installs, containers, and explicit runtime
+overrides, but non-secret behavior belongs in config.
 
 ```yaml
 matrix:
@@ -99,7 +101,8 @@ matrix:
   dm_mention_threads: false       # Create thread when @mentioned in DM (default: false)
 ```
 
-Or via environment variables:
+For legacy installs or container/runtime overrides, these environment variables
+map to the same behavior settings:
 
 ```bash
 MATRIX_REQUIRE_MENTION=true
@@ -132,12 +135,16 @@ If you are upgrading from a version that did not have `MATRIX_REQUIRE_MENTION`, 
 If you use the same Matrix bot in multiple project rooms, configure stable
 room-scoped sessions:
 
-```bash
-MATRIX_SESSION_SCOPE=room
-MATRIX_AUTO_THREAD=false
+```yaml
+matrix:
+  session_scope: room
+  auto_thread: false
 ```
 
-`MATRIX_SESSION_SCOPE` accepts:
+Environment overrides are still available as `MATRIX_SESSION_SCOPE=room` and
+`MATRIX_AUTO_THREAD=false` when you need process-level/container overrides.
+
+`matrix.session_scope` accepts:
 
 | Scope | Behavior |
 |-------|----------|
@@ -151,7 +158,7 @@ current Matrix room/session scope, and `/resume` will not silently resume a
 named session from another Matrix room unless you explicitly use
 `/resume --cross-room <session name>`.
 
-`MATRIX_SESSION_SCOPE=room` controls the room/thread lane. The existing
+`matrix.session_scope: room` controls the room/thread lane. The existing
 `group_sessions_per_user` setting still controls whether users inside that room
 share the lane. With `group_sessions_per_user: true` (default), Alice and Bob get
 separate Project B sessions. With `group_sessions_per_user: false`, the room has

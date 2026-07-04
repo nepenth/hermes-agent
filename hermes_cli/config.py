@@ -2402,8 +2402,14 @@ DEFAULT_CONFIG = {
     # Matrix platform settings (gateway mode)
     "matrix": {
         "require_mention": True,       # Require @mention to respond in rooms
+        "allowed_users": "",           # Matrix user IDs allowed to trigger agent turns
         "free_response_rooms": "",     # Comma-separated room IDs where bot responds without mention
         "allowed_rooms": "",           # If set, bot ONLY responds in these room IDs (whitelist)
+        "ignore_user_patterns": [],     # Bridge/appservice ghost user ID regexes to ignore
+        "process_notices": False,      # Process inbound m.notice events
+        "session_scope": "auto",       # auto|room|thread session lane for room messages
+        "auto_thread": True,           # Auto-create threads for room messages
+        "dm_mention_threads": False,   # Create a DM thread when the bot is @mentioned
     },
 
     # Approval mode for dangerous commands:

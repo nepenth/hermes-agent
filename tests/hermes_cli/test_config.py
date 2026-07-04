@@ -1166,6 +1166,52 @@ class TestDiscordChannelPromptsConfig:
         # explicitly wrote (fixes #40821: config migration expanding defaults).
         assert "channel_prompts" not in raw.get("discord", {})
 
+
+class TestMatrixDefaultConfig:
+    def test_default_config_includes_matrix_behavior_controls(self):
+        matrix = DEFAULT_CONFIG["matrix"]
+
+        assert matrix["require_mention"] is True
+        assert matrix["allowed_users"] == ""
+        assert matrix["allowed_rooms"] == ""
+        assert matrix["free_response_rooms"] == ""
+        assert matrix["ignore_user_patterns"] == []
+        assert matrix["process_notices"] is False
+        assert matrix["session_scope"] == "auto"
+        assert matrix["auto_thread"] is True
+        assert matrix["dm_mention_threads"] is False
+
+    def test_migrate_does_not_expand_matrix_behavior_defaults(self, tmp_path):
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            yaml.safe_dump({"_config_version": 17, "matrix": {"require_mention": False}}),
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {"HERMES_HOME": str(tmp_path)}):
+            migrate_config(interactive=False, quiet=True)
+            raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            loaded = load_config()
+
+        assert raw["_config_version"] == DEFAULT_CONFIG["_config_version"]
+        assert raw["matrix"]["require_mention"] is False
+        assert loaded["matrix"]["session_scope"] == "auto"
+        assert loaded["matrix"]["auto_thread"] is True
+        assert loaded["matrix"]["dm_mention_threads"] is False
+        for default_only_key in (
+            "allowed_users",
+            "allowed_rooms",
+            "free_response_rooms",
+            "ignore_user_patterns",
+            "process_notices",
+            "session_scope",
+            "auto_thread",
+            "dm_mention_threads",
+        ):
+            assert default_only_key not in raw.get("matrix", {})
+
+
+class TestConfigMigrationNoDefaultsDump:
     def test_migrate_preserves_custom_providers_and_no_defaults_dump(self, tmp_path):
         """Migration must not expand config.yaml to a defaults dump (#40821).
 
