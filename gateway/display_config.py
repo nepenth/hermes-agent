@@ -142,10 +142,18 @@ _PLATFORM_DEFAULTS: dict[str, dict[str, Any]] = {
     # "new"/"all" spam permanent lines in channels (hermes-agent#14663).
     "slack":           {**_TIER_MEDIUM, "tool_progress": "off"},
     "mattermost":      _TIER_MEDIUM,
-    # Matrix: permanent timeline messages; tool_progress spam is hard to clean
-    # up (edit support varies by client). Quiet by default like Slack; opt in
-    # via display.platforms.matrix.tool_progress.
-    "matrix":          {**_TIER_MEDIUM, "tool_progress": "off"},
+    # Matrix: permanent timeline. Default tool_progress off (opt in).
+    # When tools are shown, suppress interim assistant chatter so the room
+    # gets: sticky Tool activity pane → final answer only (no "let me try
+    # a few more" mid-turn messages). Keep streaming=None (follow global
+    # StreamingConfig, which defaults enabled=False) so an explicit
+    # top-level streaming.enabled: true still works; do NOT hard-disable
+    # with False — that would ignore global streaming config.
+    "matrix":          {
+        **_TIER_MEDIUM,
+        "tool_progress": "off",
+        "interim_assistant_messages": False,
+    },
     "feishu":          _TIER_MEDIUM,
 
     # Tier 3 — no edit support, progress messages are permanent
