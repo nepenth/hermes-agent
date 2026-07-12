@@ -257,7 +257,7 @@ class TestPlatformDefaults:
         from gateway.display_config import resolve_display_setting
 
         assert resolve_display_setting({}, "matrix", "interim_assistant_messages") is False
-        # streaming inherits None from tier → follow top-level StreamingConfig
+        # streaming=None → follow top-level StreamingConfig (default off)
         assert resolve_display_setting({}, "matrix", "streaming") is None
 
     def test_slack_defaults_tool_progress_off(self):
