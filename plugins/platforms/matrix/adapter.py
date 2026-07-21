@@ -3594,11 +3594,16 @@ class MatrixAdapter(BasePlatformAdapter):
                 try:
                     from tools.approval import resolve_gateway_approval
 
-                    count = resolve_gateway_approval(
-                        prompt.session_key,
-                        choice,
-                        approval_id=prompt.approval_id,
-                    )
+                    if prompt.approval_id is None:
+                        # Backward compatibility for prompts created by older
+                        # adapters/tests before approval identity was attached.
+                        count = resolve_gateway_approval(prompt.session_key, choice)
+                    else:
+                        count = resolve_gateway_approval(
+                            prompt.session_key,
+                            choice,
+                            approval_id=prompt.approval_id,
+                        )
                     if count:
                         prompt.resolved = True
                         self._forget_matrix_approval_prompt(reacts_to, prompt)
@@ -3723,8 +3728,13 @@ class MatrixAdapter(BasePlatformAdapter):
         events = self._approval_prompt_by_session.get(prompt.session_key)
         if events is None:
             return
-        events.discard(target_event_id)
-        if not events:
+        if isinstance(events, set):
+            events.discard(target_event_id)
+            empty = not events
+        else:
+            # Legacy in-memory representation stored one event id directly.
+            empty = events == target_event_id
+        if empty:
             self._approval_prompt_by_session.pop(prompt.session_key, None)
 
     async def _validate_matrix_prompt_reactor(
