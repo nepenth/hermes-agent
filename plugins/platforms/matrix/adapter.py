@@ -1866,10 +1866,12 @@ class MatrixAdapter(BasePlatformAdapter):
             msg_content["m.mentions"] = new_content["m.mentions"]
         if "formatted_body" in new_content:
             msg_content["format"] = "org.matrix.custom.html"
-            # Explicit Matrix HTML (Tool activity or approval cards) stays
-            # unprefixed. Normal markdown/mention edits retain the Matrix
-            # m.replace outer-body convention.
-            if metadata and metadata.get("matrix_formatted_body"):
+            # Matrix replacement fallbacks MUST retain the outer ``* `` marker.
+            # Tool activity is the sole intentional exception because its stable
+            # pane HTML is already the complete client-facing replacement body.
+            # Keep that exception explicit so approval-card edits cannot inherit
+            # it merely by sharing the matrix_formatted_body metadata key.
+            if metadata and metadata.get("matrix_formatted_body_unprefixed"):
                 msg_content["formatted_body"] = new_content["formatted_body"]
             else:
                 msg_content["formatted_body"] = f'* {new_content["formatted_body"]}'

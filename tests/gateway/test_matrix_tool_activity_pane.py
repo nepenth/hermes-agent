@@ -97,7 +97,10 @@ async def test_matrix_send_and_edit_carry_html():
         adapter,
         "!room:ex",
         body,
-        metadata={"matrix_formatted_body": html},
+        metadata={
+            "matrix_formatted_body": html,
+            "matrix_formatted_body_unprefixed": True,
+        },
     )
     assert res.success
     assert sent["events"][0]["format"] == "org.matrix.custom.html"
@@ -109,7 +112,10 @@ async def test_matrix_send_and_edit_carry_html():
         "!room:ex",
         root_id,
         body,
-        metadata={"matrix_formatted_body": html},
+        metadata={
+            "matrix_formatted_body": html,
+            "matrix_formatted_body_unprefixed": True,
+        },
     )
     assert res2.success
     assert res2.message_id == root_id  # sticky root

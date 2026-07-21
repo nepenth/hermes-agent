@@ -19644,6 +19644,10 @@ class GatewayRunner(GatewayAuthorizationMixin, GatewayKanbanWatchersMixin, Gatew
                 if _is_matrix_progress and lines:
                     body, html = _matrix_tool_activity_bodies(lines)
                     meta["matrix_formatted_body"] = html
+                    # Tool activity owns a stable Matrix pane and intentionally
+                    # omits the outer HTML ``* `` edit fallback marker. Approval
+                    # cards share matrix_formatted_body but MUST NOT inherit this.
+                    meta["matrix_formatted_body_unprefixed"] = True
                     # body is returned separately; metadata only needs HTML
                     return meta, body
                 return meta, None

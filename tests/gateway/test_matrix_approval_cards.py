@@ -99,6 +99,45 @@ class TestApprovalCardFormatting:
 
 class TestMatrixApprovalCardLifecycle:
     @pytest.mark.asyncio
+    async def test_approval_html_edit_keeps_matrix_replacement_fallback_prefix(self):
+        """Approval-card edits MUST retain Matrix's outer HTML fallback marker."""
+        from plugins.platforms.matrix.adapter import MatrixAdapter
+
+        adapter = MatrixAdapter(
+            PlatformConfig(
+                enabled=True,
+                token="tok",
+                extra={"homeserver": "https://matrix.example.org"},
+            )
+        )
+        sent = {}
+
+        async def _send_event(room, event_type, content):
+            sent["content"] = content
+            return "$replacement"
+
+        adapter._client = types.SimpleNamespace(send_message_event=_send_event)
+        text, html = format_pending_summarized(
+            command="systemctl restart example.service",
+            description="stop/restart system service",
+            summary="Restarts the example service.",
+        )
+
+        result = await adapter.edit_message(
+            "!room:example.org",
+            "$approval",
+            text,
+            metadata={"matrix_formatted_body": html},
+        )
+
+        assert result.success is True
+        content = sent["content"]
+        assert content["body"].startswith("* ")
+        assert content["formatted_body"].startswith("* ")
+        assert not content["m.new_content"]["body"].startswith("* ")
+        assert not content["m.new_content"]["formatted_body"].startswith("* ")
+
+    @pytest.mark.asyncio
     async def test_send_exec_approval_uses_expanded_card_and_seeds_reactions(self, monkeypatch):
         monkeypatch.setenv("MATRIX_ALLOWED_USERS", "@user:example.org")
         from plugins.platforms.matrix.adapter import MatrixAdapter
