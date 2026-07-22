@@ -211,7 +211,8 @@ class _MatrixHtmlSanitizer(HTMLParser):
     _ALLOWED_TAGS = {
         "a", "b", "blockquote", "br", "code", "del", "em", "h1", "h2", "h3",
         "h4", "h5", "h6", "hr", "i", "li", "ol", "p", "pre", "s", "strike",
-        "strong", "table", "tbody", "td", "th", "thead", "tr", "ul",
+        "strong", "table", "tbody", "td", "th", "thead", "tr", "ul", "details",
+        "summary",
     }
     _VOID_TAGS = {"br", "hr"}
 
@@ -871,6 +872,8 @@ class MatrixAdapter(BasePlatformAdapter):
 
     supports_code_blocks = True  # Matrix renders fenced code blocks (HTML/markdown)
     splits_long_messages = True  # send() chunks via truncate_message(max_message_length)
+    # Approval prompts MUST be audit-complete in one event or fail closed.
+    approval_fallback_single_event = True
 
     # Matrix clients commonly reserve typed "/" for client-local commands;
     # the adapter accepts "!command" as the alias that always reaches Hermes
@@ -1691,21 +1694,22 @@ class MatrixAdapter(BasePlatformAdapter):
             return SendResult(success=True)
 
         formatted = self.format_message(content)
-        chunks = self.truncate_message(formatted, self.max_message_length)
+        pre_rendered_html = None
+        if metadata is not None and "matrix_formatted_body" in metadata:
+            pre_rendered_html = _sanitize_matrix_html(
+                str(metadata.get("matrix_formatted_body") or "")
+            )
+            # Pre-rendered cards are one authoritative Matrix event. Splitting
+            # plaintext while attaching all HTML to chunk zero would make the
+            # audit fallback incomplete, so fail closed instead.
+            chunks = [formatted]
+        else:
+            chunks = self.truncate_message(formatted, self.max_message_length)
 
         last_event_id = None
         split_response = len(chunks) > 1
         for i, chunk in enumerate(chunks):
             msg_content = self._build_text_message_content(chunk)
-
-            # Gateway tool-progress and approval cards may supply prebuilt HTML
-            # while keeping the plain body notification-friendly. Only apply it
-            # to the first chunk; later approval hardening sanitizes this sink.
-            if i == 0 and metadata and metadata.get("matrix_formatted_body"):
-                html = _sanitize_matrix_html(str(metadata.get("matrix_formatted_body") or ""))
-                if html:
-                    msg_content["format"] = "org.matrix.custom.html"
-                    msg_content["formatted_body"] = html
 
             # Matrix clients render m.in_reply_to as a quoted fallback. On a
             # multi-part response, repeating that fallback on every chunk makes
@@ -1718,6 +1722,22 @@ class MatrixAdapter(BasePlatformAdapter):
                 metadata=metadata,
                 include_reply_fallback=not split_response or i == 0,
             )
+            # Optional pre-rendered HTML (approval cards, tool panes).
+            if i == 0 and pre_rendered_html is not None:
+                if pre_rendered_html.strip():
+                    msg_content["format"] = "org.matrix.custom.html"
+                    msg_content["formatted_body"] = pre_rendered_html
+                if max(
+                    len(str(msg_content.get("body") or "")),
+                    len(str(msg_content.get("formatted_body") or "")),
+                ) > self.max_message_length:
+                    return SendResult(
+                        success=False,
+                        error=(
+                            "Matrix pre-rendered message exceeds the configured "
+                            f"{self.max_message_length}-character transport limit"
+                        ),
+                    )
 
             try:
                 event_id = await asyncio.wait_for(
@@ -1856,13 +1876,25 @@ class MatrixAdapter(BasePlatformAdapter):
 
         formatted = self.format_message(content)
         new_content = self._build_text_message_content(formatted)
-        # Prefer explicit sanitized Matrix HTML payload for Tool activity and
-        # approval cards.
-        if metadata and metadata.get("matrix_formatted_body"):
-            html = _sanitize_matrix_html(str(metadata.get("matrix_formatted_body") or ""))
-            if html:
+        # Approval/tool cards may supply authoritative HTML.
+        if metadata is not None and "matrix_formatted_body" in metadata:
+            safe_html = _sanitize_matrix_html(
+                str(metadata.get("matrix_formatted_body") or "")
+            )
+            if safe_html.strip():
                 new_content["format"] = "org.matrix.custom.html"
-                new_content["formatted_body"] = html
+                new_content["formatted_body"] = safe_html
+            if max(
+                len(str(new_content.get("body") or "")),
+                len(str(new_content.get("formatted_body") or "")),
+            ) > self.max_message_length:
+                return SendResult(
+                    success=False,
+                    error=(
+                        "Matrix pre-rendered replacement exceeds the configured "
+                        f"{self.max_message_length}-character transport limit"
+                    ),
+                )
         msg_content: Dict[str, Any] = {
             "msgtype": "m.text",
             "body": f"* {formatted}",
@@ -3605,7 +3637,10 @@ class MatrixAdapter(BasePlatformAdapter):
                     )
                     return
                 try:
-                    from tools.approval import resolve_gateway_approval
+                    from tools.approval import (
+                        consume_gateway_approval_outcome,
+                        resolve_gateway_approval,
+                    )
 
                     if prompt.approval_id is None:
                         # Backward compatibility for prompts created by older
@@ -3618,6 +3653,10 @@ class MatrixAdapter(BasePlatformAdapter):
                             approval_id=prompt.approval_id,
                         )
                     if count:
+                        consume_gateway_approval_outcome(
+                            prompt.session_key,
+                            prompt.approval_id,
+                        )
                         prompt.resolved = True
                         self._forget_matrix_approval_prompt(reacts_to, prompt)
                         logger.info(
@@ -3851,6 +3890,7 @@ class MatrixAdapter(BasePlatformAdapter):
                 generate_command_summary,
                 command=prompt.command,
                 description=prompt.description,
+                provider_policy=summary_cfg.provider_policy,
                 timeout_seconds=summary_cfg.effective_timeout_seconds,
                 max_chars=summary_cfg.max_chars,
             )
@@ -3968,7 +4008,10 @@ class MatrixAdapter(BasePlatformAdapter):
             return
 
         async def _watch() -> None:
-            from tools.approval import has_blocking_approval
+            from tools.approval import (
+                consume_gateway_approval_outcome,
+                has_blocking_approval,
+            )
 
             # Poll lightly until resolved elsewhere or prompt expires.
             for _ in range(600):  # ~5 minutes at 0.5s
@@ -3984,6 +4027,10 @@ class MatrixAdapter(BasePlatformAdapter):
                 if not pending:
                     if prompt.resolved:
                         return
+                    choice = consume_gateway_approval_outcome(
+                        prompt.session_key,
+                        prompt.approval_id,
+                    ) or "expired"
                     prompt.resolved = True
                     self._forget_matrix_approval_prompt(prompt.message_id, prompt)
                     try:
@@ -3994,7 +4041,7 @@ class MatrixAdapter(BasePlatformAdapter):
                         prompt.chat_id,
                         prompt.message_id,
                         prompt,
-                        choice="resolved",  # text !approve/!deny path
+                        choice=choice,
                         actor="",
                     )
                     return
@@ -5022,8 +5069,10 @@ async def _standalone_send(
             import markdown as _md
             html = _md.markdown(message, extensions=["fenced_code", "tables"])
             html = re.sub(r"<h[1-6]>(.*?)</h[1-6]>", r"<strong>\1</strong>", html)
-            payload["format"] = "org.matrix.custom.html"
-            payload["formatted_body"] = html
+            safe_html = _sanitize_matrix_html(html)
+            if safe_html.strip():
+                payload["format"] = "org.matrix.custom.html"
+                payload["formatted_body"] = safe_html
         except ImportError:
             pass
 
