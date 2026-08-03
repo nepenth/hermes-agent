@@ -61,17 +61,16 @@ def test_plain_fallback_hides_arguments_and_rich_lines_are_bounded():
     assert "..." in html
 
 
-def test_sanitize_keeps_ol_li_and_strips_details():
-    html = (
-        "<p><strong>🛠 Tool activity (1 update)</strong></p>"
-        "<ol><li>💻 terminal: ls</li></ol>"
-        "<details><summary>x</summary>secret</details>"
-    )
+def test_tool_activity_helper_never_emits_details():
+    """Tool activity HTML is produced without details; approvals may use details."""
+    body, html = matrix_tool_activity_bodies(["💻 terminal: ls"])
+    assert body.startswith("🛠 Tool activity")
+    assert "<ol>" in html and "<li>" in html
+    assert "<details>" not in html and "<summary>" not in html
+    # Shared sanitizer keeps list structure for tool panes.
     out = _sanitize_matrix_html(html)
     assert "<ol>" in out and "<li>" in out
     assert "terminal: ls" in out
-    assert "<details>" not in out
-    assert "<summary>" not in out
 
 
 @pytest.mark.asyncio
