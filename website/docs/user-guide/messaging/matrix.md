@@ -918,10 +918,20 @@ For more information on securing your Hermes Agent deployment, see the [Security
 
 ## Matrix tools
 
-When the Matrix gateway is connected, Hermes can expose compact `matrix` / `matrix_admin` tools (Discord-style split).
+When the Matrix gateway is connected, Hermes can expose compact `matrix` / `matrix_admin` tools (core/admin capability split).
 
 - Gates live in `config.yaml` under `matrix.tools` (preferred). Legacy `MATRIX_*` env bridges may still be read for compatibility; config wins when both are set.
 - Destructive/admin actions are off by default (`allow_redaction`, `allow_invites`, `allow_room_create`, `allow_public_rooms`).
 - Cross-room targeting is off by default (`allow_cross_room`).
 - Adapter work runs on the gateway event loop; multiplex secondary profiles fail closed if no Matrix adapter is bound.
 
+## Exec approval cards
+
+Dangerous-command approvals on Matrix use standard `m.room.message` text/HTML plus reactions (`✅` / session / always / deny) and typed `!approve` / `!deny` commands.
+
+- t0 shows the force-redacted command expanded
+- optional async advisory summary may collapse the command into HTML `details` while keeping audit text
+- terminal resolution replaces the card with a compact one-line outcome via `m.replace`
+- concurrent approvals use exact `approval_id` identity rather than last-card-wins
+
+Summary routing can be disabled or constrained (including local-only) via Matrix approval summary config.
