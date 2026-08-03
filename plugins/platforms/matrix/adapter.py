@@ -2315,8 +2315,12 @@ class MatrixAdapter(BasePlatformAdapter):
             msg_content["m.mentions"] = new_content["m.mentions"]
         if "formatted_body" in new_content:
             msg_content["format"] = "org.matrix.custom.html"
-            # Preserve m.replace outer marker on the edit envelope.
-            msg_content["formatted_body"] = f'* {new_content["formatted_body"]}'
+            # Matrix replacement fallbacks MUST retain the outer ``* `` marker.
+            # Tool activity is the sole intentional exception via explicit flag.
+            if metadata and metadata.get("matrix_formatted_body_unprefixed"):
+                msg_content["formatted_body"] = new_content["formatted_body"]
+            else:
+                msg_content["formatted_body"] = f'* {new_content["formatted_body"]}'
         msg_content["m.relates_to"] = {
             "rel_type": "m.replace",
             "event_id": message_id,
@@ -2328,7 +2332,12 @@ class MatrixAdapter(BasePlatformAdapter):
                 EventType.ROOM_MESSAGE,
                 msg_content,
             )
-            return SendResult(success=True, message_id=str(event_id))
+            # Keep message_id as the original root so progress panes stay sticky.
+            return SendResult(
+                success=True,
+                message_id=str(message_id),
+                raw_response={"replacement_event_id": str(event_id)},
+            )
         except Exception as exc:
             return SendResult(success=False, error=str(exc))
 
