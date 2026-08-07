@@ -58,3 +58,9 @@ mini-swe-agent/
 # Nix
 .direnv/
 result
+
+# Local environment and secrets
+.env.*
+!.env.example
+*.key
+*.crt
