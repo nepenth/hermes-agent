@@ -224,7 +224,7 @@ def _in_gateway_session() -> bool:
 
 
 def _bound_repo_path() -> Optional[Path]:
-    repo_path = _session_env("HERMES_WORKSPACE_REPO_PATH", "")
+    repo_path = _session_env("HERMES_SESSION_WORKSPACE_REPO_PATH", "")
     if not repo_path:
         return None
     return _safe_resolve(repo_path)

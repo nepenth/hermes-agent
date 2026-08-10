@@ -16,8 +16,8 @@ def clean_session_context(monkeypatch):
     for key in (
         "HERMES_SESSION_PLATFORM",
         "HERMES_SESSION_CHAT_ID",
-        "HERMES_WORKSPACE_SLUG",
-        "HERMES_WORKSPACE_REPO_PATH",
+        "HERMES_SESSION_WORKSPACE_SLUG",
+        "HERMES_SESSION_WORKSPACE_REPO_PATH",
         "GIT_DIR",
         "GIT_WORK_TREE",
         "GIT_CONFIG_GLOBAL",
@@ -114,8 +114,8 @@ def test_channel_identity_and_workspace_contextvars_coexist(tmp_path):
     )
     try:
         assert get_session_env("HERMES_SESSION_CHAT_ID") == "!room:example.org"
-        assert get_session_env("HERMES_WORKSPACE_SLUG") == "example"
-        assert get_session_env("HERMES_WORKSPACE_REPO_PATH") == str(bound_repo)
+        assert get_session_env("HERMES_SESSION_WORKSPACE_SLUG") == "example"
+        assert get_session_env("HERMES_SESSION_WORKSPACE_REPO_PATH") == str(bound_repo)
     finally:
         clear_session_vars(tokens)
 
