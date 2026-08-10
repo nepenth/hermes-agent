@@ -8801,6 +8801,7 @@ def call_llm(
     api_mode: str = None,
     stream: bool = False,
     stream_options: dict = None,
+    allow_provider_fallback: bool = True,
 ) -> Any:
     """Run an auxiliary LLM request, applying the configured task limit."""
     semaphore = _acquire_sync_aux_semaphore(task)
@@ -8825,6 +8826,7 @@ def call_llm(
             api_mode=api_mode,
             stream=stream,
             stream_options=stream_options,
+            allow_provider_fallback=allow_provider_fallback,
         )
         if stream and semaphore is not None:
             stream_semaphore = semaphore
