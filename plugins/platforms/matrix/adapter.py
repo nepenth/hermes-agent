@@ -2211,10 +2211,13 @@ class MatrixAdapter(BasePlatformAdapter):
             pre_rendered_html = _sanitize_matrix_html(
                 str(metadata.get("matrix_formatted_body") or "")
             )
-            # Pre-rendered cards are one authoritative Matrix event. Splitting
-            # plaintext while attaching all HTML to chunk zero would make the
-            # audit fallback incomplete, so fail closed instead.
-            chunks = [formatted]
+            if not str(pre_rendered_html).strip():
+                # Unsafe/empty producer HTML: keep generated markdown fallback.
+                pre_rendered_html = None
+                chunks = self.truncate_message(formatted, self.max_message_length)
+            else:
+                # Pre-rendered cards are one authoritative Matrix event.
+                chunks = [formatted]
         else:
             chunks = self.truncate_message(formatted, self.max_message_length)
 
@@ -2394,20 +2397,20 @@ class MatrixAdapter(BasePlatformAdapter):
         # Prefer explicit Matrix HTML payload (always-visible Tool activity list).
         if metadata and metadata.get("matrix_formatted_body"):
             html = _sanitize_matrix_html(str(metadata.get("matrix_formatted_body") or ""))
-            if html:
+            if html.strip():
                 new_content["format"] = "org.matrix.custom.html"
                 new_content["formatted_body"] = html
-            if max(
-                len(str(new_content.get("body") or "")),
-                len(str(new_content.get("formatted_body") or "")),
-            ) > self.max_message_length:
-                return SendResult(
-                    success=False,
-                    error=(
-                        "Matrix pre-rendered replacement exceeds the configured "
-                        f"{self.max_message_length}-character transport limit"
-                    ),
-                )
+                if max(
+                    len(str(new_content.get("body") or "")),
+                    len(str(new_content.get("formatted_body") or "")),
+                ) > self.max_message_length:
+                    return SendResult(
+                        success=False,
+                        error=(
+                            "Matrix pre-rendered replacement exceeds the configured "
+                            f"{self.max_message_length}-character transport limit"
+                        ),
+                    )
         msg_content: Dict[str, Any] = {
             "msgtype": "m.text",
             "body": f"* {formatted}",
