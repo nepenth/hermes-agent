@@ -61,7 +61,7 @@ def test_plain_fallback_hides_arguments_and_rich_lines_are_bounded():
     assert "..." in html
 
 
-def test_sanitize_keeps_ol_li_and_strips_details():
+def test_sanitize_keeps_ol_li_and_allows_approval_details():
     html = (
         "<p><strong>🛠 Tool activity (1 update)</strong></p>"
         "<ol><li>💻 terminal: ls</li></ol>"
@@ -70,8 +70,14 @@ def test_sanitize_keeps_ol_li_and_strips_details():
     out = _sanitize_matrix_html(html)
     assert "<ol>" in out and "<li>" in out
     assert "terminal: ls" in out
-    assert "<details>" not in out
-    assert "<summary>" not in out
+    # Shared sanitizer keeps Matrix-safe details/summary for approval cards.
+    # The Tool activity producer still must not emit those tags.
+    assert "<details>" in out
+    assert "<summary>" in out
+    body, produced = matrix_tool_activity_bodies(["💻 terminal: ls"])
+    assert "<details>" not in produced
+    assert "<summary>" not in produced
+    assert body == "🛠 Tool activity (1 update)"
 
 
 @pytest.mark.asyncio
