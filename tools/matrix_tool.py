@@ -11,6 +11,7 @@ env overrides (``MATRIX_TOOLS_*`` / ``MATRIX_ALLOW_PUBLIC_ROOMS``).
 from __future__ import annotations
 
 import os
+from concurrent.futures import TimeoutError as FuturesTimeoutError
 from typing import Any, Dict, Optional, Set, Tuple
 
 from gateway.session_context import get_session_env
@@ -178,6 +179,24 @@ def _authorize_room_id(
                 "matrix.tools.allow_cross_room_destructive: true "
                 "(or MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE=true)."
             )
+    elif not current_room_id and requested_room_id:
+        # No current-room stamp: an explicit target is cross-room. Fail closed.
+        if not _gate("allow_cross_room", "MATRIX_TOOLS_ALLOW_CROSS_ROOM", False):
+            return "", (
+                "Matrix tools are limited to the current room by default. "
+                "Set matrix.tools.allow_cross_room: true (or MATRIX_TOOLS_ALLOW_CROSS_ROOM=true) "
+                "to allow explicit room targets when the current room is unknown."
+            )
+        if destructive and not _gate(
+            "allow_cross_room_destructive",
+            "MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE",
+            False,
+        ):
+            return "", (
+                "Cross-room Matrix redaction/invite actions require "
+                "matrix.tools.allow_cross_room_destructive: true "
+                "(or MATRIX_TOOLS_ALLOW_CROSS_ROOM_DESTRUCTIVE=true)."
+            )
     return room_id, ""
 
 
@@ -227,7 +246,13 @@ def _run(coro):
                 # Schedule failed; do not also run on a foreign loop for live
                 # gateway turns — surface the failure.
                 raise RuntimeError("Matrix gateway loop unavailable for tool dispatch")
-            return fut.result(timeout=120)
+            try:
+                return fut.result(timeout=120)
+            except FuturesTimeoutError:
+                fut.cancel()
+                raise RuntimeError(
+                    "Matrix tool dispatch timed out after 120s; the action may still be in flight"
+                )
 
     from model_tools import _run_async
 
@@ -358,6 +383,14 @@ def _run_matrix_action(action: str, allowed: Dict[str, str], tool_name: str, **k
         invite = kwargs.get("invite") or []
         if isinstance(invite, str):
             invite = [u.strip() for u in invite.split(",") if u.strip()]
+        if invite:
+            invite_gate = _require_admin_gate(
+                "allow_invites",
+                "MATRIX_TOOLS_ALLOW_INVITES",
+                "Matrix invites",
+            )
+            if invite_gate:
+                return tool_error(invite_gate)
         adapter, err = _matrix_adapter()
         if err:
             return tool_error(err)

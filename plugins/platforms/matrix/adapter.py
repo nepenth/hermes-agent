@@ -1172,21 +1172,23 @@ class _CryptoStateStore:
 
 
 def _matrix_allow_public_rooms() -> bool:
-    """True when public room creation is allowed via YAML or env."""
-    raw = os.getenv("MATRIX_ALLOW_PUBLIC_ROOMS")
-    if raw is not None:
-        return str(raw).strip().lower() in ("true", "1", "yes", "on")
+    """True when public room creation is allowed. YAML wins over env."""
     try:
         from hermes_cli.config import read_raw_config
 
         tools = ((read_raw_config() or {}).get("matrix") or {}).get("tools") or {}
-        val = tools.get("allow_public_rooms") if isinstance(tools, dict) else None
-        if isinstance(val, bool):
-            return val
-        if isinstance(val, str):
-            return val.strip().lower() in ("true", "1", "yes", "on")
+        if isinstance(tools, dict) and "allow_public_rooms" in tools:
+            val = tools.get("allow_public_rooms")
+            if isinstance(val, bool):
+                return val
+            if isinstance(val, str):
+                return val.strip().lower() in ("true", "1", "yes", "on")
+            return bool(val)
     except Exception:
         pass
+    raw = os.getenv("MATRIX_ALLOW_PUBLIC_ROOMS")
+    if raw is not None:
+        return str(raw).strip().lower() in ("true", "1", "yes", "on")
     return False
 
 

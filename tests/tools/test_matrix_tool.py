@@ -96,6 +96,40 @@ class TestAuthorizeRoom:
             assert room == ""
             assert "allow_cross_room_destructive" in err
 
+    def test_explicit_room_without_current_room_denied(self):
+        with patch(
+            "tools.matrix_tool.get_session_env",
+            return_value="",
+        ), patch("tools.matrix_tool._matrix_tools_cfg", return_value={}):
+            room, err = _authorize_room_id("!other:example.org")
+            assert room == ""
+            assert "current room" in err
+
+
+class TestCreateRoomInvites:
+    def test_create_room_invite_requires_allow_invites(self):
+        adapter = MagicMock()
+        with patch("tools.matrix_tool._matrix_adapter", return_value=(adapter, "")), patch(
+            "tools.matrix_tool.get_session_env",
+            side_effect=lambda k, d="": {
+                "HERMES_SESSION_PLATFORM": "matrix",
+                "HERMES_SESSION_CHAT_ID": "!room:example.org",
+            }.get(k, d),
+        ), patch(
+            "tools.matrix_tool._matrix_tools_cfg",
+            return_value={"allow_room_create": True},
+        ), patch("tools.matrix_tool._run", return_value="!new:example.org"):
+            out = mt._run_matrix_action(
+                "create_room",
+                _ADMIN_ACTIONS,
+                "matrix_admin",
+                name="tmp",
+                invite=["@user:example.org"],
+            )
+        data = json.loads(out)
+        assert data.get("success") is not True
+        assert "allow_invites" in (data.get("error") or "")
+
 
 class TestCoreAndAdminActions:
     def test_send_reaction(self):
