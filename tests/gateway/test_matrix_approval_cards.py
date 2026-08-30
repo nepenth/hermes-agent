@@ -240,7 +240,7 @@ class TestApprovalCardFormatting:
         private_route = {
             "provider": "custom",
             "model": "local-model",
-            "base_url": "http://10.0.10.20:8000/v1",
+            "base_url": "http://192.0.2.10:8000/v1",
             "api_key": "test-key",
             "api_mode": "chat_completions",
         }
@@ -262,7 +262,7 @@ class TestApprovalCardFormatting:
         kwargs = call_llm.call_args.kwargs
         assert kwargs["provider"] == "custom"
         assert kwargs["model"] == "local-model"
-        assert kwargs["base_url"] == "http://10.0.10.20:8000/v1"
+        assert kwargs["base_url"] == "http://192.0.2.10:8000/v1"
         assert kwargs["allow_provider_fallback"] is False
 
     def test_generate_summary_force_redacts_before_llm_boundary(self):
@@ -273,7 +273,7 @@ class TestApprovalCardFormatting:
         private_route = {
             "provider": "custom",
             "model": "local-model",
-            "base_url": "http://10.0.10.20:8000/v1",
+            "base_url": "http://192.0.2.10:8000/v1",
             "api_key": "test-key",
             "api_mode": "chat_completions",
         }

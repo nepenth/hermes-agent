@@ -88,7 +88,7 @@ def test_sync_call_can_pin_provider_and_disable_all_fallbacks():
 
     create = MagicMock(side_effect=ConnectionError("local endpoint unavailable"))
     client = types.SimpleNamespace(
-        base_url="http://10.0.10.20:8000/v1",
+        base_url="http://192.0.2.10:8000/v1",
         chat=types.SimpleNamespace(
             completions=types.SimpleNamespace(create=create),
         ),
@@ -101,7 +101,7 @@ def test_sync_call_can_pin_provider_and_disable_all_fallbacks():
             return_value=(
                 "custom",
                 "local-model",
-                "http://10.0.10.20:8000/v1",
+                "http://192.0.2.10:8000/v1",
                 "test-key",
                 "chat_completions",
             ),
@@ -117,7 +117,7 @@ def test_sync_call_can_pin_provider_and_disable_all_fallbacks():
                 task="approval",
                 provider="custom",
                 model="local-model",
-                base_url="http://10.0.10.20:8000/v1",
+                base_url="http://192.0.2.10:8000/v1",
                 api_key="test-key",
                 messages=[{"role": "user", "content": "redacted command"}],
                 allow_provider_fallback=False,

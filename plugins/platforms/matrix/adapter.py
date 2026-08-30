@@ -4514,7 +4514,6 @@ class MatrixAdapter(BasePlatformAdapter):
     ) -> None:
         prompt.resolved = True
         self._cancel_approval_summary_task(prompt)
-        self._forget_matrix_approval_prompt(target_event_id, prompt)
         await self._redact_bot_approval_reactions(room_id, prompt)
         await self._finalize_matrix_approval_prompt(
             room_id, target_event_id, prompt, choice="expired", actor="",
@@ -4741,7 +4740,16 @@ class MatrixAdapter(BasePlatformAdapter):
                     choice = consume_gateway_approval_outcome(
                         prompt.session_key,
                         prompt.approval_id,
-                    ) or ("expired" if past_deadline else "expired")
+                    )
+                    if choice is None:
+                        # Reaction/typed path already consumed the outcome and
+                        # owns terminalization. Do not stamp Expired over it.
+                        if getattr(prompt, "resolved", False):
+                            return
+                        if pending and not past_deadline:
+                            await asyncio.sleep(poll)
+                            continue
+                        choice = "expired"
                     if not prompt.resolved:
                         prompt.resolved = True
                         prompt.state = "resolved_core_delivered"
