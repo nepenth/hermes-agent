@@ -9931,6 +9931,7 @@ def call_llm(
     api_mode: str = None,
     stream: bool = False,
     stream_options: dict = None,
+    allow_provider_fallback: bool = True,
     route_info: Optional[Dict[str, str]] = None,
     latency_info: Optional[Dict[str, int]] = None,
 ) -> Any:
@@ -9986,6 +9987,7 @@ def call_llm(
                 api_mode=api_mode,
                 stream=stream,
                 stream_options=stream_options,
+                allow_provider_fallback=allow_provider_fallback,
                 route_info=route_info,
             )
         if stream and semaphore is not None:
@@ -10036,6 +10038,7 @@ def _call_llm_impl(
     api_mode: str = None,
     stream: bool = False,
     stream_options: dict = None,
+    allow_provider_fallback: bool = True,
     route_info: Optional[Dict[str, str]] = None,
 ) -> Any:
     """Centralized synchronous LLM call.
@@ -10075,6 +10078,10 @@ def _call_llm_impl(
 
     Raises:
         RuntimeError: If no provider is configured.
+
+    ``allow_provider_fallback=False`` pins the resolved route. Same-provider
+    retries remain available, but no configured, main-model, or auto-detected
+    fallback may receive the request.
     """
     # Capture one immutable runtime snapshot for keying, resolution, retries,
     # and fallbacks. Reading ambient state independently in each phase lets a
@@ -10098,7 +10105,12 @@ def _call_llm_impl(
             async_mode=False,
             main_runtime=main_runtime,
         )
-        if client is None and resolved_provider != "auto" and not resolved_base_url:
+        if (
+            allow_provider_fallback
+            and client is None
+            and resolved_provider != "auto"
+            and not resolved_base_url
+        ):
             logger.warning(
                 "Vision provider %s unavailable, falling back to auto vision backends",
                 resolved_provider,
@@ -10135,7 +10147,11 @@ def _call_llm_impl(
             # tasks because fallback entries may use OAuth / credential-pool
             # auth (for example openai-codex).
             _explicit = (resolved_provider or "").strip().lower()
-            if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
+            if (
+                allow_provider_fallback
+                and _explicit
+                and _explicit not in {"auto", "openrouter", "custom"}
+            ):
                 fb_client, fb_model, fb_label = _try_configured_fallback_for_unavailable_client(
                     task, _explicit,
                 )
@@ -10154,7 +10170,7 @@ def _call_llm_impl(
             # Pass model=None so each provider uses its own default —
             # resolved_model may be an OpenRouter-format slug that doesn't
             # work on other providers.
-            if client is None and not resolved_base_url:
+            if client is None and allow_provider_fallback and not resolved_base_url:
                 logger.info("Auxiliary %s: provider %s unavailable, trying auto-detection chain",
                             task or "call", resolved_provider)
                 client, final_model = _get_cached_client(
@@ -10704,7 +10720,7 @@ def _call_llm_impl(
             or _is_model_incompatible_error(first_err)
             or _is_invalid_aux_response_error(first_err)
         )
-        if should_fallback and (is_auto or is_capacity_error):
+        if allow_provider_fallback and should_fallback and (is_auto or is_capacity_error):
             if _is_auth_error(first_err):
                 reason = "auth error"
             elif _is_payment_error(first_err):
@@ -10938,6 +10954,7 @@ async def async_call_llm(
     extra_body: dict = None,
     reasoning_config: Optional[dict] = None,
     route_info: Optional[Dict[str, str]] = None,
+    allow_provider_fallback: bool = True,
 ) -> Any:
     """Run an asynchronous auxiliary LLM request under the configured limit."""
     semaphore = _acquire_async_aux_semaphore(task)
@@ -10959,6 +10976,7 @@ async def async_call_llm(
             extra_body=extra_body,
             reasoning_config=reasoning_config,
             route_info=route_info,
+            allow_provider_fallback=allow_provider_fallback,
         )
     finally:
         if semaphore is not None:
@@ -10981,6 +10999,7 @@ async def _async_call_llm_impl(
     extra_body: dict = None,
     reasoning_config: Optional[dict] = None,
     route_info: Optional[Dict[str, str]] = None,
+    allow_provider_fallback: bool = True,
 ) -> Any:
     """Centralized asynchronous LLM call.
 
@@ -11004,7 +11023,12 @@ async def _async_call_llm_impl(
             async_mode=True,
             main_runtime=main_runtime,
         )
-        if client is None and resolved_provider != "auto" and not resolved_base_url:
+        if (
+            allow_provider_fallback
+            and client is None
+            and resolved_provider != "auto"
+            and not resolved_base_url
+        ):
             logger.warning(
                 "Vision provider %s unavailable, falling back to auto vision backends",
                 resolved_provider,
@@ -11037,7 +11061,11 @@ async def _async_call_llm_impl(
         )
         if client is None:
             _explicit = (resolved_provider or "").strip().lower()
-            if _explicit and _explicit not in {"auto", "openrouter", "custom"}:
+            if (
+                allow_provider_fallback
+                and _explicit
+                and _explicit not in {"auto", "openrouter", "custom"}
+            ):
                 fb_client, fb_model, fb_label = _try_configured_fallback_for_unavailable_client(
                     task, _explicit,
                 )
@@ -11053,7 +11081,7 @@ async def _async_call_llm_impl(
                         f"was found. Set the {_explicit.upper()}_API_KEY environment "
                         f"variable, or switch to a different provider with `hermes model`."
                     )
-            if client is None and not resolved_base_url:
+            if client is None and allow_provider_fallback and not resolved_base_url:
                 logger.info("Auxiliary %s: provider %s unavailable, trying auto-detection chain",
                             task or "call", resolved_provider)
                 client, final_model = _get_cached_client(
@@ -11457,7 +11485,7 @@ async def _async_call_llm_impl(
             or _is_model_incompatible_error(first_err)
             or _is_invalid_aux_response_error(first_err)
         )
-        if should_fallback and (is_auto or is_capacity_error):
+        if allow_provider_fallback and should_fallback and (is_auto or is_capacity_error):
             if _is_auth_error(first_err):
                 reason = "auth error"
             elif _is_payment_error(first_err):
