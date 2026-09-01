@@ -94,7 +94,7 @@ def test_matrix_footer_only_has_no_empty_list_or_zero_count():
     assert "0 updates" not in html
 
 
-def test_sanitize_keeps_ol_li_and_strips_details():
+def test_sanitize_keeps_ol_li_and_details():
     html = (
         "<p><strong>🛠 Tool activity (1 update)</strong></p>"
         "<ol><li>💻 terminal: ls</li></ol>"
@@ -103,8 +103,8 @@ def test_sanitize_keeps_ol_li_and_strips_details():
     out = _sanitize_matrix_html(html)
     assert "<ol>" in out and "<li>" in out
     assert "terminal: ls" in out
-    assert "<details>" not in out
-    assert "<summary>" not in out
+    assert "<details>" in out
+    assert "<summary>" in out
 
 
 @pytest.mark.asyncio
