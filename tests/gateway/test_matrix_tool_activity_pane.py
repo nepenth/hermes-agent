@@ -67,7 +67,7 @@ def test_plain_fallback_hides_arguments_and_rich_lines_are_bounded():
     assert "..." in html
 
 
-def test_sanitize_keeps_ol_li_and_strips_details():
+def test_sanitize_keeps_activity_lists_and_native_approval_details():
     html = (
         "<p><strong>🛠 Tool activity (1 update)</strong></p>"
         "<ol><li>💻 terminal: ls</li></ol>"
@@ -76,13 +76,14 @@ def test_sanitize_keeps_ol_li_and_strips_details():
     out = _sanitize_matrix_html(html)
     assert "<ol>" in out and "<li>" in out
     assert "terminal: ls" in out
-    assert "<details>" not in out
-    assert "<summary>" not in out
+    assert "<details>" in out
+    assert "<summary>" in out
 
 
 @pytest.mark.asyncio
 async def test_matrix_send_and_edit_carry_html():
     adapter = object.__new__(MatrixAdapter)
+    adapter._reply_to_mode = "first"
     adapter._client = MagicMock()
     adapter._encryption = False
     adapter.format_message = lambda c: c
