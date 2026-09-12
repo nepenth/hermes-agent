@@ -76,8 +76,10 @@ def test_sanitize_keeps_ol_li_and_strips_details():
     out = _sanitize_matrix_html(html)
     assert "<ol>" in out and "<li>" in out
     assert "terminal: ls" in out
-    assert "<details>" not in out
-    assert "<summary>" not in out
+    # Shared sanitizer keeps details/summary for approval cards. Tool activity
+    # HTML must still not emit them (matrix_tool_activity helper).
+    assert "<details>" in out
+    assert "<summary>" in out
 
 
 @pytest.mark.asyncio

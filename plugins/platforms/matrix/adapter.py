@@ -1445,8 +1445,8 @@ class MatrixAdapter(BasePlatformAdapter):
             self._apply_relation_metadata(
                 msg_content, reply_to=reply_to, metadata=metadata,
                 include_reply_fallback=(
-                    self._reply_to_mode == "all"
-                    or (self._reply_to_mode == "first" and i == 0)))
+                    getattr(self, "_reply_to_mode", "first") == "all"
+                    or (getattr(self, "_reply_to_mode", "first") == "first" and i == 0)))
             try:
                 last_event_id = await self._send_room_message(chat_id, msg_content)
                 logger.info("Matrix: sent event %s to %s", last_event_id, chat_id)
