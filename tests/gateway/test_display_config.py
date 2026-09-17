@@ -149,12 +149,8 @@ class TestPlatformDefaults:
         assert resolve_display_setting({}, "telegram", "tool_progress") == "off"
         # Discord: pure tier_high.
         assert resolve_display_setting({}, "discord", "tool_progress") == "all"
-
-    def test_matrix_defaults_quiet_progress_without_disabling_streaming(self):
-        """Quiet Matrix progress must still inherit top-level StreamingConfig."""
-        from gateway.display_config import resolve_display_setting
-
-        assert resolve_display_setting({}, "matrix", "tool_progress") == "off"
+        # Matrix: sticky pane by default; streaming still follows top-level config.
+        assert resolve_display_setting({}, "matrix", "tool_progress") == "all"
         assert resolve_display_setting({}, "matrix", "streaming") is None
 
     def test_matrix_tool_progress_override_new(self):
