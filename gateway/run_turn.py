@@ -4033,6 +4033,9 @@ class GatewayTurnMixin:
             root_id = turn_ctx.matrix_activity_pane.root_event_id
             if turn_ctx._cleanup_progress and root_id and root_id not in turn_ctx._cleanup_msg_ids:
                 turn_ctx._cleanup_msg_ids.append(root_id)
+        pane = getattr(turn_ctx, "matrix_commentary_pane", None)
+        if pane is not None:
+            await pane.close()
 
     async def _run_agent_edit_streamed_message(
         self, _sc, source, response, content, *, _sk, ok, fail_result: str, fail_exc: str,
@@ -4189,13 +4192,26 @@ class GatewayTurnMixin:
         turn_ctx._progress_metadata, turn_ctx._progress_reply_to, _status_thread_metadata = (
             self._run_agent_progress_threading(source, event_message_id, _native_slack_task_cards)
         )
-        adapter = self._delivery_adapter_for(source)
-        if turn_ctx.tool_progress_enabled and adapter is not None and (
-            getattr(adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX
+        activity_adapter = self._delivery_adapter_for(source)
+        if turn_ctx.tool_progress_enabled and activity_adapter is not None and (
+            getattr(activity_adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX
         ):
             from gateway.matrix_activity_pane import MatrixActivityPane
             turn_ctx.matrix_activity_pane = MatrixActivityPane(
-                adapter=adapter, chat_id=source.chat_id, reply_to=turn_ctx._progress_reply_to,
+                adapter=activity_adapter, chat_id=source.chat_id, reply_to=turn_ctx._progress_reply_to,
+                metadata=turn_ctx._progress_metadata,
+            )
+        commentary_adapter = self._adapter_for_source(source)
+        if (
+            turn_ctx.interim_assistant_messages_enabled
+            and commentary_adapter is not None
+            and (getattr(commentary_adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX)
+        ):
+            from gateway.matrix_commentary_pane import MatrixCommentaryPane
+            turn_ctx.matrix_commentary_pane = MatrixCommentaryPane(
+                adapter=commentary_adapter,
+                chat_id=source.chat_id,
+                reply_to=turn_ctx._progress_reply_to,
                 metadata=turn_ctx._progress_metadata,
             )
         # Bridges: sync step/event/status callbacks → async hooks.emit and adapter.send.
