@@ -1533,7 +1533,7 @@ class MatrixAdapter(BasePlatformAdapter):
             msg_content["m.mentions"] = new_content["m.mentions"]
         if "formatted_body" in new_content:
             msg_content["format"] = "org.matrix.custom.html"
-            # Only the Tool activity producer opts out; generic rich/approval edits retain "* ".
+            # Tool activity and commentary opt out via the flag; approvals keep outer "* ".
             prefix = "" if metadata and metadata.get("matrix_formatted_body_unprefixed") is True else "* "
             msg_content["formatted_body"] = prefix + new_content["formatted_body"]
         msg_content["m.relates_to"] = {"rel_type": "m.replace", "event_id": message_id}
