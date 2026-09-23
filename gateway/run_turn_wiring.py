@@ -96,15 +96,14 @@ class GatewayTurnWiringMixin:
                 resolve_adapter=lambda: self._delivery_adapter_for(source), chat_id=source.chat_id, reply_to=turn_ctx._progress_reply_to,
                 metadata=turn_ctx._progress_metadata,
             )
-        commentary_adapter = self._adapter_for_source(source)
         if (
             turn_ctx.interim_assistant_messages_enabled
-            and commentary_adapter is not None
-            and (getattr(commentary_adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX)
+            and adapter is not None
+            and (getattr(adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX)
         ):
             from gateway.matrix_commentary_pane import MatrixCommentaryPane
             turn_ctx.matrix_commentary_pane = MatrixCommentaryPane(
-                adapter=commentary_adapter,
+                adapter=adapter,
                 chat_id=source.chat_id,
                 reply_to=turn_ctx._progress_reply_to,
                 metadata=turn_ctx._progress_metadata,
