@@ -2033,8 +2033,12 @@ class MatrixAdapter(BasePlatformAdapter):
         The initial (full-state) sync also seeds the DM cache and dispatches so the OlmMachine sees
         to-device key shares queued while offline."""
         self._last_sync_ts = time.time()
-        rooms_join = set((sync_data.get("rooms", {}) or {}).get("join", {}) or {})
-        rooms_leave = set((sync_data.get("rooms", {}) or {}).get("leave", {}) or {})
+        # Join/leave payloads are room-id maps. Membership tracking wants the ids;
+        # the encrypted-drop warning needs the map, as in upstream #133236.
+        joined = (sync_data.get("rooms", {}) or {}).get("join") or {}
+        left = (sync_data.get("rooms", {}) or {}).get("leave") or {}
+        rooms_join = set(joined)
+        rooms_leave = set(left)
         if initial:
             # A sync without since is a fresh snapshot, including after cursor
             # recovery. Departed rooms may be absent rather than listed in leave.
@@ -2043,7 +2047,7 @@ class MatrixAdapter(BasePlatformAdapter):
         if rooms_join or initial:
             self._joined_rooms.update(rooms_join)
             self._invalidate_room_identities()
-        self._warn_encrypted_drops(rooms_join, client)
+        self._warn_encrypted_drops(joined if isinstance(joined, dict) else {}, client)
         nb = sync_data.get("next_batch")  # incremental syncs resume from here
         if nb:
             await client.sync_store.put_next_batch(nb)
