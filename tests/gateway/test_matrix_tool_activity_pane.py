@@ -70,7 +70,7 @@ def test_plain_fallback_hides_arguments_and_rich_lines_are_bounded():
     assert "..." in html
 
 
-def test_sanitize_keeps_ol_li_and_strips_details():
+def test_sanitize_keeps_ol_li_and_release_details():
     html = (
         "<p><strong>🛠 Tool activity (1 update)</strong></p>"
         "<ol><li>💻 terminal: ls</li></ol>"
@@ -79,8 +79,8 @@ def test_sanitize_keeps_ol_li_and_strips_details():
     out = _sanitize_matrix_html(html)
     assert "<ol>" in out and "<li>" in out
     assert "terminal: ls" in out
-    assert "<details>" not in out
-    assert "<summary>" not in out
+    # v0.21.7 allowlists details/summary. Current main strips them. This pin follows the release.
+    assert "<details>" in out and "<summary>" in out
 
 
 @pytest.mark.asyncio
