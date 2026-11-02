@@ -9,6 +9,7 @@ import logging
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any, Optional
 
+from gateway.config import Platform
 from gateway.session import SessionSource
 from gateway.turn_context import TurnContext
 
@@ -73,6 +74,10 @@ class GatewayTurnWiringMixin:
             if turn_ctx._cleanup_progress and root_id and root_id not in turn_ctx._cleanup_msg_ids:
                 turn_ctx._cleanup_msg_ids.append(root_id)
 
+        pane = getattr(turn_ctx, "matrix_commentary_pane", None)
+        if pane is not None:
+            await pane.close()
+
     def _run_agent_bind_turn_wiring(
         self, turn_ctx: TurnContext, turn_runner: TurnRunner, source: SessionSource,
         event_message_id: Optional[str], _native_slack_task_cards: bool,
@@ -89,6 +94,21 @@ class GatewayTurnWiringMixin:
             from gateway.matrix_activity_pane import MatrixActivityPane
             turn_ctx.matrix_activity_pane = MatrixActivityPane(
                 adapter=adapter, chat_id=source.chat_id, reply_to=turn_ctx._progress_reply_to,
+                metadata=turn_ctx._progress_metadata,
+            )
+        from gateway.session_detached import detached_route_of
+        if (
+            turn_ctx.interim_assistant_messages_enabled
+            and adapter is not None
+            # A detached conversation answers app viewers through the local adapter.
+            and detached_route_of(source) is None
+            and (getattr(adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX)
+        ):
+            from gateway.matrix_commentary_pane import MatrixCommentaryPane
+            turn_ctx.matrix_commentary_pane = MatrixCommentaryPane(
+                adapter=adapter,
+                chat_id=source.chat_id,
+                reply_to=turn_ctx._progress_reply_to,
                 metadata=turn_ctx._progress_metadata,
             )
         # Bridges: sync step/event/status callbacks → async hooks.emit and adapter.send.
