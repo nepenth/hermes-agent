@@ -96,9 +96,12 @@ class GatewayTurnWiringMixin:
                 resolve_adapter=lambda: self._delivery_adapter_for(source), chat_id=source.chat_id, reply_to=turn_ctx._progress_reply_to,
                 metadata=turn_ctx._progress_metadata,
             )
+        from gateway.session_detached import detached_route_of
         if (
             turn_ctx.interim_assistant_messages_enabled
             and adapter is not None
+            # A detached conversation answers app viewers through the local adapter.
+            and detached_route_of(source) is None
             and (getattr(adapter, "name", "") == "matrix" or source.platform == Platform.MATRIX)
         ):
             from gateway.matrix_commentary_pane import MatrixCommentaryPane
