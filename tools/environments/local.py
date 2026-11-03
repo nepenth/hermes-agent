@@ -793,9 +793,11 @@ def _make_run_env(env: dict) -> dict:
     # login snapshot's seat DISPLAY; a user who wants their own seat uses an inline
     # ``DISPLAY=:0 cmd`` prefix, which bash applies after this env. Empty (or module missing) →
     # the seat env passes through untouched.
+    # gateway_host_env(): empty while the screen is on a bot_desktop.ssh desktop host, whose DISPLAY, bus
+    # and XDG_* paths name another machine (the terminal stays on this one).
     try:
-        from tools.bot_desktop.runtime import published_env
-        published = published_env()
+        from tools.bot_desktop.runtime import gateway_host_env
+        published = gateway_host_env()
     except Exception:
         published = {}
     if published:

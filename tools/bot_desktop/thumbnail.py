@@ -20,15 +20,20 @@ _grab_lock = threading.Lock()
 
 def thumbnail_data_url(max_size: tuple[int, int] = THUMB_MAX, quality: int = 72) -> Optional[str]:
     """``data:image/jpeg;base64,...`` of the running screen, or ``None`` when no screen is up."""
+    if runtime.sandbox_screen_running():
+        # Display string and grab from ONE machine, the marker's owner (re-attached after a restart), never the
+        # one the current placement names.
+        from tools.bot_desktop import sandbox_host
+        sandbox = runtime._owned_sandbox_env()
+        if sandbox is None:
+            return None
+        published = sandbox_host.published_env(sandbox, runtime._profile_name())
+        jpeg = sandbox_host.grab_jpeg(sandbox, published, max_size, quality)
+        return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg else None
     env = runtime.published_env()
     display = env.get("DISPLAY")
     if not display:
         return None
-    if runtime.sandbox_screen_running():
-        from tools.bot_desktop import sandbox_host
-        sandbox = runtime._owned_sandbox_env()
-        jpeg = sandbox_host.grab_jpeg(sandbox, env, max_size, quality) if sandbox is not None else None
-        return "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii") if jpeg else None
     if runtime._launcher_pid() is None:
         return None
     from PIL import ImageGrab  # Pillow is a hard dependency; import lazily to keep status calls cheap

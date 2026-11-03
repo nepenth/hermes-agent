@@ -63,6 +63,16 @@ def plugin_image_advice(backend: Optional[str]) -> Optional[str]:
             f"({SANDBOX_IMAGE_HINT} has it)")
 
 
+def host_install_advice(env: Any) -> Optional[str]:
+    """How to get the desktop stack onto a dedicated SSH desktop host (``bot_desktop.placement: ssh``), or None
+    for a terminal sandbox: there is no image to switch, the host carries the packages itself."""
+    from tools.bot_desktop.ssh_host import DesktopSSHEnvironment
+    if not isinstance(env, DesktopSSHEnvironment):
+        return None
+    return (f"install them on {env.target.label()} (TigerVNC's Xvnc, the Xfce core components, xauth and x11-utils; "
+            f"cua-driver and a Playwright Chromium for computer_use and the browser)")
+
+
 def _marker() -> Path:
     return get_hermes_home() / "bot-desktop" / "sandbox.json"
 
@@ -76,12 +86,16 @@ def _read_marker() -> dict[str, Any]:
 
 def _owner_identity(env: Any) -> dict[str, Any]:
     """What the marker records about the sandbox hosting the screen, so a restarted gateway (empty terminal
-    registry) can tell a still-running sandbox from one that was removed."""
+    registry) can tell a still-running sandbox from one that was removed, and a dedicated SSH desktop host is
+    found again even after ``bot_desktop.ssh`` was edited or the placement moved."""
     ident: dict[str, Any] = {"backend": type(env).__name__}
     container = getattr(env, "_container_id", None)
     if container:
         ident["container"] = container
         ident["docker"] = getattr(env, "_docker_exe", "docker")
+    from tools.bot_desktop.ssh_host import DesktopSSHEnvironment
+    if isinstance(env, DesktopSSHEnvironment):
+        ident["ssh_target"] = env.target.to_marker()
     return ident
 
 
@@ -222,9 +236,11 @@ def published_env(env: Any, profile: str) -> dict[str, str]:
 
 
 def start(env: Any, profile: str, *, geometry: str, wait_seconds: float = 20.0,
-          browser_exec: Optional[str] = None, browser_exec_line: Optional[str] = None) -> dict[str, str]:
+          browser_exec: Optional[str] = None, browser_exec_line: Optional[str] = None,
+          display_num: int = 20) -> dict[str, str]:
     """Bring the screen up inside ``env`` (idempotent); returns the published env. Raises RuntimeError naming
-    the blocker."""
+    the blocker. ``display_num`` is fixed per sandbox (one profile each); a desktop host shared by several
+    logins gives each its own number in ``bot_desktop.ssh.display``."""
     rdir = _remote_dir(env, profile)
     live = _published(env, rdir)
     if live.get("DISPLAY"):
@@ -234,6 +250,9 @@ def start(env: Any, profile: str, *, geometry: str, wait_seconds: float = 20.0,
     stop(env, profile)  # a dead launcher may have left Xvnc holding :20; the relaunch needs it gone
     missing = missing_binaries(env)
     if missing:
+        if (host_advice := host_install_advice(env)) is not None:
+            raise RuntimeError(f"Bot Desktop needs {', '.join(missing)} on the desktop host; {host_advice}, or set "
+                               f"bot_desktop.placement: gateway.")
         advice = plugin_image_advice(getattr(env, "_hermes_backend_name", None)) or (
             f"use {SANDBOX_IMAGE_HINT} (the default sandbox base plus the desktop stack) as "
             f"terminal.docker_image / modal_image")
@@ -252,7 +271,7 @@ def start(env: Any, profile: str, *, geometry: str, wait_seconds: float = 20.0,
     proc = streams.run_in(env, ["bash", "-c", seed], user=user, timeout=30)
     if proc.returncode != 0:
         raise RuntimeError(f"could not seed the sandbox desktop dir: {proc.stderr.decode('utf-8', 'replace')[-500:]}")
-    num = 20  # one profile per sandbox; the launcher's stale-lock logic handles a leftover :20
+    num = display_num  # the launcher's stale-lock logic handles a leftover number and never takes a live one
     child_env = {
         "HERMES_BD_PROFILE": profile, "HERMES_BD_DISPLAY_NUM": str(num), "HERMES_BD_SOCKET": f"{rdir}/rfb.sock",
         "HERMES_BD_XAUTH": f"{rdir}/Xauthority", "HERMES_BD_ENV_FILE": f"{rdir}/env",
@@ -308,6 +327,12 @@ rm -f {q}/env {q}/launcher.pid {q}/rfb.sock
 [ "$live" = 1 ]
 """
     proc = streams.run_in(env, ["bash", "-c", script], user=_user_for(env), timeout=30)
+    from tools.bot_desktop.ssh_host import DesktopSSHEnvironment
+    if proc.returncode == 255 and isinstance(env, DesktopSSHEnvironment):
+        # ssh's own failure (the script exits 0/1): the screen there was not reached, so it stays recorded.
+        from tools.environments.base import EnvironmentConnectionError
+        raise EnvironmentConnectionError(f"the desktop host {env.target.label()} did not answer: "
+                                         f"{proc.stderr.decode('utf-8', 'replace').strip()[-300:]}")
     _marker().unlink(missing_ok=True)
     return proc.returncode == 0
 

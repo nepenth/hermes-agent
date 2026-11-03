@@ -113,7 +113,8 @@ def _signed_out(ws: WebSocket, info: dict) -> bool:
 async def _open_rfb(profile_home: Path):
     """``(reader, writer, relay)`` for THIS profile's Xvnc. Gateway-hosted screen: its unix socket. Screen inside
     the terminal backend: a ``docker exec`` / ``ssh`` relay whose stdio IS the RFB stream (``relay`` is that
-    Popen; None for a socket). Raises OSError when nothing is running."""
+    Popen; None for a socket). Raises OSError (no socket) or RuntimeError (no attached relay host) when nothing is
+    running."""
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     from tools.bot_desktop import runtime as _bd_runtime
     token = set_hermes_home_override(profile_home)
@@ -150,7 +151,7 @@ async def _bridge(ws: WebSocket, info: dict) -> None:
     viewer_id = str(info.get("viewer_id") or info.get("user_id") or "viewer")
     try:
         reader, writer, relay = await _open_rfb(Path(profile_home))
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:  # RuntimeError: the relay's host is not attached / cannot stream
         _log.warning("display ws: cannot reach RFB endpoint for %s: %s", profile_home, exc)
         await ws.close(code=_CLOSE_DESKTOP_GONE, reason="Bot Desktop is not running")
         return
