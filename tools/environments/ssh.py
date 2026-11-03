@@ -122,8 +122,7 @@ class SSHEnvironment(BaseEnvironment):
         socket_key = f"{user}@{host}:{port}"
         if probe_only:
             socket_key = f"{socket_key}:probe:{self._session_id}"
-        _socket_id = hashlib.sha256(socket_key.encode()).hexdigest()[:16]
-        self.control_socket = self.control_dir / f"{_socket_id}.sock"
+        self.control_socket = self._control_socket_path(socket_key)
         self._sync_manager = None  # cleanup() reads it; set before anything below can raise
         try:
             _ensure_ssh_available()
@@ -144,6 +143,11 @@ class SSHEnvironment(BaseEnvironment):
                 bulk_upload_fn=self._ssh_bulk_upload, bulk_download_fn=self._ssh_bulk_download)
             self._sync_manager.sync(force=True)
         self.init_session()
+
+    def _control_socket_path(self, socket_key: str) -> Path:
+        """The plain ControlMaster socket for ``socket_key`` (subclass hook: a connection that must never share
+        the terminal backend's master keeps its own directory and name)."""
+        return self.control_dir / f"{hashlib.sha256(socket_key.encode()).hexdigest()[:16]}.sock"
 
     def _control_socket_for(self, send_env: tuple[str, ...]) -> Path:
         """One ControlMaster per SendEnv name-set, beside the plain target socket: a mux master only

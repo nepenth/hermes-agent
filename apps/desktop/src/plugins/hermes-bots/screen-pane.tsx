@@ -31,6 +31,7 @@ import {
   viewerHash
 } from './screen-connection'
 import { ScreenNotInstalled } from './screen-install'
+import { placementBadge } from './screen-placement'
 import {
   $screenState,
   beginScreenStatusRequest,
@@ -91,6 +92,7 @@ export function BotScreenPane({ bot }: { bot: RosterRow }) {
   const screen = useValue($screenState)
   const state = screenStateFor(screen, bot)
   const status = state?.status ?? null
+  const placementLabel = placementBadge(t.screen, status?.placement)
   const lease = state?.lease ?? status?.lease ?? null
   // The server mints this window's viewer id per attach (`display.observe`); the lease
   // names its holder by hash, so a reload can never inherit a stale holder's authority.
@@ -499,12 +501,10 @@ export function BotScreenPane({ bot }: { bot: RosterRow }) {
             {status.display} · {status.geometry}
           </span>
         ) : null}
-        {status?.placement?.startsWith('terminal:') ? (
-          // Where the desktop lives matters for what a takeover can reach: inside the terminal's sandbox,
-          // not on the gateway host.
-          <span className="rounded bg-(--ui-bg-tertiary) px-1.5 py-0.5 text-muted-foreground">
-            {t.screen.placementSandbox(status.placement.slice('terminal:'.length))}
-          </span>
+        {placementLabel ? (
+          // Where the desktop lives matters for what a takeover can reach: inside the terminal's sandbox or on
+          // a desktop host of its own, not on the gateway host.
+          <span className="rounded bg-(--ui-bg-tertiary) px-1.5 py-0.5 text-muted-foreground">{placementLabel}</span>
         ) : null}
         <span className="grow" />
         {lease?.holder === 'human' && lease.reason ? (
