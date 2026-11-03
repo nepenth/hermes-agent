@@ -56,7 +56,12 @@ def _screen_stop(args) -> int:
         if lease.release(unless_human=not bool(getattr(args, "force", False))).holder == lease.HUMAN:
             print("Bot Desktop: a human holds this screen; re-run with --force to take it down anyway.")
             return 1
-    print("Bot Desktop: stopped" if runtime.stop() else "Bot Desktop: was not running")
+    try:
+        stopped = runtime.stop()
+    except RuntimeError as exc:  # a desktop host that did not answer, or a broken screen record: both are kept
+        print(f"Bot Desktop: not stopped: {exc}")
+        return 1
+    print("Bot Desktop: stopped" if stopped else "Bot Desktop: was not running")
     return 0
 
 

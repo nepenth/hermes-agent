@@ -2520,16 +2520,15 @@ DEFAULT_CONFIG = {
         # long; it restarts on the next use. Idle Xvnc + Xfce hold ~220 MB, an abandoned browser far more.
         # 0 keeps screens up until stopped.
         "idle_stop_minutes": 30,
-        # Where the screen (and with it computer_use and the bot's browser) runs.
-        #   auto      follow the terminal backend: inside the docker / ssh / streaming plugin sandbox when one is
-        #             configured, on the gateway host when terminal.backend is local. A sandbox backend that
-        #             cannot host a screen (modal, daytona, vercel) REFUSES rather than quietly running the
-        #             desktop on the host beside the sandbox you chose for the agent.
-        #   terminal  always inside the terminal backend (error when it cannot host one).
-        #   gateway   always on the gateway host, even with a sandbox terminal: the agent's screen, browser
-        #             and computer_use then act OUTSIDE the terminal sandbox. Explicit opt-in.
-        # The sandbox image needs the desktop stack: nousresearch/hermes-sandbox:desktop.
+        # Where the screen (and with it computer_use and the bot's browser) runs. auto: follow the terminal backend
+        # (inside a docker / ssh / streaming-plugin sandbox, on the gateway host for a local terminal; a backend that
+        # cannot host a screen, e.g. modal/daytona/vercel, REFUSES). terminal: always inside the terminal backend.
+        # gateway: always on the gateway host, even beside a sandbox terminal (explicit opt-in). ssh: on the
+        # bot_desktop.ssh host whatever terminal.backend is; host + user required (incomplete refuses), key empty =
+        # ssh client defaults, one login + display per agent, nothing from the gateway's home is copied there.
+        # Sandbox images need the desktop stack: nousresearch/hermes-sandbox:desktop.
         "placement": "auto",
+        "ssh": {"host": "", "user": "", "port": 22, "key": "", "display": 20},
     },
     "computer_use": {
         # cua-driver's upstream PostHog telemetry defaults ON; Hermes sets

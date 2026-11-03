@@ -1629,11 +1629,11 @@ def _stop_bot_desktop(profile_dir: Path) -> None:
     override so the runtime reads THIS profile's bot-desktop/ state, whichever profile invoked the op.
     A failure here is logged, never fatal: the profile op is what the user asked for."""
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-    from tools.bot_desktop import runtime
-    if not runtime.is_supported_host():
-        return
+    from tools.bot_desktop import runtime, sandbox_host
     token = set_hermes_home_override(profile_dir)
     try:
+        if not runtime.is_supported_host() and not sandbox_host._read_marker():  # an off-gateway screen: any OS
+            return
         if runtime.stop():
             print("✓ Bot Desktop stopped")
             # The screen a human's exclusion protected is gone; on rename the directory (lease.json

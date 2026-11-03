@@ -50,7 +50,9 @@ display, so it can only ever touch what the terminal can; the sandbox image
 must carry `cua-driver` (`nousresearch/hermes-sandbox:desktop` does). Modal,
 Daytona and Vercel sandboxes cannot host a display yet, so with those
 backends `computer_use` refuses unless `bot_desktop.placement: gateway` opts
-into driving the host. Details: [Bot Screen → Where the screen
+into driving the host. `bot_desktop.placement: ssh` moves the screen (and
+with it the driver) to a desktop host of its own while the terminal stays
+put; that host carries `cua-driver` itself. Details: [Bot Screen → Where the screen
 runs](./bot-screen.md#where-the-screen-runs).
 
 ## Enabling

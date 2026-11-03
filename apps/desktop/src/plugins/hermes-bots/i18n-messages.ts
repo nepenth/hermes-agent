@@ -369,6 +369,7 @@ export type BotsMessages = {
     stoppedTitle: string
     stoppedBody: string
     placementSandbox: (backend: string) => string
+    placementSshHost: (host: string) => string
     imageSwitchTitle: string
     imageSwitchBody: (current: string, target: string) => string
     imageSwitchApprove: string

@@ -193,13 +193,23 @@ def _(rid, params: dict) -> dict:
     """Start the package install in the background; the renderer follows ``display.install.log`` /
     ``display.install.done``. Refused while one is already running for this profile."""
     from hermes_constants import hermes_home_key
-    from tools.bot_desktop import install as _bd_install, runtime as _bd_runtime
-    if not _bd_runtime.is_supported_host():
-        return _err(rid, _DISPLAY_ERR, "Bot Desktop runs on Linux gateway hosts only")
-    if _bd_runtime.in_sandbox():
+    from tools.bot_desktop import install as _bd_install, placement as _bd_placement, runtime as _bd_runtime
+    # Placement before the gateway's OS: an off-gateway or refused placement never installs here, and saying
+    # "Linux gateway hosts only" to a macOS gateway with an SSH desktop host would point at the wrong machine.
+    where = _bd_placement.resolve()
+    if where.where == _bd_placement.REFUSED:
+        return _err(rid, _DISPLAY_ERR, where.reason)
+    if where.off_gateway:
+        target = where.ssh
+        if target is not None:
+            return _err(rid, _DISPLAY_ERR, f"this profile's screen lives on the desktop host {target.label()} "
+                                           f"(bot_desktop.ssh); install the desktop stack there instead of on the "
+                                           f"gateway host")
         return _err(rid, _DISPLAY_ERR, "this profile's screen lives inside the terminal backend's sandbox; give that "
                                        "sandbox an image with the desktop stack (nousresearch/hermes-sandbox:desktop) "
                                        "instead of installing on the gateway host")
+    if not _bd_runtime.is_supported_host():
+        return _err(rid, _DISPLAY_ERR, "Bot Desktop runs on Linux gateway hosts only")
     if _bd_runtime.install_command() is None:
         return _err(rid, _DISPLAY_ERR, "no supported package manager (apt-get, dnf, pacman) on this host")
     profile_key = hermes_home_key()
