@@ -9,6 +9,7 @@ stream; Chromium's DevTools accepts any loopback ``Host`` header, port included.
 from __future__ import annotations
 
 import logging
+import posixpath
 import shlex
 import subprocess
 import threading
@@ -43,7 +44,7 @@ GONE = "gone"
 
 def _sandbox():
     from tools.bot_desktop import runtime as _bd_runtime
-    env = _bd_runtime._sandbox_env(create=True)
+    env = _bd_runtime._screen_env(create=True)  # the marker's owner, so browser and screen share one machine
     if env is None:
         raise RuntimeError("the terminal backend's sandbox is not running, so there is nowhere to run the browser")
     published = _bd_runtime.published_env()
@@ -118,8 +119,14 @@ def _start_chromium(env, user, exe: str, udd: str, child_env: dict) -> tuple[int
                                extra_args=(*SHARED_PROFILE_ARGS, *CHROMIUM_SANDBOX_BYPASS_ARGS))
     argv = list(dict.fromkeys(argv))
     # setsid execs in place (a background child of a non-interactive shell leads no process group), so $! is
-    # Chromium itself, and its start time is fixed from the fork on.
-    script = (f"mkdir -p {shlex.quote(udd)} && rm -f {shlex.quote(udd)}/DevToolsActivePort && "
+    # Chromium itself, and its start time is fixed from the fork on. The profile holds the cookie jar and saved
+    # passwords: created owner-only and, when it already exists, tightened (go-rwx never loosens a mode) with
+    # its bot-desktop parent, since an sshd's 022 umask would leave it readable to other logins on a shared
+    # desktop host.
+    parent = posixpath.dirname(udd.rstrip("/"))
+    script = (f"(umask 077 && mkdir -p {shlex.quote(udd)}) && "
+              f"{{ chmod go-rwx {shlex.quote(udd)} {shlex.quote(parent)} 2>/dev/null || true; }} && "
+              f"rm -f {shlex.quote(udd)}/DevToolsActivePort && "
               f"(setsid {shlex.join(argv)} >/dev/null 2>&1 & p=$!; echo \"$p $({_START_TIME_OF_P})\")")
     proc = streams.run_in(env, ["bash", "-c", script], child_env=child_env, user=user, timeout=30)
     last = proc.stdout.decode("utf-8", "replace").strip().splitlines()[-1:] if proc.returncode == 0 else []

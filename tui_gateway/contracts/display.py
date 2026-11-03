@@ -59,7 +59,7 @@ class DisplayStatus(Result):
     blocker: str | None = None  # why display.start would refuse now (host memory); the pane shows it instead of Start
     memory_available_mb: int | None = None
     memory_limit_mb: int | None = None
-    placement: str = "gateway"  # "gateway" | "terminal:<backend>" — where Xvnc runs (bot_desktop.placement)
+    placement: str = "gateway"  # "gateway" | "terminal:<backend>" | "ssh:<user>@<host>" — where Xvnc runs (bot_desktop.placement)
     image_switch: DisplayImageSwitch | None = None  # a default-image switch the pane may approve (docker placement)
     lease: DisplayLease
     profile_key: str

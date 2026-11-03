@@ -242,6 +242,7 @@ same place. `bot_desktop.placement` decides where:
 | `docker`, `ssh`, `singularity` (plugin) | **inside the sandbox** | Xvnc + Xfce, Chromium and cua-driver run in the container / on the SSH host, spawned through the same `docker exec` / `ssh` channel the terminal uses. The pane streams the sandbox's screen; nothing of the host desktop is reachable. |
 | A plugin backend that declares `supports_streams` | **inside the sandbox** | Same as above, through the plugin's own exec channel. |
 | `modal`, `daytona`, `vercel_sandbox`, other plugin backends | **refused** | These backends cannot host a display yet. Rather than quietly running the screen on the host beside the sandbox you chose for the agent, `Start` explains and points at `placement: gateway`. |
+| any (`placement: ssh`) | **on the `bot_desktop.ssh` host** | The screen, Chromium and cua-driver run on a desktop machine or VM of their own while the terminal stays where `terminal.backend` puts it. See [A desktop host of its own](#a-desktop-host-of-its-own). |
 
 `placement: gateway` forces the pre-existing behaviour (screen on the gateway
 host even with a sandboxed terminal) as an explicit opt-in; `placement:
@@ -249,15 +250,23 @@ terminal` forces the sandbox and errors when it cannot host one (with a
 `local` backend the terminal *is* the gateway host, so it resolves there).
 
 Placement is policy, not a snapshot of what happens to be running. When the
-screen is placed in the sandbox, the first browser or `computer_use` call
-brings it up there on demand (no `auto_start` opt-in needed: the sandbox is
-the boundary you chose, and a screen inside it touches nothing outside it),
-and when it cannot come up the call fails with the reason. The host is never
-the fallback for a sandbox whose screen is down. A gateway restart does not
-lose the screen either: the host-side marker records which container owns
-it, so the restarted gateway re-attaches to a still-running sandbox, and
-`Stop` takes down the screen where it actually runs even if you changed
-`placement` in the meantime.
+screen is placed in the sandbox or on a desktop host (`placement: ssh`), the
+first browser or `computer_use` call brings it up there on demand (no
+`auto_start` opt-in needed: that machine is the boundary you chose, and a
+screen on it touches nothing outside it), and when it cannot come up the call
+fails with the reason. The gateway host is never the fallback for a screen
+that is down. A gateway restart does not lose the screen either: the
+host-side marker records which container owns it (for `placement: ssh`, the
+`bot_desktop.ssh` target), so the restarted gateway re-attaches to a
+still-running screen, and `Stop` takes down the screen where it actually runs
+even if you changed `placement` in the meantime. While that marker exists the
+viewer, the thumbnail, the browser and `computer_use` all go to the recorded
+machine; the next start or tool call after `placement` or `bot_desktop.ssh`
+changed stops the recorded screen first. `Start` then brings one up where the
+new setting says; a tool call does too for a sandbox or desktop host, while a
+gateway-hosted screen still follows `auto_start`. If the config cannot be read
+while a screen is recorded on a desktop host, tool calls fail rather than
+fall back to the gateway host.
 
 ### The sandbox image
 
@@ -335,6 +344,85 @@ paths keep working, the pane's thumbnail is grabbed inside the sandbox, and
 `browser_exec` / the vault autofill reach the sandbox's Chromium through a port
 forwarded over the same `docker exec` / `ssh` channel.
 
+### A desktop host of its own
+
+`placement: ssh` puts the screen on a machine that is neither the gateway host
+nor the terminal sandbox: typically a desktop VM next to a gateway whose
+agents keep a `local` terminal. Only the desktop moves. The agent's shell,
+files and credentials stay where they are; the screen, the bot's browser and
+`computer_use` run on the desktop host, reached over SSH like the `ssh`
+terminal backend reaches its host (`BatchMode`, the key you name), but on a
+ControlMaster of its own: a socket in a `0700` directory under the
+profile's `HERMES_HOME`, named per profile and per target (key included), so
+it is never shared with the terminal backend, another profile or another key.
+(A profile home too deep for a Unix socket path uses a per-user `0700`
+directory in the system temp dir instead, still named per profile.)
+That connection turns agent and X11 forwarding off, clears configured port
+forwards, and with a `key` set offers only that key (`IdentitiesOnly`).
+
+```yaml
+bot_desktop:
+  placement: ssh
+  ssh:
+    host: desktops.example.lan
+    user: agent-research   # one login per agent
+    port: 22
+    key: ~/.ssh/agent-research-desktop
+    display: 21            # this login's X display on that host
+```
+
+`host` and `user` are required. A `placement: ssh` with an incomplete block
+is **refused**, never quietly moved back to the gateway host.
+
+What the desktop host gets, and what it does not:
+
+- It runs the same launcher, relay and cua-driver spawn as a terminal
+  sandbox, through the SSH connection. Nothing listens on TCP: Xvnc serves a
+  `0600` Unix socket in the login's home, and the pane's stream rides the SSH
+  channel.
+- Nothing from the gateway's home is copied there. The `ssh` terminal backend
+  mirrors `~/.hermes` (skills, credentials) and forwards the profile's
+  passthrough secrets to its host; the desktop host gets neither.
+- Runtime state lives under `~/.cache/hermes-bot-desktop/<profile>/` of the
+  login, not a shared temp directory, so several agents can share one host. The browser
+  profile (cookies, saved logins) is `~/.hermes/bot-desktop/browser-profile`
+  there, created owner-only (`0700`, its parent tightened too).
+- The agent's local terminal and local browser tools never inherit the
+  desktop host's `DISPLAY`, `XAUTHORITY`, session bus or `XDG_*` paths: those
+  name files on the other machine.
+- A desktop host that does not answer shows as not running; it is tried again
+  after about 30 seconds rather than on every status call. `Stop` then
+  reports it unreachable and keeps the record, so the screen is stopped once
+  the host answers again.
+- `idle_stop_minutes` is enforced by the gateway serving the profile: the
+  launcher on the desktop host runs no idle watcher of its own. A restarted
+  gateway re-attaches to the recorded host once the screen is due. While no
+  gateway serves the profile, the screen stays up until
+  `hermes computer-use screen stop` or a gateway runs again.
+
+**Sharing one host between agents.** Give every agent its own login and its own
+`display` number. The login is the boundary between them: each screen, browser
+profile and cua-driver runs as that user, and a takeover reaches only that
+user's session. X display locks are machine-wide, so two screens cannot share a
+number; the launcher never takes a number held by a live server, so `Start`
+fails with Xvnc's error instead of disturbing the other screen.
+
+**Preparing the host.** It carries the stack itself, as for an `ssh` terminal
+host: TigerVNC's `Xvnc`, the Xfce core components (`xfwm4`, `xfce4-panel`,
+`xfdesktop`, `xfsettingsd`), `dbus-run-session`, `xauth` and `x11-utils`,
+`python3`, plus `cua-driver` and a Playwright Chromium (with
+`PLAYWRIGHT_BROWSERS_PATH` reachable from a non-interactive ssh login) for
+`computer_use` and the browser. The screen outlives the SSH command that
+started it, so the host must not kill a user's processes at logout
+(`KillUserProcesses=no`, the systemd default, or `loginctl enable-linger` for
+each login). Pre-seed the gateway's `known_hosts` with the host's key; like the
+terminal backend, the connection otherwise trusts the key it sees first.
+
+`computer_use.permission_mode: bounded` and approval bypass (`--yolo`) run a
+private cua-driver daemon on the gateway host, so they are refused while the
+screen is off the gateway (this host or a terminal sandbox); use `standard`
+there.
+
 ## Configuration
 
 ```yaml
@@ -343,17 +431,27 @@ bot_desktop:
   auto_start: false         # set true to start on the first computer_use call or headed browser use
   min_free_memory_mb: 1536  # refuse to start below this much free memory (0 = never check)
   idle_stop_minutes: 30     # stop a screen nobody used for this long (0 = keep it up)
-  placement: auto           # auto | terminal | gateway — see "Where the screen runs"
+  placement: auto           # auto | terminal | gateway | ssh — see "Where the screen runs"
+  ssh:                      # the desktop host for placement: ssh
+    host: ""
+    user: ""
+    port: 22
+    key: ""
+    display: 20
 ```
 
 `auto_start` is off by default. Start the screen from the Desktop's Screen
 pane (**Start screen**), from `hermes computer-use screen start`, or set the
 flag to `true` for a headless host that should bring its screen up the first
 time the bot calls `computer_use` or opens a headed browser (`browser.headed:
-true`) and no display is available.
+true`) and no display is available. It governs a gateway-hosted screen only:
+one placed in a terminal sandbox or on a desktop host (`placement: ssh`)
+always starts on that first use.
 
 State lives under `<HERMES_HOME>/bot-desktop/` per profile (RFB Unix socket,
-Xauthority, launcher log, per-profile xfconf).
+Xauthority, launcher log, per-profile xfconf) for a gateway-hosted screen. A
+screen in a terminal sandbox or on a desktop host keeps that runtime state on
+its own machine; the gateway keeps only the marker recording where it runs.
 
 ## How it works
 

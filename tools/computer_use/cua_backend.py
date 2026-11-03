@@ -126,8 +126,15 @@ def desktop_identity(env: Optional[dict[str, str]] = None) -> str:
     """The screen a backend spawned from ``env`` acts on: its DISPLAY (``''`` when none). Recorded next to the
     cached backend so a Bot Desktop that starts (or restarts on another number) AFTER the backend was cached is
     noticed — the cached cua-driver still points at the old seat or at no display at all. A running Bot Desktop
-    is that screen wherever it is hosted; one inside the terminal backend is not part of this machine's env."""
+    is that screen wherever it is hosted; one inside the terminal backend is not part of this machine's env. A
+    screen on a bot_desktop.ssh desktop host is named by that machine and its fixed display number, from config
+    alone (this runs on every computer_use call, under the backend lock: no exec, no dial), so a move to another
+    desktop host, or between it and the gateway or the sandbox, replaces the cached driver."""
     if env is None:
+        from tools.bot_desktop import placement
+        where = placement.resolve()  # a failed config read raises: the cached backend is kept, not torn down
+        if where.ssh is not None:
+            return f"ssh:{where.ssh.label()}:{where.ssh.display}"
         from tools.bot_desktop import runtime as _bd_runtime
         if screen := _bd_runtime.published_env().get("DISPLAY"):
             _bd_runtime.touch_activity()
@@ -150,6 +157,9 @@ def cua_driver_child_env(base_env: Optional[dict[str, str]] = None) -> dict[str,
     # A running Bot Desktop for this profile owns the agent's screen: DISPLAY/XAUTHORITY/DBUS point there so
     # cua-driver never acts on a seat the human is sitting at (#90374 class) and headless hosts get a display.
     from tools.bot_desktop.runtime import desktop_env as _bot_desktop_env
+    # These children run HERE (MCP on a gateway-hosted screen, status, doctor, install probes); desktop_env() leaves
+    # out an off-gateway screen's DISPLAY/bus/XDG (sandbox or bot_desktop.ssh host). Its own spawn is
+    # sandbox_mcp_invocation().
     env = _bot_desktop_env(env)
     if _cua_telemetry_disabled():
         env[_CUA_TELEMETRY_ENV_VAR] = "0"
@@ -170,13 +180,28 @@ def sandbox_mcp_invocation() -> Optional[tuple[tuple[str, list[str]], dict[str, 
     if not published.get("DISPLAY"):
         raise RuntimeError("the screen inside the terminal backend's sandbox is gone; start it again")
     from tools.bot_desktop import sandbox_host
-    env = _bd_runtime._sandbox_env(create=True)
+    env = _bd_runtime._screen_env(create=True)  # the machine the published env came from: the marker's owner
     if env is None:
         raise RuntimeError("the terminal backend's sandbox is not running, so there is nowhere to run cua-driver")
     command, args = sandbox_host.cua_mcp_invocation(env, _bd_runtime._profile_name(),
                                                     {**published, _CUA_TELEMETRY_ENV_VAR: "0"})
     _bd_runtime.touch_activity()
     return (command, args), {"PATH": os.environ.get("PATH", "")}
+
+
+def _refuse_host_daemon_off_gateway(permission_mode: str) -> None:
+    """``bounded`` / ``unrestricted`` run a private ``cua-driver serve`` daemon on THIS host and proxy MCP to it.
+    With the desktop placed off the gateway (terminal sandbox or SSH desktop host) that daemon would act on the
+    gateway host's display under the remote screen's DISPLAY number, never on the agent's screen, so the
+    combination is refused instead of silently driving the wrong machine."""
+    from tools.bot_desktop import placement
+    where = placement.resolve()
+    if where.off_gateway:
+        raise RuntimeError(
+            f"computer_use permission mode '{permission_mode}' runs a private cua-driver daemon on the gateway host, "
+            f"but this profile's screen is placed off it (bot_desktop.placement resolves to {where.where}). Use "
+            f"computer_use.permission_mode: standard without approval bypass (--yolo) for an off-gateway screen, or "
+            f"set bot_desktop.placement: gateway.")
 
 
 def sanitized_cua_driver_env() -> dict[str, str]:
@@ -285,6 +310,8 @@ class CuaDriverBackend(_CaptureMixin, _InputMixin, ComputerUseBackend):
         self._clear_active_target()
 
     def start(self) -> None:
+        if self._embedded_daemon is not None:
+            _refuse_host_daemon_off_gateway(self.permission_mode)
         # Driver inside the terminal backend: the sandbox image pins its own cua-driver; the host
         # binary (if any) is not the one that will run, so neither its acquisition nor its contract
         # matters. On the host, runtime acquisition is on-demand, never the explicit install command
