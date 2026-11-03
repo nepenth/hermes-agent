@@ -67,7 +67,9 @@ def build_browser_env() -> dict:
     from hermes_constants import socket_safe_tmpdir
     from tools.bot_desktop.runtime import desktop_env
     from tools.environments.local import served_profile_child_env
-    env = add_loopback_no_proxy(desktop_env(served_profile_child_env(inherit_credentials=False)))
+    # gateway_host_only: these children run HERE, so an SSH desktop host's session (paths on that machine) is
+    # never theirs; the bot's browser on that host is spawned by browser_session_sandbox instead.
+    env = add_loopback_no_proxy(desktop_env(served_profile_child_env(inherit_credentials=False), gateway_host_only=True))
     env["TMPDIR"] = socket_safe_tmpdir()
     return env
 
@@ -194,7 +196,7 @@ def _create_chromium_session(cache_key: str) -> dict[str, Any]:
         where = runtime.tool_placement()
     except RuntimeError as exc:
         raise RuntimeError(f"The browser cannot run here: {exc}") from exc
-    if where == placement.TERMINAL:
+    if where != placement.GATEWAY:  # terminal sandbox or SSH desktop host: both reached through the exec channel
         from tools.browser_session_sandbox import create_sandbox_session
         return create_sandbox_session(cache_key)
     from tools.browser_launcher import launch_chromium
