@@ -350,12 +350,14 @@ def _allocate_display() -> int:
         return _pick_display()
 
 
-def desktop_env(base_env: Optional[dict[str, str]] = None) -> dict[str, str]:
+def desktop_env(base_env: Optional[dict[str, str]] = None, *, gateway_host_only: bool = False) -> dict[str, str]:
     """``base_env`` (default ``os.environ``) with this profile's DISPLAY/XAUTHORITY/DBUS_SESSION_BUS_ADDRESS
     merged in when its desktop is running. Unchanged otherwise, so hosts with a real seat keep it.
+    ``gateway_host_only`` is for children that run on THIS machine whatever the placement (the local browser
+    harnesses): they get :func:`gateway_host_env`, never an SSH desktop host's session.
     Pure: never starts anything (it is called from env builders, status probes and tests)."""
     env = dict(os.environ if base_env is None else base_env)
-    published = published_env()
+    published = gateway_host_env() if gateway_host_only else published_env()
     if published:
         touch_activity()  # a browser / cua-driver spawn is the agent using its screen
         env.update(published)
@@ -366,9 +368,9 @@ def desktop_env(base_env: Optional[dict[str, str]] = None) -> dict[str, str]:
 def ensure_started_for_tool() -> None:
     """Tool-boundary hook (``computer_use`` dispatch and the headed Chromium spawn sites of the browser tool).
 
-    Under ``terminal`` placement the sandbox screen is brought up on first use unconditionally: the sandbox is
-    the boundary the user chose, a screen inside it touches nothing outside it, and the tools below refuse
-    rather than run on the host when it is not up. On the gateway host, ``bot_desktop.auto_start`` (opt-in,
+    Under ``terminal`` (and ``ssh``) placement the off-gateway screen is brought up on first use unconditionally:
+    the sandbox or desktop host is the boundary the user chose, a screen there touches nothing outside it, and
+    the tools below refuse rather than run on the gateway host when it is not up. On the gateway host, ``bot_desktop.auto_start`` (opt-in,
     default off) starts a Linux host's screen when it has NO display and the packages installed, so a headless
     gateway works the first time. Host failure is not an error here (the tool's own "no display" diagnosis is
     the right message then); a sandbox start failure is logged and left for :func:`tool_placement` to raise."""
@@ -378,7 +380,7 @@ def ensure_started_for_tool() -> None:
     where = placement.resolve()
     if where.where == placement.REFUSED:
         return  # tool_placement() raises the reason at the spawn site
-    if where.where == placement.TERMINAL:
+    if where.off_gateway:
         try:
             start()
         except Exception as exc:
@@ -393,19 +395,21 @@ def ensure_started_for_tool() -> None:
 
 
 def tool_placement() -> str:
-    """Where the browser / cua-driver a tool is about to spawn MUST run: ``placement.GATEWAY`` or
-    ``placement.TERMINAL``. Policy first, liveness second: a ``terminal`` placement whose screen is down gets
-    it started here (raising with the blocker when it cannot come up) and a ``refused`` placement raises its
-    reason. Neither ever yields the host — a screen that happens to be down is not permission to run the
-    agent's browser outside the sandbox the user chose."""
+    """Where the browser / cua-driver a tool is about to spawn MUST run: ``placement.GATEWAY``, or
+    ``placement.TERMINAL`` / ``placement.SSH`` (off the gateway, through ``_sandbox_env()``'s exec channel).
+    Policy first, liveness second: an off-gateway placement whose screen is down gets it started here (raising
+    with the blocker when it cannot come up) and a ``refused`` placement raises its reason. Neither ever
+    yields the host — a screen that happens to be down is not permission to run the agent's browser outside
+    the sandbox or desktop host the user chose."""
     where = placement.resolve()
     if where.where == placement.REFUSED:
         raise RuntimeError(where.reason)
+    _retire_foreign_screen(where)
     if where.where == placement.GATEWAY:
         return placement.GATEWAY
     if not sandbox_screen_running() or not published_env().get("DISPLAY"):
         start()
-    return placement.TERMINAL
+    return where.where
 
 
 def _should_auto_start(env: dict[str, str]) -> bool:
@@ -473,20 +477,35 @@ def _idle_due(launcher: Optional[tuple[int, float]]) -> Optional[float]:
     """Idle seconds when the screen is due for the idle stop now, else None. ``launcher`` (``(pid,
     create_time)``) limits it to that one screen: a replacement started since is never due."""
     limit = idle_stop_seconds()
-    if limit <= 0 or not is_running():
+    if limit <= 0:
+        return None
+    # The local clock first (file stats): only a screen that is due costs the liveness probe, which for an SSH
+    # desktop host left by a gateway that restarted is a dial.
+    idle = idle_seconds()
+    if idle is None or idle < limit or not _running_for_idle_stop():
         return None
     if launcher is not None:
         current = _launcher_identity()
         if current is None or current[0] != launcher[0] or abs(current[1] - launcher[1]) >= 0.01:
             return None
-    idle = idle_seconds()
-    if idle is None or idle < limit:
-        return None
     from tools.bot_desktop import lease as _bd_lease
     abandoned_after = max(limit * HUMAN_LEASE_ABANDONED_WINDOWS, HUMAN_LEASE_ABANDONED_MIN_S)
     if _bd_lease.get().holder == _bd_lease.HUMAN and idle < abandoned_after:
         return None
     return idle
+
+
+def _running_for_idle_stop() -> bool:
+    """:func:`is_running`, re-attaching first to the SSH desktop host a marker records: after a gateway restart
+    nothing else in this process has dialled it, and the idle stop is the only one left to end that screen
+    (its launcher runs no idle watcher of its own there). Unreachable is not running (negative-cached)."""
+    if is_running():
+        return True
+    from tools.bot_desktop import sandbox_host
+    marker = sandbox_host._read_marker()
+    if "ssh_target" not in marker:
+        return False
+    return _owned_sandbox_env() is not None and is_running()
 
 
 def stop_if_idle(launcher: Optional[tuple[int, float]] = None) -> bool:
@@ -512,7 +531,11 @@ def stop_if_idle(launcher: Optional[tuple[int, float]] = None) -> bool:
         return _idle_due(launcher) is not None
 
     logger.info("Bot Desktop for profile %s idle for %.0f min; stopping", _profile_name(), idle / 60)
-    if not stop(still_due=still_due):
+    try:
+        if not stop(still_due=still_due):
+            return False
+    except RuntimeError as exc:  # its desktop host stopped answering, or a broken marker: kept, retried later
+        logger.warning("Bot Desktop for profile %s is idle but was not stopped: %s", _profile_name(), exc)
         return False
     if held is not None and held.holder == _bd_lease.HUMAN:
         # An abandoned human lease stopped the screen. Left in place it would fence the agent out of the next
@@ -524,6 +547,21 @@ def stop_if_idle(launcher: Optional[tuple[int, float]] = None) -> bool:
             logger.warning("Bot Desktop for profile %s stopped, but its abandoned lease was not released: %s",
                            _profile_name(), exc)
     return True
+
+
+def gateway_host_env() -> dict[str, str]:
+    """:func:`published_env` for processes spawned on the gateway host itself (the local terminal backend, the
+    local browser harnesses). Empty while the screen is on an SSH desktop host (the marker records an
+    ``ssh_target``, readable or not, or a leftover marker meets ``placement: ssh``): its DISPLAY, XAUTHORITY,
+    session bus and XDG_* paths name sockets and directories on that other machine, so a local ``gsettings`` or
+    ``systemctl --user`` would chase a bus that is not here. cua-driver and the thumbnail, which do run where
+    the screen is, keep :func:`published_env`. No marker: a gateway-hosted screen (or none), read as before
+    without loading config."""
+    from tools.bot_desktop import sandbox_host
+    marker = sandbox_host._read_marker()
+    if "ssh_target" in marker or (marker and placement.resolve().where == placement.SSH):
+        return {}
+    return published_env()
 
 
 def published_env() -> dict[str, str]:
@@ -559,8 +597,9 @@ def rfb_socket_path() -> Optional[Path]:
 
 
 def in_sandbox() -> bool:
-    """True when this profile's screen is placed inside the terminal backend (policy; reads config)."""
-    return placement.resolve().where == placement.TERMINAL
+    """True when this profile's screen is placed off the gateway host: inside the terminal backend or on the
+    ``bot_desktop.ssh`` desktop host (policy; reads config)."""
+    return placement.resolve().off_gateway
 
 
 def sandbox_screen_running() -> bool:
@@ -574,28 +613,78 @@ def sandbox_screen_running() -> bool:
     marker = sandbox_host._read_marker()
     if not marker:
         return False
-    if _sandbox_env(create=False) is not None:
-        return True
+    try:
+        if _marker_env(marker, create=False) is not None:
+            return True
+    except BrokenMarker:
+        return True  # an owner nobody can name is kept and reported, never dropped as gone
     if sandbox_host.marker_sandbox_alive(marker):
         return True
     sandbox_host._marker().unlink(missing_ok=True)
     return False
 
 
-def _owned_sandbox_env():
+class BrokenMarker(RuntimeError):
+    """The host-side screen marker names an owner that cannot be read back (a corrupt ``ssh_target``)."""
+
+
+def _recorded_target(marker: dict) -> Optional[placement.SshTarget]:
+    """The SSH desktop host a marker records; None for a terminal-sandbox marker. Raises :class:`BrokenMarker`."""
+    try:
+        return placement.SshTarget.from_marker(marker)
+    except ValueError as exc:
+        from tools.bot_desktop import sandbox_host
+        raise BrokenMarker(f"{exc} in {sandbox_host._marker()}; stop that screen on its host by hand, then "
+                           f"remove the file") from exc
+
+
+def _owned_sandbox_env(*, strict: bool = False):
     """The environment hosting the screen the marker records, re-attaching after a restart when the recorded
     sandbox is still alive; None when there is no marker or its sandbox is gone. Never builds a sandbox for
-    a screen that is not there."""
+    a screen that is not there. An unreachable desktop host or a broken marker reads as None too, except under
+    ``strict`` (stop), which must not mistake either for a screen that is gone: they raise there."""
     from tools.bot_desktop import sandbox_host
+    from tools.environments.base import EnvironmentConnectionError
     marker = sandbox_host._read_marker()
     if not marker:
         return None
-    env = _sandbox_env(create=False)
-    if env is not None:
-        return env
-    if sandbox_host.marker_sandbox_alive(marker):
-        return _sandbox_env(create=True)
+    try:
+        env = _marker_env(marker, create=False)
+        if env is not None:
+            return env
+        if sandbox_host.marker_sandbox_alive(marker):
+            return _marker_env(marker, create=True)
+    except BrokenMarker as exc:
+        if strict:
+            raise
+        logger.warning("Bot Desktop for profile %s: %s", _profile_name(), exc)
+    except EnvironmentConnectionError as exc:
+        if strict or _recorded_target(marker) is None:
+            raise
+        # A desktop host that is down right now: report the screen as not running rather than failing
+        # status; the next start() re-adopts a screen that survived on it.
+        logger.warning("Bot Desktop host for profile %s is unreachable: %s", _profile_name(), exc)
     return None
+
+
+def _screen_env(*, create: bool):
+    """The environment hosting this profile's screen: the marker's recorded owner while a marker exists (it
+    wins over the current placement until that screen is stopped), else the current placement's."""
+    from tools.bot_desktop import sandbox_host
+    marker = sandbox_host._read_marker()
+    return _marker_env(marker, create=create) if marker else _sandbox_env(create=create)
+
+
+def _marker_env(marker: dict, *, create: bool):
+    """The environment a screen marker names: its recorded SSH desktop host, else the terminal backend's (the
+    recorded owner wins over the current placement until the screen is stopped)."""
+    target = _recorded_target(marker)
+    if target is not None:
+        from tools.bot_desktop import ssh_host
+        return ssh_host.environment(target, create=create)
+    if placement.resolve().ssh is not None:  # a sandbox screen left running when the placement moved to ssh
+        return placement.terminal_environment(create=create)
+    return _sandbox_env(create=create)
 
 
 def is_running() -> bool:
@@ -605,7 +694,7 @@ def is_running() -> bool:
 def open_rfb_stream() -> subprocess.Popen:
     """Popen whose stdin/stdout carry RFB bytes for a sandbox-hosted screen (``in_sandbox()`` only)."""
     from tools.bot_desktop import sandbox_host
-    env = _sandbox_env(create=False)
+    env = _screen_env(create=False)  # never dials: this runs on the viewer socket's event loop
     if env is None:
         raise RuntimeError("the sandbox hosting this screen is not running")
     return sandbox_host.open_rfb_stream(env, _profile_name())
@@ -622,7 +711,7 @@ def status(profile: Optional[str] = None) -> DesktopStatus:
     from tools.bot_desktop import resources
     from tools.bot_desktop import sandbox_host
     where = placement.resolve()
-    if where.where == placement.TERMINAL or sandbox_host._read_marker():
+    if where.off_gateway or sandbox_host._read_marker():
         # A screen already running inside a sandbox is reported (and stoppable) even after the placement
         # setting moved: the recorded owner wins over the current policy until it is stopped.
         return _sandbox_status(profile, where)
@@ -654,7 +743,13 @@ def _sandbox_status(profile: Optional[str], where) -> DesktopStatus:
     """Status of a sandbox-placed screen. Package presence is only known once the sandbox exists; before
     that the pane shows "installed" with the image hint carried in ``install_command`` so Start can explain."""
     from tools.bot_desktop import sandbox_host
-    env = _owned_sandbox_env() or _sandbox_env(create=False)
+    marker = sandbox_host._read_marker()
+    try:
+        recorded = _recorded_target(marker) if marker else None
+        broken = None
+    except BrokenMarker as exc:
+        recorded, broken = None, str(exc)
+    env = _owned_sandbox_env() if marker else _sandbox_env(create=False)
     missing = sandbox_host.missing_binaries(env) if env is not None else []
     published = sandbox_host.published_env(env, profile or _profile_name()) if env is not None else {}
     running = bool(published.get("DISPLAY"))
@@ -662,7 +757,13 @@ def _sandbox_status(profile: Optional[str], where) -> DesktopStatus:
     # A sandbox missing the stack is a blocker (shown in place of Start) naming the image that has it.
     blocker = None
     image_switch = None
-    if missing:
+    host_advice = sandbox_host.host_install_advice(env) if env is not None else None
+    if broken is not None:
+        blocker = f"Bot Desktop has a broken screen record: {broken}."
+    elif missing and host_advice is not None:
+        blocker = (f"The desktop host lacks {', '.join(missing)}. {host_advice[0].upper()}{host_advice[1:]}, "
+                   f"or set bot_desktop.placement: gateway.")
+    elif missing:
         advice = sandbox_host.plugin_image_advice(where.backend) or (
             f"use {sandbox_host.SANDBOX_IMAGE_HINT} as terminal.{where.backend}_image (the default sandbox base "
             f"plus the desktop stack)")
@@ -694,9 +795,22 @@ def _sandbox_status(profile: Optional[str], where) -> DesktopStatus:
         blocker=blocker,
         memory_available_mb=None,
         memory_limit_mb=None,
-        placement=f"{placement.TERMINAL}:{where.backend}",
+        placement=_placement_label(env, where, recorded),
         image_switch=image_switch,
     )
+
+
+def _placement_label(env, where, recorded: Optional[placement.SshTarget] = None) -> str:
+    """``terminal:<backend>`` or ``ssh:<user>@<host>`` for the pane: where a takeover's input lands. With the
+    desktop host down (no ``env``), the host the marker records, then the one the placement names."""
+    from tools.bot_desktop.ssh_host import DesktopSSHEnvironment
+    if isinstance(env, DesktopSSHEnvironment):
+        return f"{placement.SSH}:{env.target.label()}"
+    if env is None and recorded is not None:
+        return f"{placement.SSH}:{recorded.label()}"
+    if env is None and where.ssh is not None:
+        return f"{placement.SSH}:{where.ssh.label()}"
+    return f"{placement.TERMINAL}:{where.backend}"
 
 
 def _profile_name() -> str:
@@ -718,7 +832,8 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
     ``wait_seconds`` pass; raises ``RuntimeError`` naming the blocker.
 
     ``bot_desktop.placement`` decides WHERE: inside the configured terminal backend (docker/ssh/a streaming plugin backend;
-    ``sandbox_host``), or on the gateway host (the rest of this function). A sandbox backend that cannot host
+    ``sandbox_host``), on the ``bot_desktop.ssh`` desktop host (the same ``sandbox_host`` path over a connection
+    of its own, ``ssh_host``), or on the gateway host (the rest of this function). A sandbox backend that cannot host
     a screen refuses rather than silently falling back to the host beside it.
 
     Two locks: the per-profile ``start.lock``, held from the running-check to the launcher's publish so two
@@ -729,8 +844,9 @@ def start(*, wait_seconds: float = 15.0) -> DesktopStatus:
     where = placement.resolve()
     if where.where == placement.REFUSED:
         raise RuntimeError(where.reason)
-    if where.where == placement.TERMINAL:
-        return _start_in_sandbox(wait_seconds)
+    _retire_foreign_screen(where)
+    if where.off_gateway:
+        return _start_in_sandbox(wait_seconds, display_num=where.ssh.display if where.ssh is not None else 20)
     if not is_supported_host():
         raise RuntimeError("Bot Desktop runs on Linux gateway hosts only")
     missing = missing_binaries()
@@ -852,13 +968,38 @@ def _spawn_and_wait(sd: Path, wait_seconds: float) -> DesktopStatus:
         raise RuntimeError(f"Bot Desktop did not publish its display within {wait_seconds:.0f}s (see {sd / 'launcher.log'})")
 
 
+def _retire_foreign_screen(where) -> None:
+    """Stop a screen the marker records on another machine than ``where`` names before anything starts or spawns
+    for the new one: an SSH desktop host when the placement moved off ssh or to another ``bot_desktop.ssh``
+    target, or a terminal sandbox when it moved to ssh. Left running, that screen would be orphaned the moment
+    the new marker overwrites the record. Raises (a :class:`BrokenMarker`, or the unreachable host) instead of
+    forgetting a screen it could not stop."""
+    from tools.bot_desktop import sandbox_host
+    marker = sandbox_host._read_marker()
+    if not marker:
+        return
+    recorded = _recorded_target(marker)
+    if recorded == where.ssh:  # same desktop host, or a terminal-sandbox screen under a non-ssh placement
+        return
+    old = f"desktop host {recorded.label()}" if recorded is not None else "terminal backend's sandbox"
+    logger.info("Bot Desktop for profile %s moves off the %s; stopping the screen there first", _profile_name(), old)
+    from tools.environments.base import EnvironmentConnectionError
+    try:
+        stop()
+    except EnvironmentConnectionError as exc:
+        raise RuntimeError(f"this profile's screen is still recorded on the {old}, which did not answer, so it "
+                           f"was not stopped and a new one is not started elsewhere: {exc}. Bring that host "
+                           f"back (or restore bot_desktop.ssh) and run `hermes computer-use screen stop`, or "
+                           f"remove {sandbox_host._marker()} once that screen is gone.") from exc
+
+
 def _sandbox_env(*, create: bool):
-    """The terminal environment hosting this profile's screen, or None. ``create=False`` for status probes
-    (a status call must never build a container)."""
-    return placement.terminal_environment(create=create)
+    """The environment the placement puts this profile's screen in (terminal backend or SSH desktop host), or
+    None. ``create=False`` for status probes (a status call must never build a container or dial a host)."""
+    return placement.desktop_environment(create=create)
 
 
-def _start_in_sandbox(wait_seconds: float) -> DesktopStatus:
+def _start_in_sandbox(wait_seconds: float, *, display_num: int) -> DesktopStatus:
     from tools.bot_desktop import sandbox_host
     env = _sandbox_env(create=True)
     if env is None:
@@ -873,7 +1014,7 @@ def _start_in_sandbox(wait_seconds: float) -> DesktopStatus:
         exe = sandbox_host.chromium_executable(env)
         browser = (exe, dock_exec_line(exe, sandbox_host.browser_profile_dir(env), sandbox_bypass=True)) if exe else (None, None)
         published = sandbox_host.start(env, _profile_name(), geometry=geometry(), wait_seconds=max(wait_seconds, 20.0),
-                                       browser_exec=browser[0], browser_exec_line=browser[1])
+                                       browser_exec=browser[0], browser_exec_line=browser[1], display_num=display_num)
     (sd / "env").write_text("".join(f"{k}={v}\n" for k, v in published.items()), encoding="utf-8")
     touch_activity()
     return status()
@@ -882,7 +1023,10 @@ def _start_in_sandbox(wait_seconds: float) -> DesktopStatus:
 def _sandbox_published_env() -> dict[str, str]:
     """Published env of a sandbox-hosted screen (the caller saw the host-side marker written at start)."""
     from tools.bot_desktop import sandbox_host
-    env = _sandbox_env(create=False)
+    try:
+        env = _screen_env(create=False)  # the marker's owner: never dials on this hot path
+    except BrokenMarker:
+        return {}
     if env is None:
         return {}
     return sandbox_host.published_env(env, _profile_name())
@@ -893,12 +1037,14 @@ def stop(still_due: Optional[Callable[[], bool]] = None) -> bool:
     was signalled. ``still_due`` is asked again before anything is killed (under ``start.lock`` for a screen on
     this host); False there leaves the screen running."""
     from tools.bot_desktop import sandbox_host
-    if sandbox_host._read_marker() or placement.resolve().where == placement.TERMINAL:
+    if sandbox_host._read_marker() or placement.resolve().off_gateway:
         if still_due is not None and not still_due():
             return False
         # The marker names the sandbox that owns the screen; stop THAT one (re-attaching after a restart),
-        # whatever the placement setting says now. A marker whose sandbox is gone is simply dropped.
-        env = _owned_sandbox_env()
+        # whatever the placement setting says now. A marker whose sandbox is gone is simply dropped; one whose
+        # desktop host does not answer (EnvironmentConnectionError) or cannot be read (BrokenMarker) is kept and
+        # the error raised: the screen there is still up, and the marker is the only record of where.
+        env = _owned_sandbox_env(strict=True)
         stopped = sandbox_host.stop(env, _profile_name()) if env is not None else False
         sandbox_host._marker().unlink(missing_ok=True)
         for name in ("env", "activity"):
