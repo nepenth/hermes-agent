@@ -269,6 +269,11 @@ _RAW_INLINE_TOOL_EXECUTORS: dict[str, InlineToolExecutor] = {
         "tools.clarify_tool", "clarify_tool", ("questions", "questions"),
         callback=lambda agent, ctx: agent.clarify_callback,
     ),
+    "desktop_handoff": _tool(
+        "tools.desktop_handoff_tool", "desktop_handoff_tool",
+        ("reason", "reason"), ("timeout_minutes", "timeout_minutes", 20),
+        callback=lambda agent, ctx: agent.clarify_callback,
+    ),
     "read_terminal": _callback_tool(
         "tools.read_terminal_tool", "read_terminal_tool", "read_terminal_callback",
         ("start_line", "start_line"), ("count", "count"),
