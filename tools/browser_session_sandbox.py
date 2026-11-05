@@ -110,13 +110,16 @@ _STOP_SCRIPT = (
 
 def _start_chromium(env, user, exe: str, udd: str, child_env: dict) -> tuple[int, Optional[str]]:
     """Launch detached in the sandbox; returns its sandbox pid and start time (None when unreadable)."""
+    from tools.bot_desktop import sandbox_host
     from tools.bot_desktop.browser import SHARED_PROFILE_ARGS
     from tools.browser_launcher import CHROMIUM_SANDBOX_BYPASS_ARGS, build_chromium_argv
     from tools.environments import streams
-    # Container: no user namespaces for Chromium's own sandbox, so the bypass flags always apply (this
-    # host's facts say nothing about the sandbox); the shared-profile flags match the dock's icon.
+    # A container has no user namespaces for Chromium's own sandbox, so the bypass flags apply there (this
+    # host's facts say nothing about the sandbox); a dedicated SSH desktop host keeps the sandbox when its
+    # probe says it can. The shared-profile flags match the dock's icon.
+    bypass = CHROMIUM_SANDBOX_BYPASS_ARGS if sandbox_host.chromium_needs_sandbox_bypass(env) else ()
     argv = build_chromium_argv(exe, udd, packaged=False, headed=True, sandbox_bypass=False,
-                               extra_args=(*SHARED_PROFILE_ARGS, *CHROMIUM_SANDBOX_BYPASS_ARGS))
+                               extra_args=(*SHARED_PROFILE_ARGS, *bypass))
     argv = list(dict.fromkeys(argv))
     # setsid execs in place (a background child of a non-interactive shell leads no process group), so $! is
     # Chromium itself, and its start time is fixed from the fork on. The profile holds the cookie jar and saved
