@@ -99,7 +99,14 @@ def _agent_name(config: dict) -> str:
     branding = skin.get("branding") if isinstance(skin, dict) else None
     if isinstance(branding, dict) and branding.get("agent_name"):
         return str(branding["agent_name"])
-    return str((config.get("agent") or {}).get("name") or "Hermes Agent")
+    named = (config.get("agent") or {}).get("name")
+    if named:
+        return str(named)
+    # A named profile (…/profiles/<name>) is how the human knows this agent; the root home is not.
+    home = get_hermes_home()
+    if home.parent.name == "profiles" and home.name:
+        return home.name.replace("-", " ").replace("_", " ").title()
+    return "Hermes Agent"
 
 
 def _session_payload(config: dict, record: dict) -> dict:
