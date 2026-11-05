@@ -5,6 +5,7 @@ docs of config.yaml.
 """
 
 from hermes_cli.config_defaults_auxiliary import _aux
+from hermes_cli.config_defaults_bot_desktop import BOT_DESKTOP_DEFAULTS
 
 #: Image every container terminal backend (docker/modal/daytona, the singularity plugin) uses unless the
 #: user pins one. LEGACY_SANDBOX_IMAGES are the plain defaults that preceded the desktop stack
@@ -2500,34 +2501,7 @@ DEFAULT_CONFIG = {
     "paste_collapse_threshold_fallback": 5,
     "paste_collapse_char_threshold": 2000,
 
-    # Bot Desktop: a headless Xfce screen per profile on the gateway host (Linux), streamed to Hermes
-    # Desktop where a human can watch, take over (logins, 2FA, CAPTCHAs) and hand back. `hermes computer-use screen`.
-    "bot_desktop": {
-        "geometry": "1440x900",
-        # Opt-in: start the screen automatically the first time computer_use needs a display on a headless
-        # host. Off by default so installing TigerVNC for other reasons never yields a screen nobody asked
-        # for; Hermes Desktop's Screen pane offers Start and this toggle.
-        "auto_start": False,
-        # Refuse to start below this much free memory (MB), measured on the host or its container cgroup,
-        # whichever is tighter. Xvnc + Xfce idle at ~220 MB and a takeover's browser adds 0.5-1 GB, so a
-        # screen with one page runs past 1 GB; the kernel OOM killer picks its victim by score, so on a
-        # small instance the loser is the dashboard or the gateway rather than the desktop. 0 disables the
-        # check.
-        "min_free_memory_mb": 1536,
-        # Stop a screen nobody has used (no computer_use action, browser spawn, viewer or takeover) for this
-        # long; it restarts on the next use. Idle Xvnc + Xfce hold ~220 MB, an abandoned browser far more.
-        # 0 keeps screens up until stopped.
-        "idle_stop_minutes": 30,
-        # Where the screen (and with it computer_use and the bot's browser) runs. auto: follow the terminal backend
-        # (inside a docker / ssh / streaming-plugin sandbox, on the gateway host for a local terminal; a backend that
-        # cannot host a screen, e.g. modal/daytona/vercel, REFUSES). terminal: always inside the terminal backend.
-        # gateway: always on the gateway host, even beside a sandbox terminal (explicit opt-in). ssh: on the
-        # bot_desktop.ssh host whatever terminal.backend is; host + user required (incomplete refuses), key empty =
-        # ssh client defaults, one login + display per agent, nothing from the gateway's home is copied there.
-        # Sandbox images need the desktop stack: nousresearch/hermes-sandbox:desktop.
-        "placement": "auto",
-        "ssh": {"host": "", "user": "", "port": 22, "key": "", "display": 20},
-    },
+    "bot_desktop": BOT_DESKTOP_DEFAULTS,
     "computer_use": {
         # cua-driver's upstream PostHog telemetry defaults ON; Hermes sets
         # CUA_DRIVER_RS_TELEMETRY_ENABLED=0 in every child env unless this is true.
