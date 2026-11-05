@@ -170,6 +170,37 @@ def chromium_executable(env: Any) -> Optional[str]:
     return env._bd_chromium
 
 
+# Chromium's own sandbox needs a non-root login with unprivileged user namespaces (which AppArmor's
+# ``apparmor_restrict_unprivileged_userns=1`` also denies). ``unshare -Ur`` exercises exactly that.
+_USERNS_PROBE = '[ "$(id -u)" != 0 ] && unshare -Ur true 2>/dev/null && echo userns-ok'
+
+
+def _is_ssh_desktop(env: Any) -> bool:
+    from tools.bot_desktop.ssh_host import DesktopSSHEnvironment
+    return isinstance(env, DesktopSSHEnvironment)
+
+
+def chromium_needs_sandbox_bypass(env: Any) -> bool:
+    """Whether the browser in ``env`` must run with ``--no-sandbox``. A container has no user namespaces for
+    Chromium's sandbox, so it always does. A dedicated SSH desktop host is a real machine: it is probed once
+    (as the desktop login) and keeps Chromium's sandbox wherever it can start, since that browser is the
+    one visiting arbitrary sites. Any probe failure falls back to the bypass (a browser that starts). Cached
+    on the env."""
+    if not _is_ssh_desktop(env):
+        return True
+    cached = getattr(env, "_bd_sandbox_bypass", None)
+    if cached is not None:
+        return cached
+    try:
+        proc = streams.run_in(env, ["bash", "-c", _USERNS_PROBE], user=_user_for(env), timeout=20)
+        usable = proc.returncode == 0 and b"userns-ok" in (proc.stdout or b"")
+    except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:  # unreachable host / timeout: never block the screen
+        logger.debug("Bot Desktop: sandbox probe on %s failed: %s", env.target.label(), exc)
+        usable = False
+    env._bd_sandbox_bypass = not usable
+    return env._bd_sandbox_bypass
+
+
 _GRAB_SCRIPT = """
 import io, sys
 from PIL import ImageGrab
