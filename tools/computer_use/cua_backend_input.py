@@ -3,10 +3,11 @@ value-setter methods (mixed into ``CuaDriverBackend``)."""
 
 from __future__ import annotations
 
+import sys
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 
 from tools.computer_use.backend import ActionResult
-from tools.computer_use.cua_backend_parse import _parse_key_combo
+from tools.computer_use.cua_backend_parse import _parse_key_combo, driver_modifiers
 
 _NO_TARGET_MSG = "No active window — call capture() first."
 _BTF_UNSUPPORTED_MSG = "The connected cua-driver does not advertise the standalone bring_to_front tool."
@@ -158,7 +159,8 @@ class _InputMixin:
         if not key_name:
             return _refuse("key", f"Could not parse key from '{keys}'.")
         if modifiers:  # hotkey requires at least one modifier + one key
-            return self._run_input_action("hotkey", {**args, "keys": modifiers + [key_name]}, delivery_mode, bring_to_front)
+            keys_out = driver_modifiers(modifiers, sys.platform) + [key_name]
+            return self._run_input_action("hotkey", {**args, "keys": keys_out}, delivery_mode, bring_to_front)
         return self._run_input_action("press_key", {**args, "key": key_name}, delivery_mode, bring_to_front)
 
     def set_value(self, value: str, element: Optional[int] = None) -> ActionResult:

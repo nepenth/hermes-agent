@@ -133,6 +133,16 @@ def _split_tree_text(full_text: str) -> tuple[str, str]:
 
 _MODIFIER_NAMES = frozenset({"cmd", "command", "shift", "option", "alt", "ctrl", "control", "fn"})
 _KEY_ALIASES = {"command": "cmd", "alt": "option", "control": "ctrl"}
+# The canonical modifier names above are macOS's. The Linux and Windows drivers name the Alt key
+# "alt" and drop "option" silently, so `ctrl+alt+t` arrived as `ctrl+t`. Translate on the way out.
+_DRIVER_MODIFIER_NAMES = {"darwin": {}, "default": {"option": "alt"}}
+
+
+def driver_modifiers(modifiers: list[str], platform: str) -> list[str]:
+    """Canonical modifiers -> the names the cua-driver on ``platform`` (a ``sys.platform`` value) accepts."""
+    names = _DRIVER_MODIFIER_NAMES["darwin" if platform == "darwin" else "default"]
+    return [names.get(m, m) for m in modifiers]
+
 
 def _parse_key_combo(keys: str) -> tuple[Optional[str], list[str]]:
     """Parse 'cmd+s' / 'ctrl-alt-t' into (key, modifiers); last non-modifier wins."""
