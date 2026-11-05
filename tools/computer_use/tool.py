@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import threading
+import time
 import uuid
 from collections import namedtuple
 from functools import partial
@@ -85,6 +86,14 @@ _backends: dict[str, ComputerUseBackend] = {}
 _backend_call_locks: dict[str, threading.RLock] = {}
 _backend_permission_modes: dict[str, str] = {}
 _backend_displays: dict[str, str] = {}  # DISPLAY the cached backend was spawned against (Bot Desktop rebind)
+# Monotonic time each cached backend was last used (install, then the end of every call). The idle reaper
+# releases backends unused for ``computer_use.idle_release_seconds``: a session that simply ends (a one-shot
+# ``-q`` run, a cron job, a gateway chat nobody closes) otherwise keeps its cua-driver until process exit,
+# because cache eviction deliberately preserves session tool state for resume.
+_backend_last_used: dict[str, float] = {}
+_IDLE_RELEASE_DEFAULT_SECONDS = 900
+_IDLE_SWEEP_INTERVAL_SECONDS = 60.0
+_idle_reaper_thread: Optional[threading.Thread] = None
 # Approval grants live in the shared store (``tools.approval``: session set + permanent allowlist), keyed by the
 # gate's session key, so a computer_use "always" is one allowlist entry like any terminal pattern. Only the
 # once-per-session escalation warning is tracked here.
@@ -168,14 +177,16 @@ def _install_backend(sid: str, backend: ComputerUseBackend, permission_mode: str
     _backends[sid], _backend_permission_modes[sid] = backend, permission_mode
     _backend_displays[sid] = desktop_identity()
     _backend_call_locks[sid] = threading.RLock()
+    _backend_last_used[sid] = time.monotonic()
     _backend = backend if sid == "" else _backend
+    _ensure_idle_reaper()
     return backend
 
 def _detach_locked(sid: str) -> tuple[Optional[ComputerUseBackend], Optional[threading.RLock]]:
     """Remove one session's cache entries, plus the ``_backend`` injection hook when it aliases the empty session
     (older callers/tests may populate only the hook). Caller holds ``_backend_lock``."""
     global _backend
-    _backend_permission_modes.pop(sid, None), _backend_displays.pop(sid, None)
+    _backend_permission_modes.pop(sid, None), _backend_displays.pop(sid, None), _backend_last_used.pop(sid, None)
     backend, call_lock = _backends.pop(sid, None), _backend_call_locks.pop(sid, None)
     if sid == "":
         backend = _backend if backend is None else backend
@@ -248,7 +259,12 @@ def _backend_for_call(session_id: str = "") -> Iterator[ComputerUseBackend]:
                 if (_backend_permission_modes.get(sid) != _cua_permission_mode(str(session_id or ""))
                         or backend_display_stale(_backend_displays.get(sid, ""), desktop_identity())):
                     continue
-            yield backend
+            try:
+                yield backend
+            finally:
+                with _backend_lock:
+                    if _backends.get(sid) is backend:  # the idle countdown starts when the call ends
+                        _backend_last_used[sid] = time.monotonic()
             return
 
 
@@ -265,6 +281,74 @@ def release_computer_use_session(session_id: str) -> bool:
     _stop_backend(backend, call_lock,
                   lambda e: logger.debug("computer_use backend release failed for session %s", sid, exc_info=True))
     return True
+
+def _idle_release_seconds() -> float:
+    """``computer_use.idle_release_seconds`` (default 900); 0 or negative disables the reaper. Unreadable
+    config keeps the default: an idle driver is never worth keeping because config failed to load."""
+    try:
+        from hermes_cli.config import load_config_readonly
+        raw = ((load_config_readonly() or {}).get("computer_use") or {}).get(
+            "idle_release_seconds", _IDLE_RELEASE_DEFAULT_SECONDS)
+        return float(raw)
+    except (ImportError, OSError, ValueError, TypeError, AttributeError):  # keep the default on a bad config
+        return float(_IDLE_RELEASE_DEFAULT_SECONDS)
+
+
+def release_idle_computer_use_backends(idle_seconds: Optional[float] = None, *, now: Optional[float] = None) -> int:
+    """Release every cached backend unused for more than ``idle_seconds`` (default: config). Returns the
+    number released. A backend whose call lock is held (an action in flight, or a caller queued on it) is
+    busy and skipped; staleness is re-checked under that lock, so a call that slipped in first wins. The
+    next computer_use call in a released session starts a fresh cua-driver, exactly as after
+    ``release_computer_use_session``."""
+    limit = _idle_release_seconds() if idle_seconds is None else float(idle_seconds)
+    if limit <= 0:
+        return 0
+    now = time.monotonic() if now is None else now
+    with _backend_lock:
+        candidates = [(sid, _backends[sid], _backend_call_locks.get(sid)) for sid, last in _backend_last_used.items()
+                      if now - last > limit and sid in _backends]
+    released = 0
+    for sid, backend, call_lock in candidates:
+        if call_lock is not None and not call_lock.acquire(blocking=False):
+            continue
+        try:
+            with _backend_lock:
+                last = _backend_last_used.get(sid)
+                if _backends.get(sid) is not backend or last is None or now - last <= limit:
+                    continue
+                detached, lock = _detach_locked(sid)
+            if detached is None:
+                continue
+            _reset_screenshot_dedup(sid)
+            _stop_backend(detached, lock, lambda e: logger.debug("computer_use idle release failed for %s", sid,
+                                                                 exc_info=True))
+            released += 1
+            logger.info("computer_use: released idle cua-driver session %s (unused > %ds)", sid or "<default>",
+                        int(limit))
+        finally:
+            if call_lock is not None:
+                call_lock.release()
+    return released
+
+
+def _idle_reaper_loop() -> None:
+    while True:
+        time.sleep(_IDLE_SWEEP_INTERVAL_SECONDS)
+        try:
+            release_idle_computer_use_backends()
+        except Exception:  # pragma: no cover - the sweep must never kill the thread
+            logger.debug("computer_use idle sweep failed", exc_info=True)
+
+
+def _ensure_idle_reaper() -> None:
+    """Start the daemon sweep on first backend install (caller holds ``_backend_lock``)."""
+    global _idle_reaper_thread
+    if _idle_reaper_thread is None or not _idle_reaper_thread.is_alive():
+        # health: allow HX012 -- process-wide janitor over every profile's sessions; binding one caller's scope would be wrong
+        _idle_reaper_thread = threading.Thread(target=_idle_reaper_loop, name="computer-use-idle-reaper",
+                                               daemon=True)
+        _idle_reaper_thread.start()
+
 
 @atexit.register
 def _shutdown_backend_atexit() -> None:
@@ -283,6 +367,7 @@ def _shutdown_backend_atexit() -> None:
             unique.setdefault(id(_backend), (_backend, _backend_call_locks.get("")))
         _backend = None
         _backends.clear(), _backend_call_locks.clear(), _backend_permission_modes.clear(), _backend_displays.clear()
+        _backend_last_used.clear()
     with _approval_lock:
         _escalation_warned.clear()
     for backend, call_lock in unique.values():
