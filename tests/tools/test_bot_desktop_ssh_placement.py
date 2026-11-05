@@ -427,7 +427,7 @@ def test_browser_profile_on_the_desktop_host_is_owner_only(monkeypatch, offline_
     monkeypatch.setattr(streams, "run_in", _run_in)
     udd = "/home/agent-a/.hermes/bot-desktop/browser-profile"
     browser_session_sandbox._start_chromium(env, None, "/opt/chrome", udd, {"DISPLAY": ":31"})
-    script = scripts[0]
+    script = next(s for s in scripts if "mkdir -p" in s)  # the sandbox probe may run first
     assert f"(umask 077 && mkdir -p {udd})" in script
     assert f"chmod go-rwx {udd} /home/agent-a/.hermes/bot-desktop" in script
 

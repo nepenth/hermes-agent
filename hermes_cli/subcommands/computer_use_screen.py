@@ -25,8 +25,13 @@ def _screen_status(args) -> int:
     if st.running:
         holder = lease.public_view(lease.get())
         who = f"human (viewer {holder['viewer_hash']})" if holder["holder"] == lease.HUMAN else "agent"
-        print(f"Bot Desktop [{st.profile}]: running on DISPLAY {st.display} ({st.geometry}), pid {st.pid}")
-        print(f"  control: {who}   rfb socket: {st.socket}")
+        if st.placement == "gateway":
+            print(f"Bot Desktop [{st.profile}]: running on DISPLAY {st.display} ({st.geometry}), pid {st.pid}")
+            print(f"  control: {who}   rfb socket: {st.socket}")
+        else:
+            # The launcher and its socket live inside the sandbox / on the desktop host: say where, not "None".
+            print(f"Bot Desktop [{st.profile}]: running on DISPLAY {st.display} ({st.geometry}) in {st.placement}")
+            print(f"  control: {who}")
         print("  View it: Hermes Desktop → Bots → this bot → Screen")
         return 0
     if st.blocker:
