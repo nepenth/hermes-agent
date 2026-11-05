@@ -122,6 +122,12 @@ def _cu_perms_grant(args) -> None:
     sys.exit(request_permissions_grant())
 
 
+def _cu_handoff_serve(args) -> None:
+    from hermes_cli.handoff_server import serve
+
+    serve(host=getattr(args, "host", None), port=getattr(args, "port", None))
+
+
 def build_computer_use_parser(subparsers) -> None:
     """Attach the ``computer-use`` subcommand to ``subparsers``."""
     computer_use_parser = subparsers.add_parser(
@@ -184,6 +190,12 @@ def build_computer_use_parser(subparsers) -> None:
     from hermes_cli.subcommands.computer_use_screen import build_screen_parser
     build_screen_parser(computer_use_sub, add_json_flag)
 
+    handoff_server = computer_use_sub.add_parser(
+        "handoff-serve", help="Serve the secure browser viewer for Bot Desktop handoff links")
+    handoff_server.add_argument("--host", default=None, help="Bind address (defaults to bot_desktop.handoff.bind_host)")
+    handoff_server.add_argument("--port", type=int, default=None,
+                                 help="Bind port (defaults to bot_desktop.handoff.port)")
+
     def _cu_screen(args):
         return args.screen_func(args)
 
@@ -194,7 +206,8 @@ def build_computer_use_parser(subparsers) -> None:
         computer_use_perms.print_help()
 
     _actions = {"install": _cu_install, "status": _cu_status, "doctor": _cu_doctor,
-                "permissions": _cu_permissions, "screen": _cu_screen}
+                "permissions": _cu_permissions, "screen": _cu_screen,
+                "handoff-serve": _cu_handoff_serve}
 
     def cmd_computer_use(args):
         handler = _actions.get(getattr(args, "computer_use_action", None))
