@@ -94,7 +94,7 @@ TOOLSETS = {
         "Background desktop control via cua-driver (macOS/Windows/Linux) — "
         "screenshots, mouse, keyboard, scroll, drag. Does NOT steal the user's cursor "
         "or keyboard focus. Works with any tool-capable model.",
-        ["computer_use"],
+        ["computer_use", "desktop_handoff"],
     ),
     "terminal": _ts("Terminal/command execution and process management tools", ["terminal", "process_manage"]),
     "skills": _ts(
