@@ -917,3 +917,12 @@ Dangerous-command approvals on Matrix use standard `m.room.message` text/HTML pl
 - Approvals raised by `/background` tasks are posted to the room the task was started from.
 
 Summary routing can be disabled or constrained (including local-only) via the Matrix approval summary config.
+
+## Question cards
+
+When the agent asks a clarifying question, Matrix posts it as a question card: the same plain-text prompt as before (so any client works), a compact HTML rendering, and a structured `org.hermes.clarify` content key that clients can use to draw native controls.
+
+- Single-choice questions get one keycap reaction per option (`1️⃣`–`4️⃣`); every card also gets `⏭️` to skip. Multiple-choice and open-ended questions get only `⏭️`.
+- Replying to the card answers it the same way a typed answer does: a number, several numbers (`1, 3`) for multiple choice, the option text, `skip`, or your own answer. A plain message that is not a reply still works.
+- When someone asked the question, only they can answer it by reaction or reply (the same rule as approval cards).
+- Once answered, skipped, timed out or cancelled, the card is replaced (`m.replace`) with the question and its outcome, and the bot's reactions are withdrawn.

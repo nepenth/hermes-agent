@@ -639,9 +639,14 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
         session_key = ctx.session_key or ""
         clarify_id = uuid.uuid4().hex[:10]
         choices = list(choices) if choices else None
+        metadata = ctx._status_thread_metadata
+        requester = getattr(getattr(ctx, "source", None), "user_id", None)
+        if requester:
+            # Reaction-card adapters (Matrix) accept answers only from the requester.
+            metadata = {**(metadata or {}), "requester_user_id": str(requester)}
         send_kwargs = dict(
             chat_id=ctx._status_chat_id, question=question, choices=choices, clarify_id=clarify_id,
-            session_key=session_key, metadata=ctx._status_thread_metadata,
+            session_key=session_key, metadata=metadata,
         )
 
         def _text_fallback():
