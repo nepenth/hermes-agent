@@ -180,3 +180,69 @@ def test_websocket_closes_4001_when_screen_host_unavailable(monkeypatch):
         with client.websocket_connect("/ws", headers={"Origin": _ORIGIN, "Cookie": f"hermes_handoff={secret}"}) as ws:
             ws.receive_bytes()
     assert closed.value.code == 4001
+
+
+def test_wake_endpoint_starts_screen_and_reports_failure(monkeypatch):
+    import hermes_cli.handoff_server as server
+
+    client = _client()
+    _, token = handoff.mint("Complete login", link_ttl=60, session_max=120)
+    secret = _redeem(client, token).cookies["hermes_handoff"]
+    client.cookies.clear()
+    client.cookies.set("hermes_handoff", secret)
+    calls = []
+    monkeypatch.setattr(server, "_wake_screen", lambda home: calls.append(home))
+    ok = client.post("/api/wake", json={}, headers={"Origin": _ORIGIN})
+    assert ok.status_code == 200 and ok.json() == {"desktop": "running"}
+    assert len(calls) == 1
+
+    def boom(home):
+        raise RuntimeError("desktop host unreachable")
+
+    monkeypatch.setattr(server, "_wake_screen", boom)
+    failed = client.post("/api/wake", json={}, headers={"Origin": _ORIGIN})
+    assert failed.status_code == 503
+    assert "could not be started" in failed.json()["error"]
+
+
+def test_wake_endpoint_requires_a_session():
+    client = _client()
+    assert client.post("/api/wake", json={}, headers={"Origin": _ORIGIN}).status_code == 401
+
+
+def test_wake_screen_starts_an_idle_stopped_off_gateway_screen(monkeypatch, tmp_path):
+    import hermes_cli.handoff_server as server
+    from tools.bot_desktop import runtime
+
+    events = []
+    monkeypatch.setattr(runtime, "in_sandbox", lambda: True)
+    monkeypatch.setattr(runtime, "sandbox_screen_running", lambda: False)
+    monkeypatch.setattr(runtime, "start", lambda: events.append("start"))
+    monkeypatch.setattr(runtime, "touch_activity", lambda: events.append("touch"))
+    server._wake_screen(str(tmp_path))
+    assert events == ["start", "touch"]
+
+
+def test_wake_screen_leaves_a_running_screen_alone(monkeypatch, tmp_path):
+    import hermes_cli.handoff_server as server
+    from tools.bot_desktop import runtime
+
+    events = []
+    monkeypatch.setattr(runtime, "in_sandbox", lambda: True)
+    monkeypatch.setattr(runtime, "sandbox_screen_running", lambda: True)
+    monkeypatch.setattr(runtime, "start", lambda: events.append("start"))
+    monkeypatch.setattr(runtime, "touch_activity", lambda: events.append("touch"))
+    server._wake_screen(str(tmp_path))
+    assert events == ["touch"]
+
+
+def test_attach_wakes_before_attaching(monkeypatch, tmp_path):
+    import hermes_cli.handoff_server as server
+    from tools.bot_desktop import runtime
+
+    order = []
+    monkeypatch.setattr(server, "_wake_screen", lambda home: order.append("wake"))
+    monkeypatch.setattr(runtime, "sandbox_screen_running", lambda: True)
+    monkeypatch.setattr(runtime, "_screen_env", lambda create: order.append(("env", create)))
+    server._attach_screen_host(str(tmp_path))
+    assert order == ["wake", ("env", True)]
