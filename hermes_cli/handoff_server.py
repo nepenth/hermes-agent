@@ -172,11 +172,36 @@ async def _ticker(app: FastAPI) -> None:
         await asyncio.sleep(2)
 
 
-def _attach_screen_host(home: str) -> None:
-    """Open (or reuse) this process's connection to the host running the profile's screen."""
+def _wake_screen(home: str) -> None:
+    """Bring the profile's screen up when it is down (it idle-stops after ``bot_desktop.idle_stop_minutes``).
+
+    A human opening a handoff link is a use of the screen like any computer_use action: the link may be
+    minted, or reopened, after the screen stopped for idleness, and a viewer that only refused would show
+    the human a dead page. Off-gateway placements start unconditionally (as the tool boundary does); a
+    gateway-hosted screen follows ``bot_desktop.auto_start``. Raises ``RuntimeError`` naming the blocker.
+    Stamps activity so the idle stop does not take the screen between this call and the viewer attaching."""
     from hermes_constants import reset_hermes_home_override, set_hermes_home_override
     from tools.bot_desktop import runtime
 
+    token = set_hermes_home_override(Path(home))
+    try:
+        if runtime.in_sandbox():
+            if not runtime.sandbox_screen_running():
+                logger.info("bot-desktop handoff: waking the stopped screen for %s", home)
+                runtime.start()
+        else:
+            runtime.ensure_started_for_tool()
+        runtime.touch_activity()
+    finally:
+        reset_hermes_home_override(token)
+
+
+def _attach_screen_host(home: str) -> None:
+    """Wake the profile's screen if needed, then open (or reuse) this process's connection to its host."""
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from tools.bot_desktop import runtime
+
+    _wake_screen(home)
     token = set_hermes_home_override(Path(home))
     try:
         if runtime.sandbox_screen_running():
@@ -299,6 +324,18 @@ def create_app(config: Optional[dict] = None, *, profile_home: Optional[str | Pa
         if error:
             return error
         return JSONResponse(_session_payload(app.state.config, record))
+
+    @app.post("/api/wake")
+    def wake(request: Request):
+        record, error = _authorized(request)
+        if error:
+            return error
+        try:
+            _wake_screen(home)
+        except (RuntimeError, OSError) as exc:
+            logger.warning("bot-desktop handoff could not start the screen id=%s: %s", (record or {}).get("id"), exc)
+            return _error(503, "The agent's desktop could not be started. Ask the agent to try again.")
+        return JSONResponse({"desktop": "running"})
 
     @app.post("/api/takeover")
     def takeover(request: Request):
