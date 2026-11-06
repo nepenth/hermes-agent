@@ -10,6 +10,13 @@ let rfb = null;
 let holding = false;
 let countdown = null;
 let handedBack = false;
+let retries = 0;
+const MAX_RETRIES = 3;
+
+async function wakeDesktop() {
+  show("Starting the agent's desktop…");
+  await api("api/wake", {});
+}
 
 function show(text) {
   message.textContent = text;
@@ -59,6 +66,7 @@ function connectScreen() {
   rfb.resizeSession = false;
   rfb.viewOnly = !holding;
   rfb.addEventListener("connect", async () => {
+    retries = 0;
     hideMessage();
     // A reload or second tab shares this handoff's viewer id; the closing socket may have released
     // the lease. Re-assert control when this page believes it holds it.
@@ -68,8 +76,22 @@ function connectScreen() {
   });
   rfb.addEventListener("disconnect", (event) => {
     if (handedBack) return;
-    if (event.detail?.clean) show("The desktop connection closed.");
-    else show("The desktop connection was lost. Reload this page to reconnect.");
+    if (event.detail?.clean) {
+      show("The desktop connection closed.");
+      return;
+    }
+    // The screen may have stopped (idle) or the agent host restarted: wake it and reconnect a few times
+    // before asking the human to do anything.
+    if (retries < MAX_RETRIES) {
+      retries += 1;
+      show(`Reconnecting to the agent's desktop (attempt ${retries} of ${MAX_RETRIES})…`);
+      setTimeout(async () => {
+        try { await wakeDesktop(); } catch (error) { show(error.message); return; }
+        connectScreen();
+      }, 1500 * retries);
+      return;
+    }
+    show("Could not reach the agent's desktop. Reload this page to try again.");
   });
 }
 
@@ -82,6 +104,7 @@ async function start() {
     document.getElementById("agent").textContent = session.agent;
     document.getElementById("reason").textContent = session.reason;
     startCountdown(session.session_deadline);
+    await wakeDesktop();
     await api("api/takeover", {});
     setHolding(true);
     connectScreen();
