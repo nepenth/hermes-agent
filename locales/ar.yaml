@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "لا يمكن استخدام عناصر التحكم هذه إلا لمستخدم Matrix مصرّح له."
       not_requester: "لا يمكن استخدام عناصر التحكم هذه إلا للمستخدم الذي طلب هذا الإجراء."
+    clarify:
+      skipped: "⏭️ تم التخطي"
+      expired: "⌛ لا توجد إجابة"
+      cancelled: "↩️ أُلغي"
   feishu:
     clarify:
       title: "Hermes يحتاج إلى ردّك"

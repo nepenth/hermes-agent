@@ -1429,6 +1429,10 @@ platform:
     reaction:
       unauthorized: "Only an authorized Matrix user can use these controls."
       not_requester: "Only the user who requested this action can use these controls."
+    clarify:
+      skipped: "⏭️ Skipped"
+      expired: "⌛ No answer"
+      cancelled: "↩️ Cancelled"
 
   feishu:
     clarify:

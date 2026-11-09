@@ -924,5 +924,5 @@ When the agent asks a clarifying question, Matrix posts it as a question card: t
 
 - Single-choice questions get one keycap reaction per option (`1️⃣`–`4️⃣`); every card also gets `⏭️` to skip. Multiple-choice and open-ended questions get only `⏭️`.
 - Replying to the card answers it the same way a typed answer does: a number, several numbers (`1, 3`) for multiple choice, the option text, `skip`, or your own answer. A plain message that is not a reply still works.
-- When someone asked the question, only they can answer it by reaction or reply (the same rule as approval cards).
-- Once answered, skipped, timed out or cancelled, the card is replaced (`m.replace`) with the question and its outcome, and the bot's reactions are withdrawn.
+- When someone asked the question, only they can answer it by reaction or reply (the same rule as approval cards). Someone else's reaction gets a short notice; someone else's reply is handled as an ordinary message.
+- Once answered, skipped, timed out or cancelled, the card is replaced (`m.replace`) with the question and its outcome (long free-text answers are shortened on the card), and the bot's reactions are withdrawn. A reaction on a card that no longer takes answers gets a short notice.

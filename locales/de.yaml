@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "Nur ein autorisierter Matrix-Benutzer kann diese Steuerelemente verwenden."
       not_requester: "Nur der Benutzer, der diese Aktion angefordert hat, kann diese Steuerelemente verwenden."
+    clarify:
+      skipped: "⏭️ Übersprungen"
+      expired: "⌛ Keine Antwort"
+      cancelled: "↩️ Abgebrochen"
   feishu:
     clarify:
       title: "Hermes benötigt Ihre Eingabe"
