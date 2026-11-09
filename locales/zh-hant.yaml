@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "只有已授權的 Matrix 使用者可以使用這些控制項。"
       not_requester: "只有提出此操作的使用者可以使用這些控制項。"
+    clarify:
+      skipped: "⏭️ 已略過"
+      expired: "⌛ 未回答"
+      cancelled: "↩️ 已取消"
   feishu:
     clarify:
       title: "Hermes 需要你的輸入"

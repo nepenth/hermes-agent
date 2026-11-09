@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "Bu kontrolleri yalnızca yetkili bir Matrix kullanıcısı kullanabilir."
       not_requester: "Bu kontrolleri yalnızca bu işlemi isteyen kullanıcı kullanabilir."
+    clarify:
+      skipped: "⏭️ Atlandı"
+      expired: "⌛ Yanıt yok"
+      cancelled: "↩️ İptal edildi"
   feishu:
     clarify:
       title: "Hermes girdinize ihtiyaç duyuyor"

@@ -1387,6 +1387,10 @@ platform:
     reaction:
       unauthorized: "Ezeket a vezérlőket csak jogosult Matrix-felhasználó használhatja."
       not_requester: "Ezeket a vezérlőket csak az a felhasználó használhatja, aki a műveletet kérte."
+    clarify:
+      skipped: "⏭️ Kihagyva"
+      expired: "⌛ Nincs válasz"
+      cancelled: "↩️ Megszakítva"
   feishu:
     clarify:
       title: "A Hermes a válaszodra vár"

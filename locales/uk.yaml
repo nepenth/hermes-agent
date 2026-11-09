@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "Ці елементи керування доступні лише авторизованому користувачу Matrix."
       not_requester: "Ці елементи керування доступні лише користувачу, який запросив цю дію."
+    clarify:
+      skipped: "⏭️ Пропущено"
+      expired: "⌛ Немає відповіді"
+      cancelled: "↩️ Скасовано"
   feishu:
     clarify:
       title: "Hermes потребує вашої відповіді"

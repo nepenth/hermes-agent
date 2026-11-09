@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "Ní féidir ach le húsáideoir Matrix údaraithe na rialtáin seo a úsáid."
       not_requester: "Ní féidir ach leis an úsáideoir a d'iarr an gníomh seo na rialtáin seo a úsáid."
+    clarify:
+      skipped: "⏭️ Scipeáilte"
+      expired: "⌛ Gan freagra"
+      cancelled: "↩️ Cealaithe"
   feishu:
     clarify:
       title: "Tá d'ionchur de dhíth ar Hermes"

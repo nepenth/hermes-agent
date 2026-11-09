@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "권한이 있는 Matrix 사용자만 이 컨트롤을 사용할 수 있어요."
       not_requester: "이 작업을 요청한 사용자만 이 컨트롤을 사용할 수 있어요."
+    clarify:
+      skipped: "⏭️ 건너뜀"
+      expired: "⌛ 응답 없음"
+      cancelled: "↩️ 취소됨"
   feishu:
     clarify:
       title: "Hermes가 입력을 기다리고 있어요"

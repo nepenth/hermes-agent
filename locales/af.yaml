@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "Slegs 'n gemagtigde Matrix-gebruiker kan hierdie kontroles gebruik."
       not_requester: "Slegs die gebruiker wat hierdie aksie aangevra het, kan hierdie kontroles gebruik."
+    clarify:
+      skipped: "⏭️ Oorgeslaan"
+      expired: "⌛ Geen antwoord"
+      cancelled: "↩️ Gekanselleer"
   feishu:
     clarify:
       title: "Hermes het jou insette nodig"
