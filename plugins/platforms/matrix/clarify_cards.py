@@ -30,11 +30,22 @@ STATE_EXPIRED = "expired"
 STATE_CANCELLED = "cancelled"
 TERMINAL_STATES = frozenset({STATE_ANSWERED, STATE_SKIPPED, STATE_EXPIRED, STATE_CANCELLED})
 
-_TERMINAL_LINES = {
-    STATE_SKIPPED: "⏭️ Skipped",
-    STATE_EXPIRED: "⌛ No answer",
-    STATE_CANCELLED: "Cancelled",
+# Outcome line per terminal state without an answer (``platform.matrix.clarify.*``).
+_TERMINAL_KEYS = {
+    STATE_SKIPPED: "platform.matrix.clarify.skipped",
+    STATE_EXPIRED: "platform.matrix.clarify.expired",
+    STATE_CANCELLED: "platform.matrix.clarify.cancelled",
 }
+# A free-text answer is echoed on the settled card; the agent already has it in full. The cap keeps
+# the terminal edit inside the transport limit (an oversized edit is refused on every attempt).
+ANSWER_DISPLAY_MAX = 500
+
+
+def cap_answer(answer: Optional[str]) -> tuple[Optional[str], bool]:
+    """``(answer, truncated)`` with the answer cut to ``ANSWER_DISPLAY_MAX`` characters."""
+    if answer is None or len(answer) <= ANSWER_DISPLAY_MAX:
+        return answer, False
+    return answer[: ANSWER_DISPLAY_MAX - 1] + "…", True
 
 
 def normalize_reaction_key(key: str) -> str:
@@ -95,7 +106,10 @@ def settled_payload(pending: dict[str, Any], state: str, answer: Optional[str]) 
     """The pending payload moved to a terminal ``state`` with its ``answer`` (None unless answered)."""
     payload = dict(pending)
     payload["state"] = state
-    payload["answer"] = answer if state == STATE_ANSWERED else None
+    shown, truncated = cap_answer(answer if state == STATE_ANSWERED else None)
+    payload["answer"] = shown
+    if truncated:
+        payload["answer_truncated"] = True
     return payload
 
 
@@ -136,7 +150,12 @@ def display_answer(response: Optional[str], multi_select: bool) -> str:
 
 def format_settled(question: str, state: str, answer: Optional[str]) -> tuple[str, str]:
     """``(body, formatted_body)`` for the terminal edit: the question and one outcome line."""
-    outcome = f"✅ {answer}" if state == STATE_ANSWERED else _TERMINAL_LINES.get(state, _TERMINAL_LINES[STATE_EXPIRED])
+    from agent.i18n import t
+
+    if state == STATE_ANSWERED:
+        outcome = f"✅ {cap_answer(answer)[0]}"
+    else:
+        outcome = t(_TERMINAL_KEYS.get(state, _TERMINAL_KEYS[STATE_EXPIRED]))
     body = f"❓ {question}\n{outcome}"
     question_html = html.escape(question).replace("\n", "<br/>")
     formatted = f"<p><strong>❓ {question_html}</strong><br/>{html.escape(outcome)}</p>"
