@@ -350,7 +350,7 @@ class TestRetire:
         entry.event.set()  # wait_for_response timed out: no response
         await adapter.retire_clarify_card("cid1", t("gateway.clarify.expired"))
         new = _last_edit(adapter)
-        assert new["body"] == "❓ Deploy where?\n⌛ No answer"
+        assert new["body"] == f"❓ Deploy where?\n{t('platform.matrix.clarify.expired')}"
         assert new["org.hermes.clarify"]["state"] == "expired"
         assert new["org.hermes.clarify"]["answer"] is None
         assert adapter._schedule_reaction_redaction.call_count == 4
@@ -365,7 +365,7 @@ class TestRetire:
         cg.resolve_gateway_clarify("cid1", cg.CANCELLED)
         await adapter.retire_clarify_card("cid1", t("gateway.clarify.cancelled"))
         new = _last_edit(adapter)
-        assert new["body"] == "❓ Deploy where?\nCancelled"
+        assert new["body"] == f"❓ Deploy where?\n{t('platform.matrix.clarify.cancelled')}"
         assert new["org.hermes.clarify"]["state"] == "cancelled"
 
     @pytest.mark.asyncio
@@ -418,3 +418,149 @@ class TestExtraContentPlumbing:
         adapter = _adapter(monkeypatch)
         await adapter.send(ROOM, "hello")
         assert "org.hermes.clarify" not in adapter.sent[0]
+
+    @pytest.mark.asyncio
+    async def test_extra_content_ignores_spec_keys(self, monkeypatch):
+        """``m.*`` keys (relations, replacements, mentions) never ride in through extra content."""
+        adapter = _adapter(monkeypatch)
+        await adapter.send(ROOM, "hello", metadata={"matrix_extra_content": {
+            "m.relates_to": {"rel_type": "m.replace", "event_id": "$victim"},
+            "m.new_content": {"body": "x"}, "m.mentions": {"room": True}, "org.x": 1}})
+        sent = adapter.sent[0]
+        assert "m.new_content" not in sent and sent.get("m.relates_to") is None
+        assert sent.get("m.mentions") != {"room": True} and sent["org.x"] == 1
+
+
+class TestSettleRobustness:
+    """Approval-card parity: the card stays answerable-looking only while it is registered."""
+
+    @pytest.mark.asyncio
+    async def test_failed_terminal_edit_keeps_card_and_a_later_retire_retries(self, monkeypatch):
+        from tools import clarify_gateway as cg
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        cg.resolve_gateway_clarify("cid1", "Production")
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        failing = AsyncMock(return_value=types.SimpleNamespace(success=False, error="boom", message_id=None))
+        real_edit = adapter.edit_message
+        adapter.edit_message = failing
+        await adapter.retire_clarify_card("cid1", "")
+        assert failing.await_count == 3
+        assert "$card1" in adapter._clarify_cards_by_event and "cid1" in adapter._clarify_cards_by_id
+        assert adapter._schedule_reaction_redaction.call_count == 0  # controls stay until the edit lands
+        adapter.edit_message = real_edit
+        await adapter.retire_clarify_card("cid1", "")
+        assert _last_edit(adapter)["org.hermes.clarify"]["answer"] == "Production"
+        assert "$card1" not in adapter._clarify_cards_by_event
+        assert adapter._schedule_reaction_redaction.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_raising_edit_is_logged_and_retryable(self, monkeypatch):
+        from tools import clarify_gateway as cg
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        cg.resolve_gateway_clarify("cid1", cg.SKIPPED)
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        adapter.edit_message = AsyncMock(side_effect=RuntimeError("network"))
+        assert await adapter._settle_clarify_card(adapter._clarify_cards_by_id["cid1"]) is False
+        assert adapter._clarify_cards_by_id["cid1"].state == "pending"
+        assert adapter._clarify_cards_by_id["cid1"].terminal == ("skipped", None)
+
+    @pytest.mark.asyncio
+    async def test_reaction_on_card_with_failed_edit_retries_the_edit(self, monkeypatch):
+        from tools import clarify_gateway as cg
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        cg.resolve_gateway_clarify("cid1", "Both")
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        real_edit = adapter.edit_message
+        adapter.edit_message = AsyncMock(return_value=types.SimpleNamespace(success=False, error="x", message_id=None))
+        await adapter.retire_clarify_card("cid1", "")
+        adapter.edit_message = real_edit
+        assert await adapter._handle_clarify_reaction(ROOM, "$card1", "1️⃣", OWNER) is True
+        assert _last_edit(adapter)["org.hermes.clarify"]["answer"] == "Both"  # the decided outcome, not 1️⃣
+
+    @pytest.mark.asyncio
+    async def test_reply_to_card_with_failed_edit_retries_and_routes(self, monkeypatch):
+        from tools import clarify_gateway as cg
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        cg.resolve_gateway_clarify("cid1", "Both")
+        monkeypatch.setattr("asyncio.sleep", AsyncMock())
+        real_edit = adapter.edit_message
+        adapter.edit_message = AsyncMock(return_value=types.SimpleNamespace(success=False, error="x", message_id=None))
+        await adapter.retire_clarify_card("cid1", "")
+        adapter.edit_message = real_edit
+        handled = await adapter._answer_clarify_reply(
+            ROOM, OWNER, "$reply", "2", {"m.in_reply_to": {"event_id": "$card1"}})
+        assert handled is False  # not an answer any more: routes as an ordinary message
+        assert _last_edit(adapter)["org.hermes.clarify"]["answer"] == "Both"
+
+    @pytest.mark.asyncio
+    async def test_seeded_reaction_on_settled_card_gets_expired_notice(self, monkeypatch):
+        from agent.i18n import t
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        await adapter._handle_clarify_reaction(ROOM, "$card1", "2️⃣", OWNER)
+        adapter._send_invalid_reaction_feedback.reset_mock()
+        assert await adapter._handle_clarify_reaction(ROOM, "$card1", "1⃣", OWNER) is True  # no VS16
+        adapter._send_invalid_reaction_feedback.assert_awaited_once_with(ROOM, "$card1", t("gateway.clarify.expired"))
+
+    @pytest.mark.asyncio
+    async def test_other_emoji_on_settled_card_stays_quiet(self, monkeypatch):
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        await adapter._handle_clarify_reaction(ROOM, "$card1", "2️⃣", OWNER)
+        adapter._send_invalid_reaction_feedback.reset_mock()
+        assert await adapter._handle_clarify_reaction(ROOM, "$card1", "👍", OWNER) is False
+        adapter._send_invalid_reaction_feedback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_long_free_text_answer_is_capped_and_settles(self, monkeypatch):
+        from plugins.platforms.matrix import clarify_cards as cc
+        from tools import clarify_gateway as cg
+        adapter = _adapter(monkeypatch)
+        _register(choices=None)
+        await _send_card(adapter, choices=None)
+        long_answer = "x" * (adapter.max_message_length + 10)
+        cg.resolve_gateway_clarify("cid1", long_answer)
+        await adapter.retire_clarify_card("cid1", "")
+        new = _last_edit(adapter)
+        payload = new["org.hermes.clarify"]
+        assert len(payload["answer"]) == cc.ANSWER_DISPLAY_MAX and payload["answer"].endswith("…")
+        assert payload["answer_truncated"] is True
+        assert len(new["body"]) < adapter.max_message_length
+        assert "$card1" not in adapter._clarify_cards_by_event
+
+    @pytest.mark.asyncio
+    async def test_cancelled_outcome_comes_from_the_entry_not_the_notice(self, monkeypatch):
+        from tools import clarify_gateway as cg
+        adapter = _adapter(monkeypatch)
+        _register()
+        await _send_card(adapter)
+        assert cg.clear_session("sess") == 1
+        await adapter.retire_clarify_card("cid1", "any notice text")
+        assert _last_edit(adapter)["org.hermes.clarify"]["state"] == "cancelled"
+
+
+class TestClarifyGatewaySeams:
+    def test_get_entry_returns_answered_entries(self):
+        from tools import clarify_gateway as cg
+        entry = _register()
+        assert cg.get_entry("cid1") is entry and cg.get_pending("cid1") is entry
+        cg.resolve_gateway_clarify("cid1", "Both")
+        assert cg.get_entry("cid1") is entry and cg.get_pending("cid1") is None
+        assert cg.get_entry("nope") is None
+
+    def test_coerce_text_response_matches_typed_answers(self):
+        from tools import clarify_gateway as cg
+        entry = _register()
+        assert cg.coerce_text_response(entry, "2") == "Production"
+        assert cg.coerce_text_response(entry, "skip") == cg.SKIPPED
+        assert cg.coerce_text_response(entry, "9") is None

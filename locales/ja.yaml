@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "これらの操作は、認可された Matrix ユーザーのみが使用できます。"
       not_requester: "これらの操作は、このアクションをリクエストしたユーザーのみが使用できます。"
+    clarify:
+      skipped: "⏭️ スキップ済み"
+      expired: "⌛ 回答なし"
+      cancelled: "↩️ キャンセル済み"
   feishu:
     clarify:
       title: "Hermes が入力を求めています"

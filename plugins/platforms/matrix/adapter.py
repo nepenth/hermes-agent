@@ -426,6 +426,7 @@ class _MatrixClarifyCard:
     requester_user_id: str | None = None
     state: str = "pending"
     bot_reaction_events: dict[str, str] = field(default_factory=dict)
+    terminal: tuple[str, str | None] | None = None  # first decided (state, answer); retries reuse it
 
 
 # The homeserver rejects an event whose JSON exceeds 65,536 bytes (M_TOO_LARGE). Event content stays
@@ -952,6 +953,7 @@ class MatrixAdapter(BasePlatformAdapter):
         self._choice_picker_prompts_by_event: dict[str, _MatrixPickerPrompt] = {}
         self._clarify_cards_by_event: dict[str, _MatrixClarifyCard] = {}
         self._clarify_cards_by_id: dict[str, _MatrixClarifyCard] = {}
+        self._retired_clarify_cards: dict[str, None] = {}  # event ids of settled cards (bounded)
         # Authz lists: scoped env → this profile's YAML (``allowed_users`` / ``ignore_user_patterns``,
         # seeded by the bridge) → empty. Under multiplex os.environ is the DEFAULT profile's allowlist,
         # which must not decide who approves tool calls on a secondary bot.
@@ -1554,12 +1556,14 @@ class MatrixAdapter(BasePlatformAdapter):
 
     @staticmethod
     def _apply_extra_content(content: dict, metadata: Optional[dict]) -> None:
-        """Merge ``metadata["matrix_extra_content"]`` (namespaced custom keys such as
-        ``org.hermes.clarify``) into one event's content; standard keys are never overwritten."""
+        """Merge ``metadata["matrix_extra_content"]`` (custom namespaced keys such as
+        ``org.hermes.clarify``) into one event's content. Spec keys (``m.*``: relations, mentions,
+        ``m.new_content``) are never accepted, and existing keys are never overwritten."""
         extra = (metadata or {}).get("matrix_extra_content")
         if isinstance(extra, dict):
             for key, value in extra.items():
-                if "." in str(key) and key not in content:
+                key = str(key)
+                if "." in key and not key.startswith("m.") and key not in content:
                     content[key] = value
 
     async def edit_message(self, chat_id: str, message_id: str, content: str, *, finalize: bool = False,
@@ -1909,8 +1913,7 @@ class MatrixAdapter(BasePlatformAdapter):
             return SendResult(success=False, error="Not connected")
         from plugins.platforms.matrix import clarify_cards as cc
         from tools import clarify_gateway as _cg
-        with _cg._lock:
-            entry = _cg._entries.get(clarify_id)
+        entry = _cg.get_entry(clarify_id)
         choices = list(choices) if choices else None
         multi_select = bool(getattr(entry, "multi_select", False)) and bool(choices)
         text = self._clarify_plain_text(question, choices, multi_select)
@@ -1957,21 +1960,24 @@ class MatrixAdapter(BasePlatformAdapter):
                 await self._settle_clarify_card(card)
         return result
 
-    def _forget_clarify_card(self, card: _MatrixClarifyCard) -> None:
+    def _forget_clarify_card(self, card: _MatrixClarifyCard, *, retired: bool = True) -> None:
         self._clarify_cards_by_event.pop(card.message_id, None)
         if self._clarify_cards_by_id.get(card.clarify_id) is card:
             self._clarify_cards_by_id.pop(card.clarify_id, None)
+        if retired:  # a later seeded reaction on this card is told it no longer takes answers
+            self._retired_clarify_cards[card.message_id] = None
+            while len(self._retired_clarify_cards) > self._CLARIFY_CARD_MAX:
+                self._retired_clarify_cards.pop(next(iter(self._retired_clarify_cards)))
 
     @staticmethod
-    def _clarify_outcome(card: _MatrixClarifyCard, notice: str = "") -> tuple[str, Optional[str]]:
-        """``(state, answer)`` from the gateway entry the card was rendered for."""
+    def _clarify_outcome(card: _MatrixClarifyCard) -> tuple[str, Optional[str]]:
+        """``(state, answer)`` from the gateway entry the card was rendered for. Every cancellation
+        path sets the ``CANCELLED`` sentinel on the entry; no response means it timed out."""
         from plugins.platforms.matrix import clarify_cards as cc
         from tools import clarify_gateway as _cg
         entry = card.entry
         response = getattr(entry, "response", None) if entry is not None and entry.event.is_set() else None
         if response is None:
-            if notice and notice == t("gateway.clarify.cancelled"):
-                return cc.STATE_CANCELLED, None
             return cc.STATE_EXPIRED, None
         if response == _cg.SKIPPED:
             return cc.STATE_SKIPPED, None
@@ -1981,16 +1987,19 @@ class MatrixAdapter(BasePlatformAdapter):
 
     async def _settle_clarify_card(
         self, card: _MatrixClarifyCard, state: Optional[str] = None, answer: Optional[str] = None,
-        *, notice: str = "", max_attempts: int = 3) -> bool:
-        """Edit the card to its terminal state (``m.replace``) and withdraw the seeded reactions."""
+        *, max_attempts: int = 3) -> bool:
+        """Edit the card to its terminal state (``m.replace``), then withdraw the seeded reactions.
+
+        The card stays registered until that edit lands (the approval-card rule): a card whose
+        edit failed goes back to pending with its decided outcome kept, so the next retire,
+        reaction or reply retries the same terminal edit instead of leaving a live-looking card."""
         from plugins.platforms.matrix import clarify_cards as cc
         if card.state != cc.STATE_PENDING:
             return False
-        if state is None:
-            state, answer = self._clarify_outcome(card, notice)
-        card.state = state  # claimed synchronously: one terminal edit per card
-        self._forget_clarify_card(card)
-        await self._redact_bot_approval_reactions(card.chat_id, card, "clarify settled")
+        if card.terminal is None:
+            card.terminal = (state, answer) if state is not None else self._clarify_outcome(card)
+        state, answer = card.terminal
+        card.state = state  # claimed synchronously: one terminal edit in flight per card
         body, html_body = cc.format_settled(card.question, state, answer)
         meta = {"matrix_formatted_body": html_body,
                 "matrix_extra_content": {cc.CLARIFY_CONTENT_KEY: cc.settled_payload(card.payload, state, answer)}}
@@ -1998,14 +2007,19 @@ class MatrixAdapter(BasePlatformAdapter):
             try:
                 result = await self.edit_message(card.chat_id, card.message_id, body, metadata=meta)
             except asyncio.CancelledError:
+                card.state = cc.STATE_PENDING
                 raise
             except Exception as exc:
+                logger.warning("Matrix: clarify card edit raised (attempt %d/%d)", attempt, max_attempts, exc_info=True)
                 result = SendResult(success=False, error=str(exc))
             if result.success:
+                self._forget_clarify_card(card)
+                await self._redact_bot_approval_reactions(card.chat_id, card, "clarify settled")
                 return True
             logger.warning("Matrix: clarify card edit failed (attempt %d/%d): %s", attempt, max_attempts, result.error)
             if attempt < max_attempts:
                 await asyncio.sleep(min(0.5 * attempt, 2.0))
+        card.state = cc.STATE_PENDING  # still registered: the next interaction retries this edit
         return False
 
     async def retire_clarify_card(self, clarify_id: str, notice: str) -> None:
@@ -2014,7 +2028,7 @@ class MatrixAdapter(BasePlatformAdapter):
         card = self._clarify_cards_by_id.get(clarify_id)
         if card is None:
             return
-        await self._settle_clarify_card(card, notice=notice)
+        await self._settle_clarify_card(card)
 
     async def _handle_clarify_reaction(self, room_id: str, reacts_to: str, key: str, sender: str) -> bool:
         """A seeded keycap / ⏭️ on a pending clarify card answers it. True if the card was the target."""
@@ -2022,6 +2036,10 @@ class MatrixAdapter(BasePlatformAdapter):
         from tools import clarify_gateway as _cg
         card = self._clarify_cards_by_event.get(reacts_to)
         if card is None:
+            if reacts_to in self._retired_clarify_cards and cc.normalize_reaction_key(key) in (
+                    *cc.CLARIFY_CHOICE_REACTIONS, cc.CLARIFY_SKIP_REACTION):
+                await self._send_invalid_reaction_feedback(room_id, reacts_to, t("gateway.clarify.expired"))
+                return True
             return False
         if card.state != cc.STATE_PENDING or room_id != card.chat_id:
             return True
@@ -2064,8 +2082,10 @@ class MatrixAdapter(BasePlatformAdapter):
             return False  # a command, not an answer
         from tools import clarify_gateway as _cg
         if card.entry is None or _cg.get_pending(card.clarify_id) is not card.entry:
+            if card.terminal is not None:  # answered already; its terminal edit failed earlier
+                await self._settle_clarify_card(card)
             return False
-        value, _reason = _cg._coerce_text_response_detailed(card.entry, text)
+        value = _cg.coerce_text_response(card.entry, text)
         if value is None or not _cg.resolve_gateway_clarify(card.clarify_id, value):
             return False
         logger.info("Matrix: clarify %s answered by reply %s from %s", card.clarify_id, event_id, sender)

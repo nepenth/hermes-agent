@@ -1370,6 +1370,10 @@ platform:
     reaction:
       unauthorized: "Solo un utente Matrix autorizzato può usare questi controlli."
       not_requester: "Solo l'utente che ha richiesto questa azione può usare questi controlli."
+    clarify:
+      skipped: "⏭️ Saltata"
+      expired: "⌛ Nessuna risposta"
+      cancelled: "↩️ Annullata"
   feishu:
     clarify:
       title: "Hermes ha bisogno del tuo contributo"
