@@ -58,18 +58,22 @@ def _adapter(monkeypatch):
     return adapter
 
 
-def _register(clarify_id="cid1", choices=("Staging (Recommended)", "Production", "Both"), multi=False):
+def _register(clarify_id="cid1", choices=("Staging (Recommended)", "Production", "Both"), multi=False,
+              requester=OWNER, approvers=()):
+    """A pending clarify whose recorded authority is *requester* with ``approvals.approvers`` narrowed
+    to *approvers* (``["*"]`` is the default config: any admitted member answers)."""
     from tools import clarify_gateway as cg
+    authority = {"requester_id": requester or "", "requester_name": "owner" if requester else "",
+                 "chat_type": "group", "approvers": list(approvers)}
     return cg.register(clarify_id=clarify_id, session_key="sess", question="Deploy where?",
-                       choices=list(choices) if choices else None, multi_select=multi)
+                       choices=list(choices) if choices else None, multi_select=multi, authority=authority)
 
 
-async def _send_card(adapter, clarify_id="cid1", choices=("Staging (Recommended)", "Production", "Both"),
-                     requester=OWNER):
-    meta = {"requester_user_id": requester} if requester else None
+async def _send_card(adapter, clarify_id="cid1", choices=("Staging (Recommended)", "Production", "Both")):
+    # No requester in metadata: who may answer is the entry's authority (clarify_refusal).
     return await adapter.send_clarify(
         chat_id=ROOM, question=f"Deploy where?\n{SKIP_LINE}", choices=list(choices) if choices else None,
-        clarify_id=clarify_id, session_key="sess", metadata=meta)
+        clarify_id=clarify_id, session_key="sess")
 
 
 def _seeded(adapter):
@@ -125,9 +129,9 @@ class TestCardContent:
     @pytest.mark.asyncio
     async def test_open_ended_card_body_matches_base_and_has_no_choices(self, monkeypatch):
         adapter = _adapter(monkeypatch)
-        _register(choices=None)
+        _register(choices=None, requester=None)
         expected_body = await _base_text(adapter, "cid1", None)
-        await _send_card(adapter, choices=None, requester=None)
+        await _send_card(adapter, choices=None)
         content = adapter.sent[0]
         assert content["body"] == expected_body
         payload = content["org.hermes.clarify"]
@@ -241,6 +245,15 @@ class TestReactionAnswers:
         assert not entry.event.is_set()
         adapter._send_invalid_reaction_feedback.assert_awaited_once()
         assert len(adapter.sent) == 1  # no edit
+
+    @pytest.mark.asyncio
+    async def test_default_approvers_let_any_admitted_member_answer(self, monkeypatch):
+        """``approvals.approvers: ["*"]`` (the default) answers as upstream: any admitted member."""
+        adapter = _adapter(monkeypatch)
+        entry = _register(approvers=["*"])
+        await _send_card(adapter)
+        assert await adapter._handle_clarify_reaction(ROOM, "$card1", "2️⃣", OTHER) is True
+        assert entry.event.is_set() and entry.response == "Production"
 
     @pytest.mark.asyncio
     async def test_unrelated_emoji_and_unseeded_keycap_are_ignored(self, monkeypatch):
@@ -376,7 +389,7 @@ class TestRetire:
         adapter = _adapter(monkeypatch)
         _register()
         await _send_card(adapter)
-        assert cg.attempt_text_response_for_session("sess", "3") == cg.TEXT_RESOLVED
+        assert cg.attempt_text_response("cid1", "3") == cg.TEXT_RESOLVED
         await adapter.retire_clarify_card("cid1", t("gateway.clarify.answered", response="Both"))
         assert _last_edit(adapter)["org.hermes.clarify"]["answer"] == "Both"
 
@@ -558,9 +571,10 @@ class TestClarifyGatewaySeams:
         assert cg.get_entry("cid1") is entry and cg.get_pending("cid1") is None
         assert cg.get_entry("nope") is None
 
-    def test_coerce_text_response_matches_typed_answers(self):
+    def test_reply_text_uses_the_typed_answer_outcome_for_that_card(self):
         from tools import clarify_gateway as cg
         entry = _register()
-        assert cg.coerce_text_response(entry, "2") == "Production"
-        assert cg.coerce_text_response(entry, "skip") == cg.SKIPPED
-        assert cg.coerce_text_response(entry, "9") is None
+        assert cg.attempt_text_response("cid1", "9") == cg.TEXT_REJECTED_SELECTION
+        assert not entry.event.is_set()
+        assert cg.attempt_text_response("cid1", "2") == cg.TEXT_RESOLVED
+        assert entry.response == "Production"
