@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from tools.bot_desktop import handoff, lease
+from tests.bot_desktop_lease import reset_lease
 
 _ORIGIN = "https://desktop.example.test"
 
@@ -26,9 +27,9 @@ def _config(**overrides):
 
 @pytest.fixture(autouse=True)
 def _clean_lease():
-    lease._reset_for_tests()
+    reset_lease()
     yield
-    lease._reset_for_tests()
+    reset_lease()
 
 
 def _client(config=None):

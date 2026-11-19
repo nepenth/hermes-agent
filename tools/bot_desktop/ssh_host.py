@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -35,6 +36,7 @@ from typing import Optional
 from tools.bot_desktop.placement import SshTarget
 from tools.environments.base import EnvironmentConnectionError
 from tools.environments.ssh import SSHEnvironment
+from tools.spill_safety import ensure_owned_private_dir
 
 # OpenSSH binds the master at ControlPath plus a 17-byte random suffix and refuses a path that, so suffixed,
 # overflows sun_path (104 bytes on macOS, 108 on Linux). A deep HERMES_HOME falls back to a per-uid 0700
@@ -61,11 +63,17 @@ class DesktopSSHEnvironment(SSHEnvironment):
         directory = get_hermes_home() / "bot-desktop" / "ssh"
         if len(os.fsencode(str(directory / name))) > _CONTROL_PATH_MAX:
             directory = Path(tempfile.gettempdir()) / f"hermes-bd-ssh-{os.getuid() if hasattr(os, 'getuid') else 0}"
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        if directory.is_symlink() or not directory.is_dir():
-            # The temp-dir fallback is a predictable path: never chmod (or bind a socket) through a planted link.
-            raise EnvironmentConnectionError(f"Bot Desktop SSH control directory {directory} is not a plain directory")
-        os.chmod(directory, 0o700)  # mkdir's mode is umask-filtered and skipped for an existing directory
+        try:
+            # The temp-dir fallback is a predictable path: refuse a planted link or another user's directory
+            # (the same ownership proof SSHEnvironment's own ControlMaster dir gets).
+            ensure_owned_private_dir(directory)
+        except OSError as exc:
+            raise EnvironmentConnectionError(f"Bot Desktop SSH control directory {directory} is unusable: {exc}") from exc
+        if getattr(self, "_owns_control_dir", False):
+            # SSHEnvironment fell back to a private mkdtemp dir it removes with the instance; this connection
+            # never uses it, and that removal must never reach the shared per-profile directory below.
+            shutil.rmtree(self.control_dir, ignore_errors=True)
+            self._owns_control_dir = False
         self.control_dir = directory
         return directory / name
 

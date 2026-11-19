@@ -11,6 +11,7 @@ from hermes_cli.subcommands import computer_use_screen
 from tools.bot_desktop import lease, runtime, sandbox_host
 from tools.bot_desktop.placement import SshTarget
 from tools.bot_desktop.ssh_host import DesktopSSHEnvironment
+from tests.bot_desktop_lease import reset_lease
 
 
 def _ssh_env():
@@ -79,7 +80,7 @@ def test_status_names_where_an_off_gateway_screen_runs(monkeypatch, capsys, plac
     try:
         assert computer_use_screen.SCREEN_ACTIONS["status"](_parse(["screen", "status"])) == 0
     finally:
-        lease._reset_for_tests()
+        reset_lease()
     out = capsys.readouterr().out
     assert expect in out
     if absent:

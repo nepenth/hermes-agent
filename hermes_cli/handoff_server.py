@@ -180,11 +180,10 @@ def _wake_screen(home: str) -> None:
     the human a dead page. Off-gateway placements start unconditionally (as the tool boundary does); a
     gateway-hosted screen follows ``bot_desktop.auto_start``. Raises ``RuntimeError`` naming the blocker.
     Stamps activity so the idle stop does not take the screen between this call and the viewer attaching."""
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from agent.runtime_scope import bind_profile_scope
     from tools.bot_desktop import runtime
 
-    token = set_hermes_home_override(Path(home))
-    try:
+    with bind_profile_scope(Path(home), hydrate_secrets=False):  # the screen needs the profile's home, not its secrets
         if runtime.in_sandbox():
             if not runtime.sandbox_screen_running():
                 logger.info("bot-desktop handoff: waking the stopped screen for %s", home)
@@ -192,22 +191,17 @@ def _wake_screen(home: str) -> None:
         else:
             runtime.ensure_started_for_tool()
         runtime.touch_activity()
-    finally:
-        reset_hermes_home_override(token)
 
 
 def _attach_screen_host(home: str) -> None:
     """Wake the profile's screen if needed, then open (or reuse) this process's connection to its host."""
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    from agent.runtime_scope import bind_profile_scope
     from tools.bot_desktop import runtime
 
     _wake_screen(home)
-    token = set_hermes_home_override(Path(home))
-    try:
+    with bind_profile_scope(Path(home), hydrate_secrets=False):
         if runtime.sandbox_screen_running():
             runtime._screen_env(create=True)
-    finally:
-        reset_hermes_home_override(token)
 
 
 def _cookie_path(handoff_cfg: dict) -> str:

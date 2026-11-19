@@ -9,14 +9,15 @@ import pytest
 from tools import clarify_gateway
 from tools.bot_desktop import handoff, lease
 from tools.desktop_handoff_tool import desktop_handoff_tool
+from tests.bot_desktop_lease import reset_lease
 
 
 @pytest.fixture(autouse=True)
 def _clean_state():
-    lease._reset_for_tests()
+    reset_lease()
     yield
     clarify_gateway.clear_session("default")
-    lease._reset_for_tests()
+    reset_lease()
 
 
 def _setup(monkeypatch):
