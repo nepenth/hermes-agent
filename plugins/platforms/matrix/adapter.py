@@ -1737,7 +1737,9 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
         hint = skip_hint
         if choices:
             hint = (t("gateway.clarify.hint_multi") if multi_select else t("gateway.clarify.hint_single")) + " " + skip_hint
-        requester = str((metadata or {}).get("requester_user_id") or "") or None
+        # Who may answer is the entry's recorded authority (gateway.approval_actor.clarify_refusal);
+        # the payload names the requester only so a client can draw its controls for them.
+        requester = str((getattr(entry, "authority", None) or {}).get("requester_id") or "") or None
         timeout = _cg.get_clarify_timeout()
         expires_at_ms = int(time.time() * 1000) + int(timeout) * 1000 if timeout and timeout > 0 else None
         payload = cc.build_pending_payload(
@@ -1860,6 +1862,10 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
             return True  # any other emoji is just a reaction
         if not await self._validate_matrix_prompt_reactor(room_id, reacts_to, sender, card, "clarify"):
             return True
+        from gateway.approval_actor import clarify_refusal
+        if requester := clarify_refusal(card.clarify_id, sender, extra=getattr(getattr(self, "config", None), "extra", None)):
+            await self._send_invalid_reaction_feedback(room_id, reacts_to, refusal_text(requester))
+            return True
         if _cg.get_pending(card.clarify_id) is card.entry and _cg.resolve_gateway_clarify(card.clarify_id, value):
             logger.info("Matrix: clarify %s answered by reaction from %s", card.clarify_id, sender)
             with suppress(Exception):
@@ -1885,9 +1891,10 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
             return False
         if not self._is_authorized_user(sender, room_id):
             return False
-        if self._approval_require_sender and card.requester_user_id and sender != card.requester_user_id:
-            logger.info("Matrix: reply to clarify %s from %s ignored; requester is %s",
-                        card.clarify_id, sender, card.requester_user_id)
+        from gateway.approval_actor import clarify_refusal
+        if clarify_refusal(card.clarify_id, sender, extra=getattr(getattr(self, "config", None), "extra", None)):
+            # The gateway's text intercept answers a refused sender with the requester's name.
+            logger.info("Matrix: reply to clarify %s from %s is not theirs to answer", card.clarify_id, sender)
             return False
         text = self._strip_mention(_strip_reply_fallback(body)).strip()
         if not text or text.startswith(("/", "!")):
@@ -1897,8 +1904,8 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
             if card.terminal is not None:  # answered already; its terminal edit failed earlier
                 await self._settle_clarify_card(card)
             return False
-        value = _cg.coerce_text_response(card.entry, text)
-        if value is None or not _cg.resolve_gateway_clarify(card.clarify_id, value):
+        # Same coercion and outcome as a typed answer, bound to this card's own clarify id.
+        if _cg.attempt_text_response(card.clarify_id, text) != _cg.TEXT_RESOLVED:
             return False
         logger.info("Matrix: clarify %s answered by reply %s from %s", card.clarify_id, event_id, sender)
         self._background_read_receipt(room_id, event_id)

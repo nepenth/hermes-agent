@@ -133,13 +133,6 @@ def get_entry(clarify_id: str) -> Optional[_ClarifyEntry]:
         return _entries.get(clarify_id)
 
 
-def coerce_text_response(entry: _ClarifyEntry, response: str) -> Optional[str]:
-    """Typed-answer coercion for one entry (number, ``1, 3``, label, ``skip``, free text): the
-    value ``resolve_gateway_clarify`` should receive for a reply addressed to that entry's card,
-    or None when it is not a valid answer."""
-    return _coerce_text_response_detailed(entry, response)[0]
-
-
 def get_pending_for_session(session_key: str, *, include_choice_prompts: bool = False) -> Optional[_ClarifyEntry]:
     """Oldest pending entry awaiting free text (open-ended, or after "Other");
     ``include_choice_prompts=True`` returns the oldest unresolved entry of any kind (user
