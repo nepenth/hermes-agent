@@ -92,4 +92,3 @@ def test_human_chat_reply_releases_the_lease(monkeypatch):
     assert result["reply"] == "done"
     assert lease.get().holder == lease.AGENT
     assert handoff.get_state(captured["record"]["id"])["state"] == "cancelled"
-
