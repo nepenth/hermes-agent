@@ -80,6 +80,7 @@ from gateway.platforms.event import MessageEvent, MessageType, ProcessingOutcome
 from gateway.platforms.helpers import ThreadParticipationTracker, hash_for_log
 from plugins.platforms.matrix.media_download import MatrixMediaTooLarge, download_mxc_capped, read_body_capped
 from plugins.platforms.matrix.adapter_approval_cards import MatrixApprovalCardsMixin, _MatrixApprovalPrompt
+from plugins.platforms.matrix.adapter_clarify_cards import MatrixClarifyCardsMixin, _MatrixClarifyCard
 from plugins.platforms.matrix.adapter_html import _latex_to_tokens, _pre_sanitize_matrix_markdown, _sanitize_matrix_html
 from plugins.platforms.matrix.session_proxy import matrix_redaction_proxy
 from plugins.platforms.matrix.voice_mention import ParkedVoices, VoiceGate, has_voice_marker, is_voice_event
@@ -643,7 +644,7 @@ def ensure_matrix_deps() -> bool:
     return True
 
 
-class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
+class MatrixAdapter(MatrixApprovalCardsMixin, MatrixClarifyCardsMixin, BasePlatformAdapter):
     """Gateway adapter for Matrix (any homeserver)."""
     serial_receive_loop = True  # _sync_loop reads the next sync only after this sync's handlers return
     supports_code_blocks = True  # Matrix renders fenced code blocks (HTML/markdown)
@@ -745,6 +746,9 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
         self._approval_timeout_seconds = _env_number("MATRIX_APPROVAL_TIMEOUT_SECONDS", 300, int)
         self._model_picker_prompts_by_event: dict[str, _MatrixPickerPrompt] = {}
         self._choice_picker_prompts_by_event: dict[str, _MatrixPickerPrompt] = {}
+        self._clarify_cards_by_event: dict[str, _MatrixClarifyCard] = {}
+        self._clarify_cards_by_id: dict[str, _MatrixClarifyCard] = {}
+        self._retired_clarify_cards: dict[str, None] = {}  # event ids of settled cards (bounded)
         # Authz lists: scoped env → this profile's YAML (``allowed_users`` / ``ignore_user_patterns``,
         # seeded by the bridge) → empty. Under multiplex os.environ is the DEFAULT profile's allowlist,
         # which must not decide who approves tool calls on a secondary bot.
@@ -1253,6 +1257,8 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
                 error = self._apply_pre_rendered_html(msg_content, metadata)
                 if error:
                     return SendResult(success=False, error=error)
+            if len(chunks) == 1:
+                self._apply_extra_content(msg_content, metadata)
             try:
                 last_event_id = await self._send_room_message(chat_id, msg_content)
                 logger.info("Matrix: sent event %s to %s", last_event_id, chat_id)
@@ -1341,6 +1347,7 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
             error = self._apply_pre_rendered_html(new_content, metadata)
             if error:
                 return SendResult(success=False, error=error)
+        self._apply_extra_content(new_content, metadata)
         msg_content: dict[str, Any] = {"msgtype": "m.text", "body": f"* {formatted}", "m.new_content": new_content}
         if "m.mentions" in new_content:
             msg_content["m.mentions"] = new_content["m.mentions"]
@@ -2018,6 +2025,8 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
         body = source_content.get("body", "") or ""
         if not body:
             return
+        if await self._answer_clarify_reply(room_id, sender, event_id, body, relates_to):
+            return
         # Dict lookup first: the mention regexes only run when a voice is parked or being gated
         # (both only happen under require_mention).
         if (self._parked_voices.pending(room_id, sender)
@@ -2345,8 +2354,8 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
             reacts_to = str(getattr(relates_to, "event_id", ""))
             key = str(getattr(relates_to, "key", ""))
         logger.info("Matrix: reaction %s from %s on %s in %s", key, sender, reacts_to, hash_for_log(room_id))
-        for handler in (self._handle_approval_reaction, self._handle_model_picker_reaction,
-                        self._handle_choice_picker_reaction):
+        for handler in (self._handle_approval_reaction, self._handle_clarify_reaction,
+                        self._handle_model_picker_reaction, self._handle_choice_picker_reaction):
             if await handler(room_id, reacts_to, key, sender):
                 return
 
@@ -2452,10 +2461,10 @@ class MatrixAdapter(MatrixApprovalCardsMixin, BasePlatformAdapter):
         await self._send_invalid_reaction_feedback(
             room_id, target_event_id, t("platform.shared.model_picker_expired"))
 
-    async def _redact_bot_approval_reactions(self, room_id: str, prompt: Any) -> None:
+    async def _redact_bot_approval_reactions(self, room_id: str, prompt: Any, reason: str = "approval resolved") -> None:
         """Redact the bot's seeded approval reactions (delayed), leaving only the user's reaction."""
         for emoji, evt_id in prompt.bot_reaction_events.items():
-            self._schedule_reaction_redaction(room_id, evt_id, "approval resolved")
+            self._schedule_reaction_redaction(room_id, evt_id, reason)
             logger.debug("Matrix: scheduled bot reaction redaction %s (%s)", emoji, evt_id)
 
     async def _redact_bot_model_picker_reactions(self, room_id: str, prompt: Any) -> None:

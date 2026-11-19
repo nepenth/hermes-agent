@@ -125,6 +125,14 @@ def get_pending(clarify_id: str) -> Optional[_ClarifyEntry]:
         return entry if entry is not None and not entry.event.is_set() else None
 
 
+def get_entry(clarify_id: str) -> Optional[_ClarifyEntry]:
+    """The entry for ``clarify_id`` in any state (pending, answered or ended), else None.
+    Read-only: an adapter settling a native card reads the outcome (``event`` / ``response``)
+    of the entry it rendered, including one answered while the card was still being sent."""
+    with _lock:
+        return _entries.get(clarify_id)
+
+
 def get_pending_for_session(session_key: str, *, include_choice_prompts: bool = False) -> Optional[_ClarifyEntry]:
     """Oldest pending entry awaiting free text (open-ended, or after "Other");
     ``include_choice_prompts=True`` returns the oldest unresolved entry of any kind (user
