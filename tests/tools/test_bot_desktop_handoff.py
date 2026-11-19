@@ -8,13 +8,14 @@ import stat
 import pytest
 
 from tools.bot_desktop import handoff, lease
+from tests.bot_desktop_lease import reset_lease
 
 
 @pytest.fixture(autouse=True)
 def _clean_state():
-    lease._reset_for_tests()
+    reset_lease()
     yield
-    lease._reset_for_tests()
+    reset_lease()
 
 
 def test_mint_redeem_is_single_use_and_only_hashes_are_persisted():

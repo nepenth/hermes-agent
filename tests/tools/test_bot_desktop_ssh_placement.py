@@ -554,4 +554,7 @@ def test_cached_local_cua_backend_is_replaced_once_the_screen_moves_to_the_deskt
     _use(monkeypatch, ssh={**TARGET, "host": "desktops2.example"})
     assert cua_backend.backend_display_stale(after, cua_backend.desktop_identity())  # another desktop host
     _use(monkeypatch, setting="terminal", backend="docker")
+    # A sandbox-hosted screen keeps upstream's identity: its published DISPLAY (read from inside the sandbox).
+    monkeypatch.setattr(runtime, "published_env", lambda: {"DISPLAY": ":20"})
+    assert cua_backend.desktop_identity() == ":20"
     assert cua_backend.backend_display_stale(after, cua_backend.desktop_identity())  # back into the sandbox
